@@ -4,6 +4,8 @@
 
 - 项目目前处于开发阶段，允许进行大范围、暴力的非兼容重构，不必为尚未发布或承诺的 API、数据结构、界面和内部实现保留兼容层。
 - 进行此类重构时，应明确影响范围，删除过时路径，并同步更新相关文档和验证；一旦涉及真实用户数据或已发布版本，另行制定迁移方案。
+- Text is the product. Everything else is optional.
+- If it doesn't improve the conversation, it can wait.
 
 ## Product and architecture decisions
 
