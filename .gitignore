@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+.kotlin/
+**/build/
+
+# Android generated files
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local configuration and secrets
+local.properties
+*.keystore
+*.jks
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+*.iml
+
+# Compiled and generated output
+*.class
+out/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
