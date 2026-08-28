@@ -34,4 +34,6 @@ SillyTavern 建立了这个生态。
 
 **播放器也应该如此。**
 
+Copyright (C) 2026 Zven. 本项目仅依据 AGPL-3.0-only 授权。
+
 [AGPL-3.0-only](LICENSE)

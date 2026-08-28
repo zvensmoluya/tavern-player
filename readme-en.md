@@ -34,4 +34,6 @@ The ecosystem is already open.
 
 **The player should be too.**
 
+Copyright (C) 2026 Zven. Licensed under AGPL-3.0-only.
+
 [AGPL-3.0-only](LICENSE)
