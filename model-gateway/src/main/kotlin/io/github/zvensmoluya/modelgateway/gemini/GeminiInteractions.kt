@@ -3,8 +3,6 @@ package io.github.zvensmoluya.modelgateway.gemini
 import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
-import io.github.zvensmoluya.modelgateway.StreamResult
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import io.github.zvensmoluya.modelgateway.long
 import io.github.zvensmoluya.modelgateway.obj
 import io.github.zvensmoluya.modelgateway.string
@@ -33,6 +31,26 @@ data class GeminiInteractionsRequest(
     val store: Boolean? = null,
 )
 
+data class GeminiInteractionsUsage(
+    val totalInputTokens: Long? = null,
+    val totalOutputTokens: Long? = null,
+    val totalTokens: Long? = null,
+    val totalCachedTokens: Long? = null,
+    val totalThoughtTokens: Long? = null,
+    val totalToolUseTokens: Long? = null,
+    val raw: JsonObject,
+)
+
+data class GeminiInteractionsResult(
+    val outputText: String,
+    val thoughtSummary: String,
+    val thoughtSignatures: List<String>,
+    val usage: GeminiInteractionsUsage?,
+    val status: String?,
+    val interactionId: String?,
+    val unknownEventCount: Int,
+)
+
 sealed interface GeminiInteractionsEvent {
     val raw: JsonObject
 
@@ -43,7 +61,7 @@ sealed interface GeminiInteractionsEvent {
     data class Signature(val signature: String, override val raw: JsonObject) : GeminiInteractionsEvent
     data class StepFinished(val index: Int?, override val raw: JsonObject) : GeminiInteractionsEvent
     data class StatusUpdated(val status: String?, override val raw: JsonObject) : GeminiInteractionsEvent
-    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : GeminiInteractionsEvent
+    data class Usage(val usage: GeminiInteractionsUsage, override val raw: JsonObject) : GeminiInteractionsEvent
     data class Finished(val status: String?, val interactionId: String?, override val raw: JsonObject) : GeminiInteractionsEvent
     data class Failed(val message: String?, override val raw: JsonObject) : GeminiInteractionsEvent
     data class Unknown(override val raw: JsonObject) : GeminiInteractionsEvent
@@ -71,8 +89,8 @@ class GeminiInteractionsAccumulator {
     private val text = StringBuilder()
     private val thought = StringBuilder()
     private val signatures = mutableListOf<String>()
-    private var usage: TokenUsage? = null
-    private var finishReason: String? = null
+    private var usage: GeminiInteractionsUsage? = null
+    private var status: String? = null
     private var interactionId: String? = null
     private var unknown = 0
 
@@ -81,28 +99,28 @@ class GeminiInteractionsAccumulator {
             is GeminiInteractionsEvent.Started -> interactionId = event.interactionId ?: interactionId
             is GeminiInteractionsEvent.StepStarted,
             is GeminiInteractionsEvent.StepFinished,
-            is GeminiInteractionsEvent.StatusUpdated,
             -> Unit
+            is GeminiInteractionsEvent.StatusUpdated -> status = event.status ?: status
             is GeminiInteractionsEvent.TextDelta -> text.append(event.text)
             is GeminiInteractionsEvent.ThoughtDelta -> thought.append(event.text)
             is GeminiInteractionsEvent.Signature -> signatures += event.signature
             is GeminiInteractionsEvent.Usage -> usage = event.usage
             is GeminiInteractionsEvent.Finished -> {
-                finishReason = event.status
+                status = event.status ?: status
                 interactionId = event.interactionId ?: interactionId
             }
-            is GeminiInteractionsEvent.Failed -> finishReason = "failed"
+            is GeminiInteractionsEvent.Failed -> status = "failed"
             is GeminiInteractionsEvent.Unknown -> unknown += 1
         }
     }
 
-    fun result(): StreamResult = StreamResult(
-        text = text.toString(),
-        reasoning = thought.toString(),
-        signatures = signatures.toList(),
+    fun result(): GeminiInteractionsResult = GeminiInteractionsResult(
+        outputText = text.toString(),
+        thoughtSummary = thought.toString(),
+        thoughtSignatures = signatures.toList(),
         usage = usage,
-        finishReason = finishReason,
-        responseId = interactionId,
+        status = status,
+        interactionId = interactionId,
         unknownEventCount = unknown,
     )
 }
@@ -230,11 +248,12 @@ private fun parse(data: String, sseEvent: String?): List<GeminiInteractionsEvent
     }
 }
 
-private fun JsonObject.toUsage(): TokenUsage = TokenUsage(
-    inputTokens = long("total_input_tokens"),
-    outputTokens = long("total_output_tokens"),
+private fun JsonObject.toUsage(): GeminiInteractionsUsage = GeminiInteractionsUsage(
+    totalInputTokens = long("total_input_tokens"),
+    totalOutputTokens = long("total_output_tokens"),
     totalTokens = long("total_tokens"),
-    cachedTokens = long("total_cached_tokens"),
-    reasoningTokens = long("total_thought_tokens"),
+    totalCachedTokens = long("total_cached_tokens"),
+    totalThoughtTokens = long("total_thought_tokens"),
+    totalToolUseTokens = long("total_tool_use_tokens"),
     raw = this,
 )

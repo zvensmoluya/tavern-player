@@ -39,7 +39,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.modelgateway.AuthScheme
-import io.github.zvensmoluya.modelgateway.ConnectionTemplates
 import java.text.DateFormat
 import java.util.Date
 

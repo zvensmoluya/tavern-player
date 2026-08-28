@@ -83,7 +83,7 @@ Tavern Player 的长期目标，是把 SillyTavern 社区长期形成的角色�
 - `AssetImporter`：外部资产导入入口；
 - repository ports：角色、Preset、会话和消息的存取。
 
-当前 `:model-gateway` 实现包括 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个原生客户端。Android Keystore、DataStore 和 Compose 连接管理属于 `app`，不反向进入网关模块。
+当前 `:model-gateway` 实现包括 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个原生客户端。Android Keystore、DataStore、连接模板与展示名称、Compose 连接管理均属于 `app`，不反向进入网关模块。
 
 ## 4. 依赖方向
 
@@ -273,9 +273,11 @@ ModelGateway
 
 五个客户端分别接收自己的强类型 request，返回自己的 `Flow<ProtocolEvent>`。共享的是 HTTPS 校验、鉴权注入、超时、响应上限、同源重定向、SSE framing、取消和 typed error；正文、reasoning/thinking、signature、usage 与 finish 状态不在传输层互相冒充。
 
-流式调用是唯一生成原语。每种协议提供 accumulator 得到最终 typed result，不维护第二套非流式 HTTP 路径。未知事件保留 raw JSON 并成为 `Unknown`，协议增加事件不会令流崩溃；畸形 JSON、越界响应和安全失败仍作为 `GatewayException` 抛出。
+流式调用是唯一生成原语。每种协议提供 accumulator 得到自己的 result 与 usage 类型，不维护第二套非流式 HTTP 路径，也不以共享 result 抹平字段语义。未知事件保留 raw JSON 并成为 `Unknown`，协议增加事件不会令流崩溃；畸形 JSON、越界响应和安全失败仍作为 `GatewayException` 抛出。
 
-连接保存完整操作 URL，不猜测 `/v1`，也不根据 endpoint 自动切换协议。Gemini Interactions 与 GenerateContent 是两个客户端；Vertex Express 复用 GenerateContent 客户端但使用独立连接模板。OpenRouter 的一个 key 对应多种协议和模型，属于以后可选的聚合层，不进入当前内核。
+连接探针为了展示统一的 token 摘要，会在 `app` 的 `ProbeService` 中把五种原生 usage 映射为 `ProbeUsage`。这只是当前页面的 UI 投影，不属于网关契约，也不能被未来 Runtime 当作协议无关的模型响应。
+
+连接保存完整操作 URL，不猜测 `/v1`，也不根据 endpoint 自动切换协议。Gemini Interactions 与 GenerateContent 是两个客户端；Vertex Express 复用 GenerateContent 客户端。官方 endpoint、鉴权默认值与 Vertex Express 等可选项是 App 的连接模板，不是网关对 Provider 的内置认识。OpenRouter 的一个 key 对应多种协议和模型，属于以后可选的聚合层，不进入当前内核。
 
 Preset 与 ST Runtime 尚未开始映射生成参数。当前连接探针固定用协议原生字段发送 512 token 上限，并省略 temperature、top-p、top-k。等 Runtime 有真实需求时，再在明确的协议边界完成映射，而不是先发明共享 sampling options 或通用 Provider DSL。
 

@@ -4,8 +4,6 @@ import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.EndpointRules
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
-import io.github.zvensmoluya.modelgateway.StreamResult
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import io.github.zvensmoluya.modelgateway.long
 import io.github.zvensmoluya.modelgateway.obj
 import io.github.zvensmoluya.modelgateway.string
@@ -47,13 +45,32 @@ data class GeminiGenerateContentRequest(
     val store: Boolean? = null,
 )
 
+data class GeminiGenerateContentUsage(
+    val promptTokenCount: Long? = null,
+    val candidatesTokenCount: Long? = null,
+    val totalTokenCount: Long? = null,
+    val cachedContentTokenCount: Long? = null,
+    val thoughtsTokenCount: Long? = null,
+    val toolUsePromptTokenCount: Long? = null,
+    val raw: JsonObject,
+)
+
+data class GeminiGenerateContentResult(
+    val text: String,
+    val thoughts: String,
+    val thoughtSignatures: List<String>,
+    val usage: GeminiGenerateContentUsage?,
+    val finishReason: String?,
+    val unknownEventCount: Int,
+)
+
 sealed interface GeminiGenerateContentEvent {
     val raw: JsonObject
 
     data class TextDelta(val text: String, override val raw: JsonObject) : GeminiGenerateContentEvent
     data class ThoughtDelta(val text: String, override val raw: JsonObject) : GeminiGenerateContentEvent
     data class Signature(val signature: String, override val raw: JsonObject) : GeminiGenerateContentEvent
-    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : GeminiGenerateContentEvent
+    data class Usage(val usage: GeminiGenerateContentUsage, override val raw: JsonObject) : GeminiGenerateContentEvent
     data class Finished(val reason: String?, override val raw: JsonObject) : GeminiGenerateContentEvent
     data class Unknown(override val raw: JsonObject) : GeminiGenerateContentEvent
 }
@@ -80,7 +97,7 @@ class GeminiGenerateContentAccumulator {
     private val text = StringBuilder()
     private val thought = StringBuilder()
     private val signatures = mutableListOf<String>()
-    private var usage: TokenUsage? = null
+    private var usage: GeminiGenerateContentUsage? = null
     private var finishReason: String? = null
     private var unknown = 0
 
@@ -95,13 +112,12 @@ class GeminiGenerateContentAccumulator {
         }
     }
 
-    fun result(): StreamResult = StreamResult(
+    fun result(): GeminiGenerateContentResult = GeminiGenerateContentResult(
         text = text.toString(),
-        reasoning = thought.toString(),
-        signatures = signatures.toList(),
+        thoughts = thought.toString(),
+        thoughtSignatures = signatures.toList(),
         usage = usage,
         finishReason = finishReason,
-        responseId = null,
         unknownEventCount = unknown,
     )
 }
@@ -187,12 +203,13 @@ private fun parse(data: String): List<GeminiGenerateContentEvent> {
         raw.obj("usageMetadata")?.let { usage ->
             add(
                 GeminiGenerateContentEvent.Usage(
-                    TokenUsage(
-                        inputTokens = usage.long("promptTokenCount"),
-                        outputTokens = usage.long("candidatesTokenCount"),
-                        totalTokens = usage.long("totalTokenCount"),
-                        cachedTokens = usage.long("cachedContentTokenCount"),
-                        reasoningTokens = usage.long("thoughtsTokenCount"),
+                    GeminiGenerateContentUsage(
+                        promptTokenCount = usage.long("promptTokenCount"),
+                        candidatesTokenCount = usage.long("candidatesTokenCount"),
+                        totalTokenCount = usage.long("totalTokenCount"),
+                        cachedContentTokenCount = usage.long("cachedContentTokenCount"),
+                        thoughtsTokenCount = usage.long("thoughtsTokenCount"),
+                        toolUsePromptTokenCount = usage.long("toolUsePromptTokenCount"),
                         raw = usage,
                     ),
                     raw,

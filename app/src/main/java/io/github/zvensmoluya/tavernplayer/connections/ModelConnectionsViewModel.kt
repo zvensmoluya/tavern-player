@@ -4,9 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.modelgateway.AuthScheme
-import io.github.zvensmoluya.modelgateway.ConnectionTemplates
 import io.github.zvensmoluya.modelgateway.GatewayException
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,7 +31,7 @@ data class ProbeUiState(
     val text: String = "",
     val reasoning: String = "",
     val diagnostics: List<String> = emptyList(),
-    val usage: TokenUsage? = null,
+    val usage: ProbeUsage? = null,
     val finishReason: String? = null,
     val error: String? = null,
 )

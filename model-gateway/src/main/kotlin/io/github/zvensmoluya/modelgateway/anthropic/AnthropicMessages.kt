@@ -3,8 +3,6 @@ package io.github.zvensmoluya.modelgateway.anthropic
 import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
-import io.github.zvensmoluya.modelgateway.StreamResult
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import io.github.zvensmoluya.modelgateway.long
 import io.github.zvensmoluya.modelgateway.obj
 import io.github.zvensmoluya.modelgateway.string
@@ -39,6 +37,24 @@ data class AnthropicMessagesRequest(
     val thinking: AnthropicThinking? = null,
 )
 
+data class AnthropicUsage(
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val cacheCreationInputTokens: Long? = null,
+    val cacheReadInputTokens: Long? = null,
+    val raw: JsonObject,
+)
+
+data class AnthropicMessagesResult(
+    val text: String,
+    val thinking: String,
+    val thinkingSignatures: List<String>,
+    val usage: AnthropicUsage?,
+    val stopReason: String?,
+    val messageId: String?,
+    val unknownEventCount: Int,
+)
+
 sealed interface AnthropicMessagesEvent {
     val raw: JsonObject
 
@@ -46,7 +62,7 @@ sealed interface AnthropicMessagesEvent {
     data class TextDelta(val text: String, override val raw: JsonObject) : AnthropicMessagesEvent
     data class ThinkingDelta(val text: String, override val raw: JsonObject) : AnthropicMessagesEvent
     data class SignatureDelta(val signature: String, override val raw: JsonObject) : AnthropicMessagesEvent
-    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Usage(val usage: AnthropicUsage, override val raw: JsonObject) : AnthropicMessagesEvent
     data class Finished(val reason: String?, override val raw: JsonObject) : AnthropicMessagesEvent
     data class Failed(val message: String?, override val raw: JsonObject) : AnthropicMessagesEvent
     data class Lifecycle(val name: String, override val raw: JsonObject) : AnthropicMessagesEvent
@@ -80,7 +96,7 @@ class AnthropicMessagesAccumulator {
     private val text = StringBuilder()
     private val thinking = StringBuilder()
     private val signatures = mutableListOf<String>()
-    private var usage: TokenUsage? = null
+    private var usage: AnthropicUsage? = null
     private var finishReason: String? = null
     private var messageId: String? = null
     private var unknown = 0
@@ -99,13 +115,13 @@ class AnthropicMessagesAccumulator {
         }
     }
 
-    fun result(): StreamResult = StreamResult(
+    fun result(): AnthropicMessagesResult = AnthropicMessagesResult(
         text = text.toString(),
-        reasoning = thinking.toString(),
-        signatures = signatures.toList(),
+        thinking = thinking.toString(),
+        thinkingSignatures = signatures.toList(),
         usage = usage,
-        finishReason = finishReason,
-        responseId = messageId,
+        stopReason = finishReason,
+        messageId = messageId,
         unknownEventCount = unknown,
     )
 }
@@ -180,22 +196,18 @@ private fun parse(data: String): List<AnthropicMessagesEvent> {
     }
 }
 
-private fun JsonObject.toUsage(): TokenUsage = TokenUsage(
+private fun JsonObject.toUsage(): AnthropicUsage = AnthropicUsage(
     inputTokens = long("input_tokens"),
     outputTokens = long("output_tokens"),
-    totalTokens = listOfNotNull(long("input_tokens"), long("output_tokens")).takeIf { it.isNotEmpty() }?.sum(),
-    cachedTokens = listOfNotNull(long("cache_read_input_tokens"), long("cache_creation_input_tokens"))
-        .takeIf { it.isNotEmpty() }?.sum(),
+    cacheCreationInputTokens = long("cache_creation_input_tokens"),
+    cacheReadInputTokens = long("cache_read_input_tokens"),
     raw = this,
 )
 
-private fun mergeUsage(previous: TokenUsage?, next: TokenUsage): TokenUsage = TokenUsage(
+private fun mergeUsage(previous: AnthropicUsage?, next: AnthropicUsage): AnthropicUsage = AnthropicUsage(
     inputTokens = next.inputTokens ?: previous?.inputTokens,
     outputTokens = next.outputTokens ?: previous?.outputTokens,
-    totalTokens = if (next.inputTokens != null || next.outputTokens != null) {
-        (next.inputTokens ?: previous?.inputTokens ?: 0) + (next.outputTokens ?: previous?.outputTokens ?: 0)
-    } else previous?.totalTokens,
-    cachedTokens = next.cachedTokens ?: previous?.cachedTokens,
-    reasoningTokens = next.reasoningTokens ?: previous?.reasoningTokens,
+    cacheCreationInputTokens = next.cacheCreationInputTokens ?: previous?.cacheCreationInputTokens,
+    cacheReadInputTokens = next.cacheReadInputTokens ?: previous?.cacheReadInputTokens,
     raw = next.raw,
 )

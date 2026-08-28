@@ -2,7 +2,6 @@ package io.github.zvensmoluya.tavernplayer.connections
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import io.github.zvensmoluya.modelgateway.AuthScheme
-import io.github.zvensmoluya.modelgateway.ConnectionTemplates
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking

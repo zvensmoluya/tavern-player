@@ -9,7 +9,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.modelgateway.AuthScheme
-import io.github.zvensmoluya.modelgateway.ConnectionTemplates
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule

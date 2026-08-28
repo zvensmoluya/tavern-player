@@ -1,7 +1,6 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
 import io.github.zvensmoluya.modelgateway.AuthScheme
-import io.github.zvensmoluya.modelgateway.ConnectionTemplates
 import io.github.zvensmoluya.modelgateway.CredentialResolver
 import io.github.zvensmoluya.modelgateway.ModelGateway
 import io.github.zvensmoluya.modelgateway.SecretValue

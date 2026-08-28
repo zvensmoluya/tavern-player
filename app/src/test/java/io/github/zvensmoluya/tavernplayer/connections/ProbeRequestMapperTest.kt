@@ -1,8 +1,14 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicUsage
+import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsUsage
 import io.github.zvensmoluya.modelgateway.chat.ChatRole
+import io.github.zvensmoluya.modelgateway.gemini.GeminiGenerateContentUsage
 import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionInputStep
+import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionsUsage
+import io.github.zvensmoluya.modelgateway.responses.ResponsesUsage
 import io.github.zvensmoluya.modelgateway.responses.ResponsesRole
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -39,5 +45,31 @@ class ProbeRequestMapperTest {
         assertNull(generateContent.thinking)
         assertNull(generateContent.store)
         assertFalse(generateContent.contents.isEmpty())
+    }
+
+    @Test
+    fun `probe projects protocol native usage only at the app boundary`() {
+        val raw = buildJsonObject {}
+
+        assertEquals(
+            ProbeUsage(1, 2, 3, 4, 5),
+            ResponsesUsage(1, 2, 3, 4, 5, raw).toProbeUsage(),
+        )
+        assertEquals(
+            ProbeUsage(6, 7, 13, 8, 9),
+            ChatCompletionsUsage(6, 7, 13, 8, 9, raw).toProbeUsage(),
+        )
+        assertEquals(
+            ProbeUsage(inputTokens = 10, outputTokens = 11, totalTokens = 21, cachedTokens = 25),
+            AnthropicUsage(10, 11, 12, 13, raw).toProbeUsage(),
+        )
+        assertEquals(
+            ProbeUsage(14, 15, 29, 16, 17),
+            GeminiInteractionsUsage(14, 15, 29, 16, 17, 18, raw).toProbeUsage(),
+        )
+        assertEquals(
+            ProbeUsage(19, 20, 39, 21, 22),
+            GeminiGenerateContentUsage(19, 20, 39, 21, 22, 23, raw).toProbeUsage(),
+        )
     }
 }

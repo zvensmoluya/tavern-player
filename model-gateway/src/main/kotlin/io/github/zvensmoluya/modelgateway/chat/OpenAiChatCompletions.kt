@@ -3,8 +3,6 @@ package io.github.zvensmoluya.modelgateway.chat
 import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
-import io.github.zvensmoluya.modelgateway.StreamResult
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import io.github.zvensmoluya.modelgateway.long
 import io.github.zvensmoluya.modelgateway.obj
 import io.github.zvensmoluya.modelgateway.string
@@ -38,13 +36,31 @@ data class ChatCompletionsRequest(
     val store: Boolean? = null,
 )
 
+data class ChatCompletionsUsage(
+    val promptTokens: Long? = null,
+    val completionTokens: Long? = null,
+    val totalTokens: Long? = null,
+    val cachedPromptTokens: Long? = null,
+    val reasoningCompletionTokens: Long? = null,
+    val raw: JsonObject,
+)
+
+data class ChatCompletionsResult(
+    val content: String,
+    val reasoningContent: String,
+    val usage: ChatCompletionsUsage?,
+    val finishReason: String?,
+    val completionId: String?,
+    val unknownEventCount: Int,
+)
+
 sealed interface ChatCompletionsEvent {
     val raw: JsonObject
 
     data class Started(val responseId: String?, override val raw: JsonObject) : ChatCompletionsEvent
     data class TextDelta(val text: String, override val raw: JsonObject) : ChatCompletionsEvent
     data class ReasoningDelta(val text: String, override val raw: JsonObject) : ChatCompletionsEvent
-    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : ChatCompletionsEvent
+    data class Usage(val usage: ChatCompletionsUsage, override val raw: JsonObject) : ChatCompletionsEvent
     data class Finished(val reason: String?, override val raw: JsonObject) : ChatCompletionsEvent
     data class Unknown(override val raw: JsonObject) : ChatCompletionsEvent
 }
@@ -71,7 +87,7 @@ class OpenAiChatCompletionsClient internal constructor(
 class ChatCompletionsAccumulator {
     private val text = StringBuilder()
     private val reasoning = StringBuilder()
-    private var usage: TokenUsage? = null
+    private var usage: ChatCompletionsUsage? = null
     private var finishReason: String? = null
     private var responseId: String? = null
     private var unknown = 0
@@ -87,13 +103,12 @@ class ChatCompletionsAccumulator {
         }
     }
 
-    fun result(): StreamResult = StreamResult(
-        text = text.toString(),
-        reasoning = reasoning.toString(),
-        signatures = emptyList(),
+    fun result(): ChatCompletionsResult = ChatCompletionsResult(
+        content = text.toString(),
+        reasoningContent = reasoning.toString(),
         usage = usage,
         finishReason = finishReason,
-        responseId = responseId,
+        completionId = responseId,
         unknownEventCount = unknown,
     )
 }
@@ -151,12 +166,12 @@ private fun parse(data: String): List<ChatCompletionsEvent> {
         raw.obj("usage")?.let { usage ->
             add(
                 ChatCompletionsEvent.Usage(
-                    TokenUsage(
-                        inputTokens = usage.long("prompt_tokens"),
-                        outputTokens = usage.long("completion_tokens"),
+                    ChatCompletionsUsage(
+                        promptTokens = usage.long("prompt_tokens"),
+                        completionTokens = usage.long("completion_tokens"),
                         totalTokens = usage.long("total_tokens"),
-                        cachedTokens = usage.obj("prompt_tokens_details")?.long("cached_tokens"),
-                        reasoningTokens = usage.obj("completion_tokens_details")?.long("reasoning_tokens"),
+                        cachedPromptTokens = usage.obj("prompt_tokens_details")?.long("cached_tokens"),
+                        reasoningCompletionTokens = usage.obj("completion_tokens_details")?.long("reasoning_tokens"),
                         raw = usage,
                     ),
                     raw,

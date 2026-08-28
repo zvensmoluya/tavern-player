@@ -130,7 +130,7 @@ ST 的统一聊天消息通常是 `{ role, content }`，但发送前会根据 Pr
 - stop strings、assistant prefill、reasoning、tool calls、图片等如何表达；
 - 流式响应如何解析，错误如何归一化。
 
-首个实现不再以 **OpenAI-compatible** 为中心。当前 `ModelGateway` 直接提供 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个协议原生客户端。它们共享传输与安全能力，但保留各自的 state、reasoning/thinking、signature、usage 和 finish 语义。不要让编译器直接依赖 HTTP JSON，也不要把某个协议的字段伪装成所有 Provider 都支持的公共参数。
+首个实现不再以 **OpenAI-compatible** 为中心。当前 `ModelGateway` 直接提供 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个协议原生客户端。它们共享传输与安全能力，但各自拥有原生的 state、reasoning/thinking、signature、usage、finish 和最终 result 语义。App 可以为具体页面建立展示投影，但不要让编译器直接依赖 HTTP JSON，也不要把某个协议的字段伪装成所有 Provider 都支持的公共参数。
 
 ## 建议的长期模块边界
 

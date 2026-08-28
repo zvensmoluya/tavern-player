@@ -3,8 +3,6 @@ package io.github.zvensmoluya.modelgateway.responses
 import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
-import io.github.zvensmoluya.modelgateway.StreamResult
-import io.github.zvensmoluya.modelgateway.TokenUsage
 import io.github.zvensmoluya.modelgateway.long
 import io.github.zvensmoluya.modelgateway.obj
 import io.github.zvensmoluya.modelgateway.string
@@ -46,13 +44,31 @@ data class ResponsesRequest(
     val store: Boolean? = null,
 )
 
+data class ResponsesUsage(
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val totalTokens: Long? = null,
+    val cachedInputTokens: Long? = null,
+    val reasoningOutputTokens: Long? = null,
+    val raw: JsonObject,
+)
+
+data class ResponsesResult(
+    val outputText: String,
+    val reasoningSummary: String,
+    val usage: ResponsesUsage?,
+    val status: String?,
+    val responseId: String?,
+    val unknownEventCount: Int,
+)
+
 sealed interface ResponsesEvent {
     val raw: JsonObject
 
     data class Started(val responseId: String?, override val raw: JsonObject) : ResponsesEvent
     data class TextDelta(val text: String, override val raw: JsonObject) : ResponsesEvent
     data class ReasoningDelta(val text: String, override val raw: JsonObject) : ResponsesEvent
-    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : ResponsesEvent
+    data class Usage(val usage: ResponsesUsage, override val raw: JsonObject) : ResponsesEvent
     data class Finished(val status: String?, val responseId: String?, override val raw: JsonObject) : ResponsesEvent
     data class Failed(val message: String?, override val raw: JsonObject) : ResponsesEvent
     data class Lifecycle(val name: String, override val raw: JsonObject) : ResponsesEvent
@@ -82,7 +98,7 @@ class OpenAiResponsesClient internal constructor(
 class ResponsesAccumulator {
     private val text = StringBuilder()
     private val reasoning = StringBuilder()
-    private var usage: TokenUsage? = null
+    private var usage: ResponsesUsage? = null
     private var finishReason: String? = null
     private var responseId: String? = null
     private var unknown = 0
@@ -103,12 +119,11 @@ class ResponsesAccumulator {
         }
     }
 
-    fun result(): StreamResult = StreamResult(
-        text = text.toString(),
-        reasoning = reasoning.toString(),
-        signatures = emptyList(),
+    fun result(): ResponsesResult = ResponsesResult(
+        outputText = text.toString(),
+        reasoningSummary = reasoning.toString(),
         usage = usage,
-        finishReason = finishReason,
+        status = finishReason,
         responseId = responseId,
         unknownEventCount = unknown,
     )
@@ -188,11 +203,11 @@ private fun parse(data: String): List<ResponsesEvent> {
     }
 }
 
-private fun JsonObject.toUsage(): TokenUsage = TokenUsage(
+private fun JsonObject.toUsage(): ResponsesUsage = ResponsesUsage(
     inputTokens = long("input_tokens"),
     outputTokens = long("output_tokens"),
     totalTokens = long("total_tokens"),
-    cachedTokens = obj("input_tokens_details")?.long("cached_tokens"),
-    reasoningTokens = obj("output_tokens_details")?.long("reasoning_tokens"),
+    cachedInputTokens = obj("input_tokens_details")?.long("cached_tokens"),
+    reasoningOutputTokens = obj("output_tokens_details")?.long("reasoning_tokens"),
     raw = this,
 )
