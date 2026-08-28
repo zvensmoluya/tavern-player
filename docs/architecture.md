@@ -277,7 +277,11 @@ ModelGateway
 
 连接探针为了展示统一的 token 摘要，会在 `app` 的 `ProbeService` 中把五种原生 usage 映射为 `ProbeUsage`。这只是当前页面的 UI 投影，不属于网关契约，也不能被未来 Runtime 当作协议无关的模型响应。
 
-连接保存完整操作 URL，不猜测 `/v1`，也不根据 endpoint 自动切换协议。Gemini Interactions 与 GenerateContent 是两个客户端；Vertex Express 复用 GenerateContent 客户端。官方 endpoint、鉴权默认值与 Vertex Express 等可选项是 App 的连接模板，不是网关对 Provider 的内置认识。OpenRouter 的一个 key 对应多种协议和模型，属于以后可选的聚合层，不进入当前内核。
+`ModelGateway` 继续只接收经过验证的完整操作 URL，也不根据地址自动切换协议。面向用户的连接页则以“协议、API 地址、API Key、模型”为单一路径：App 的协议级 resolver 接受服务根地址、版本地址或完整操作地址，补齐生成与模型目录路径后再投影为 `ConnectionTarget`。厂商只可以作为填写默认值的 preset，不能形成官方服务与自定义服务两套 adapter。Gemini Interactions 与 GenerateContent 是两个协议客户端；Vertex Express 只是 GenerateContent 的可选 preset。OpenRouter 的一个 key 对应多种协议和模型，属于以后可选的聚合层，不进入当前内核。
+
+页面不直接展示 stream/catalog operation URL、鉴权位置、credential origin、原生 usage/finish 或测试 prompt。认证位置由所选协议固定决定；API Key 留空时不发送认证，以兼容无需认证的本地服务，不允许用户任意组合协议与认证 Header。地址换源仍由凭据边界要求用户确认，但产品文案只表达是否允许向新地址发送已保存的 API Key。
+
+模型目录是连接保存后的 best-effort 能力，不是连接成立或模型可生成的前提。明确版本或完整操作地址只请求对应的模型目录；未版本化的 OpenAI/Anthropic 地址可以有限尝试直连与 `/v1`，且只有 404、405、501 允许切换候选路径，认证、限流和网络失败不得触发盲目探测。目录结果区分成功、空列表、不支持、认证失败、限流、网络失败和不可解析响应；失败不清空缓存与已选模型。界面始终保留同一模型控件中的手工 ID 输入，最终由一次最小生成请求验证实际能力。
 
 Preset 与 ST Runtime 尚未开始映射生成参数。当前连接探针固定用协议原生字段发送 512 token 上限，并省略 temperature、top-p、top-k。等 Runtime 有真实需求时，再在明确的协议边界完成映射，而不是先发明共享 sampling options 或通用 Provider DSL。
 

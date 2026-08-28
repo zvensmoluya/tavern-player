@@ -34,6 +34,7 @@ data class StoredConnection(
     val name: String,
     val templateId: String,
     val protocol: ModelProtocol,
+    val apiAddress: String,
     val streamEndpoint: String,
     val catalogEndpoint: String?,
     val authScheme: AuthScheme,
@@ -75,11 +76,31 @@ data class ConnectionDraft(
     val name: String,
     val templateId: String,
     val protocol: ModelProtocol,
-    val streamEndpoint: String,
-    val catalogEndpoint: String?,
-    val authScheme: AuthScheme,
+    val apiAddress: String,
     val selectedModel: String,
 )
+
+sealed interface ModelDiscoveryResult {
+    data class Found(val cache: ModelCache) : ModelDiscoveryResult
+    data class Empty(val cache: ModelCache) : ModelDiscoveryResult
+    data class Unavailable(val failure: ModelDiscoveryFailure) : ModelDiscoveryResult
+}
+
+data class ModelDiscoveryFailure(
+    val kind: ModelDiscoveryFailureKind,
+    val httpStatus: Int? = null,
+    val diagnostic: String? = null,
+)
+
+enum class ModelDiscoveryFailureKind {
+    UNSUPPORTED,
+    AUTHENTICATION,
+    CREDENTIAL_CONFIRMATION,
+    RATE_LIMITED,
+    UNREACHABLE,
+    INVALID_RESPONSE,
+    SERVICE,
+}
 
 enum class CredentialStatus {
     READY,

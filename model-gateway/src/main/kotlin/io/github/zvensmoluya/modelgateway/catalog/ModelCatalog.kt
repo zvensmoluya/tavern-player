@@ -102,14 +102,14 @@ private fun parsePage(protocol: ModelProtocol, body: String): CatalogPage {
 }
 
 private fun parseGemini(root: JsonObject): CatalogPage {
-    val values = root["models"] as? JsonArray ?: JsonArray(emptyList())
+    val values = root.modelObjects("models", "data")
     return CatalogPage(
         models = values.mapNotNull { element ->
-            val raw = element as? JsonObject ?: return@mapNotNull null
-            val serviceId = raw.string("name") ?: return@mapNotNull null
+            val raw = element
+            val serviceId = raw.string("name") ?: raw.string("id") ?: return@mapNotNull null
             ModelDescriptor(
                 id = EndpointRules.normalizeModelId(serviceId),
-                name = raw.string("displayName"),
+                name = raw.string("displayName") ?: raw.string("display_name"),
                 inputTokenLimit = raw.long("inputTokenLimit"),
                 outputTokenLimit = raw.long("outputTokenLimit"),
                 supportedOperations = raw.stringSet("supportedGenerationMethods"),
@@ -122,15 +122,15 @@ private fun parseGemini(root: JsonObject): CatalogPage {
 }
 
 private fun parseAnthropic(root: JsonObject): CatalogPage {
-    val values = root["data"] as? JsonArray ?: JsonArray(emptyList())
+    val values = root.modelObjects("data", "models")
     val hasMore = root["has_more"]?.jsonPrimitive?.booleanOrNull == true
     return CatalogPage(
         models = values.mapNotNull { element ->
-            val raw = element as? JsonObject ?: return@mapNotNull null
-            val id = raw.string("id") ?: return@mapNotNull null
+            val raw = element
+            val id = raw.string("id") ?: raw.string("name") ?: return@mapNotNull null
             ModelDescriptor(
-                id = id,
-                name = raw.string("display_name"),
+                id = EndpointRules.normalizeModelId(id),
+                name = raw.string("display_name") ?: raw.string("displayName"),
                 inputTokenLimit = raw.long("input_token_limit") ?: raw.long("context_window"),
                 outputTokenLimit = raw.long("output_token_limit") ?: raw.long("max_output_tokens"),
                 supportedOperations = raw.stringSet("supported_operations"),
@@ -143,14 +143,16 @@ private fun parseAnthropic(root: JsonObject): CatalogPage {
 }
 
 private fun parseOpenAi(root: JsonObject): CatalogPage {
-    val values = root["data"] as? JsonArray ?: JsonArray(emptyList())
+    val values = root.modelObjects("data", "models")
     val hasMore = root["has_more"]?.jsonPrimitive?.booleanOrNull == true
     val models = values.mapNotNull { element ->
-        val raw = element as? JsonObject ?: return@mapNotNull null
-        val id = raw.string("id") ?: return@mapNotNull null
+        val raw = element
+        val id = raw.string("id") ?: raw.string("name") ?: return@mapNotNull null
         ModelDescriptor(
-            id = id,
-            name = raw.string("name") ?: raw.string("display_name"),
+            id = EndpointRules.normalizeModelId(id),
+            name = raw.string("displayName")
+                ?: raw.string("display_name")
+                ?: raw.string("name").takeIf { raw.string("id") != null },
             inputTokenLimit = raw.long("input_token_limit") ?: raw.long("context_window"),
             outputTokenLimit = raw.long("output_token_limit") ?: raw.long("max_output_tokens"),
             supportedOperations = raw.stringSet("supported_operations"),
@@ -169,3 +171,11 @@ private fun JsonObject.stringSet(name: String): Set<String> =
         ?.mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
         ?.toSet()
         .orEmpty()
+
+private fun JsonObject.modelObjects(vararg names: String): List<JsonObject> {
+    val arrays = names.mapNotNull { name -> this[name] as? JsonArray }
+    if (arrays.isEmpty()) {
+        throw GatewayException.Protocol("Model catalog response did not contain a supported model list")
+    }
+    return arrays.flatMap { values -> values.mapNotNull { it as? JsonObject } }
+}

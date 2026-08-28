@@ -1,14 +1,13 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -17,13 +16,13 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
-@Config(sdk = [36])
+@Config(sdk = [35])
 class ModelConnectionsScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
     @Test
-    fun `empty list exposes template add flow`() {
+    fun `empty list exposes one add action`() {
         var addCalled = false
         compose.setContent {
             TavernPlayerTheme {
@@ -31,23 +30,20 @@ class ModelConnectionsScreenTest {
             }
         }
 
-        compose.onNodeWithText("还没有模型连接").assertIsDisplayed()
+        compose.onNodeWithText("添加一个模型").assertIsDisplayed()
         compose.onNodeWithTag("addConnection").performClick()
-        compose.onNodeWithText("OpenAI Responses").performClick()
         assertTrue(addCalled)
     }
 
     @Test
-    fun `editor always exposes manual model field and validation status`() {
-        val template = ConnectionTemplates.vertexExpress
+    fun `editor exposes protocol address and key without transport fields`() {
+        val template = ConnectionTemplates.openAiResponses
         val draft = ConnectionDraft(
             id = "one",
             name = template.displayName,
             templateId = template.id,
             protocol = template.protocol,
-            streamEndpoint = template.streamEndpoint,
-            catalogEndpoint = null,
-            authScheme = AuthScheme.X_GOOG_API_KEY,
+            apiAddress = "https://api.openai.com/v1",
             selectedModel = "",
         )
         compose.setContent {
@@ -55,20 +51,25 @@ class ModelConnectionsScreenTest {
                 ModelConnectionsScreen(
                     state = ConnectionsUiState(
                         loading = false,
-                        editor = ConnectionEditorState(draft = draft, credentialStatus = CredentialStatus.MISSING),
+                        editor = ConnectionEditorState(
+                            draft = draft,
+                            credentialStatus = CredentialStatus.MISSING,
+                        ),
                     ),
                     actions = actions(),
                 )
             }
         }
 
-        compose.onNode(hasScrollAction()).performScrollToIndex(6)
-        compose.onNodeWithText("需要重新输入密钥").assertIsDisplayed()
-        compose.onNode(hasScrollAction()).performScrollToIndex(10)
-        compose.onNodeWithTag("manualModelId").assertIsDisplayed()
-        compose.onNode(hasScrollAction()).performScrollToIndex(12)
-        compose.onNodeWithText("连接测试最多 512 tokens。temperature、top-p、top-k 均不发送。")
-            .assertIsDisplayed()
+        compose.onNodeWithText("接口协议").assertIsDisplayed()
+        compose.onNodeWithTag("apiAddress").assertIsDisplayed()
+        compose.onNodeWithTag("credential").assertIsDisplayed()
+        compose.onAllNodesWithText("Stream endpoint").assertCountEquals(0)
+        compose.onAllNodesWithText("Catalog endpoint（可选）").assertCountEquals(0)
+        compose.onAllNodesWithText("鉴权：Bearer").assertCountEquals(0)
+        compose.onNodeWithText("更多设置").performClick()
+        compose.onAllNodesWithText("认证方式").assertCountEquals(0)
+        compose.onAllNodesWithText("Bearer Token").assertCountEquals(0)
     }
 
     private fun actions(add: (String) -> Unit = {}) = ConnectionScreenActions(
@@ -76,19 +77,15 @@ class ModelConnectionsScreenTest {
         edit = {},
         closeEditor = {},
         delete = {},
-        chooseTemplate = {},
+        chooseProtocol = {},
         updateName = {},
-        updateStreamEndpoint = {},
-        updateCatalogEndpoint = {},
-        updateAuthScheme = {},
+        updateApiAddress = {},
         updateCredential = {},
         updateModel = {},
         confirmReuse = {},
         save = {},
         refreshModels = {},
-        updateProbeSystem = {},
-        updateProbeUser = {},
-        runProbe = {},
-        cancelProbe = {},
+        runTest = {},
+        cancelTest = {},
     )
 }

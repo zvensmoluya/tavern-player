@@ -17,7 +17,7 @@ class AppGraph(context: Context) {
     val connectionRepository = ConnectionRepository(
         stateStore = JsonConnectionDataStore(appContext.gatewayDataStore),
         credentialStore = credentialStore,
-        gateway = gateway,
+        catalogLoader = { gateway.modelCatalog.list(it) },
     )
     val probeService = ProbeService(gateway, connectionRepository)
 }

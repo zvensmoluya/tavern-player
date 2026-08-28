@@ -3,7 +3,6 @@ package io.github.zvensmoluya.tavernplayer.connections
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.GatewayException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -22,6 +21,7 @@ data class ConnectionEditorState(
     val saving: Boolean = false,
     val refreshingModels: Boolean = false,
     val message: String? = null,
+    val modelMessage: String? = null,
 )
 
 data class ProbeUiState(
@@ -51,6 +51,7 @@ class ModelConnectionsViewModel(
     private val _uiState = MutableStateFlow(ConnectionsUiState())
     val uiState: StateFlow<ConnectionsUiState> = _uiState.asStateFlow()
     private var probeJob: Job? = null
+    private var modelDiscoveryJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -80,6 +81,7 @@ class ModelConnectionsViewModel(
 
     fun startNew(templateId: String = ConnectionTemplates.openAiResponses.id) {
         cancelProbe()
+        cancelModelDiscovery()
         val template = ConnectionTemplates.require(templateId)
         _uiState.update {
             it.copy(
@@ -89,14 +91,13 @@ class ModelConnectionsViewModel(
                         name = template.displayName,
                         templateId = template.id,
                         protocol = template.protocol,
-                        streamEndpoint = template.streamEndpoint,
-                        catalogEndpoint = template.catalogEndpoint,
-                        authScheme = template.authScheme,
+                        apiAddress = ConnectionEndpointResolver.displayAddress(
+                            template.protocol,
+                            template.streamEndpoint,
+                        ),
                         selectedModel = "",
                     ),
-                    credentialStatus = if (template.authScheme == AuthScheme.NONE) {
-                        CredentialStatus.NOT_REQUIRED
-                    } else CredentialStatus.MISSING,
+                    credentialStatus = CredentialStatus.NOT_REQUIRED,
                 ),
                 probe = ProbeUiState(),
             )
@@ -105,6 +106,7 @@ class ModelConnectionsViewModel(
 
     fun edit(connectionId: String) {
         cancelProbe()
+        cancelModelDiscovery()
         val connection = _uiState.value.connections.firstOrNull { it.id == connectionId } ?: return
         _uiState.update {
             it.copy(
@@ -120,43 +122,60 @@ class ModelConnectionsViewModel(
 
     fun closeEditor() {
         cancelProbe()
+        cancelModelDiscovery()
         _uiState.update { it.copy(editor = null, probe = ProbeUiState()) }
     }
 
     fun chooseTemplate(templateId: String) {
         val template = ConnectionTemplates.require(templateId)
         updateEditor { editor ->
+            val previousTemplate = runCatching { ConnectionTemplates.require(editor.draft.templateId) }.getOrNull()
+            val previousDefaultAddress = previousTemplate?.let {
+                ConnectionEndpointResolver.displayAddress(it.protocol, it.streamEndpoint)
+            }
+            val nextDefaultAddress = ConnectionEndpointResolver.displayAddress(
+                template.protocol,
+                template.streamEndpoint,
+            )
             editor.copy(
                 draft = editor.draft.copy(
                     templateId = template.id,
                     protocol = template.protocol,
-                    streamEndpoint = template.streamEndpoint,
-                    catalogEndpoint = template.catalogEndpoint,
-                    authScheme = template.authScheme,
+                    apiAddress = if (editor.draft.apiAddress == previousDefaultAddress) {
+                        nextDefaultAddress
+                    } else editor.draft.apiAddress,
                 ),
                 confirmCredentialReuse = false,
                 message = null,
+                modelMessage = null,
             )
         }
     }
 
     fun updateName(value: String) = updateDraft { copy(name = value) }
-    fun updateStreamEndpoint(value: String) = updateDraft { copy(streamEndpoint = value) }
-    fun updateCatalogEndpoint(value: String) = updateDraft { copy(catalogEndpoint = value) }
-    fun updateAuthScheme(value: AuthScheme) = updateDraft { copy(authScheme = value) }
+    fun updateApiAddress(value: String) = updateDraft { copy(apiAddress = value) }
     fun updateModel(value: String) = updateDraft { copy(selectedModel = value) }
-    fun updateCredential(value: String) = updateEditor { it.copy(credentialInput = value, message = null) }
+    fun updateCredential(value: String) = updateEditor {
+        it.copy(credentialInput = value, message = null, modelMessage = null)
+    }
     fun setConfirmCredentialReuse(value: Boolean) = updateEditor { it.copy(confirmCredentialReuse = value) }
-    fun updateProbeSystem(value: String) = updateProbe { copy(system = value) }
-    fun updateProbeUser(value: String) = updateProbe { copy(user = value) }
 
     fun save() {
         val editor = _uiState.value.editor ?: return
         viewModelScope.launch {
-            updateEditor { it.copy(saving = true, message = null) }
+            updateEditor { it.copy(saving = true, message = null, modelMessage = null) }
             try {
+                val preparedDraft = editor.draft
+                val previous = _uiState.value.connections.firstOrNull { it.id == preparedDraft.id }
+                val shouldDiscover = previous == null ||
+                    previous.protocol != preparedDraft.protocol ||
+                    previous.apiAddress != preparedDraft.apiAddress.trim().trimEnd('/') ||
+                    editor.credentialInput.isNotBlank() ||
+                    editor.confirmCredentialReuse ||
+                    previous.modelCache.models.isEmpty()
+                updateEditor { it.copy(draft = preparedDraft) }
                 val stored = repository.save(
-                    draft = editor.draft,
+                    draft = preparedDraft,
                     newCredential = editor.credentialInput,
                     confirmCredentialReuse = editor.confirmCredentialReuse,
                 )
@@ -168,10 +187,14 @@ class ModelConnectionsViewModel(
                         existingCredentialMask = stored.credentialMask,
                         credentialStatus = status,
                         saving = false,
+                        refreshingModels = false,
                         message = if (status == CredentialStatus.ORIGIN_CONFIRMATION_REQUIRED) {
-                            "endpoint origin 已改变。勾选确认复用原密钥，或输入新密钥。"
-                        } else "已保存",
+                            "请确认向新地址发送已保存的 API Key"
+                        } else null,
                     )
+                }
+                if (shouldDiscover && status in readyCredentialStatuses) {
+                    startModelDiscovery(stored.id)
                 }
             } catch (error: Exception) {
                 updateEditor { it.copy(saving = false, message = error.userMessage()) }
@@ -181,33 +204,12 @@ class ModelConnectionsViewModel(
 
     fun refreshModels() {
         val editor = _uiState.value.editor ?: return
-        viewModelScope.launch {
-            updateEditor { it.copy(refreshingModels = true, message = null) }
-            try {
-                val cache = repository.refreshModels(editor.draft.id)
-                updateEditor {
-                    it.copy(
-                        refreshingModels = false,
-                        message = "已刷新 ${cache.models.size} 个模型",
-                    )
-                }
-            } catch (error: Exception) {
-                val cachedAt = _uiState.value.connections.firstOrNull { it.id == editor.draft.id }
-                    ?.modelCache?.refreshedAtEpochMillis
-                updateEditor {
-                    it.copy(
-                        refreshingModels = false,
-                        message = if (cachedAt != null) {
-                            "刷新失败，继续显示上次成功缓存：${error.userMessage()}"
-                        } else "刷新失败：${error.userMessage()}",
-                    )
-                }
-            }
-        }
+        startModelDiscovery(editor.draft.id)
     }
 
     fun delete(connectionId: String) {
         cancelProbe()
+        cancelModelDiscovery()
         viewModelScope.launch {
             repository.delete(connectionId)
             if (_uiState.value.editor?.draft?.id == connectionId) closeEditor()
@@ -260,7 +262,7 @@ class ModelConnectionsViewModel(
     }
 
     private fun updateDraft(transform: ConnectionDraft.() -> ConnectionDraft) = updateEditor {
-        it.copy(draft = it.draft.transform(), message = null)
+        it.copy(draft = it.draft.transform(), message = null, modelMessage = null)
     }
 
     private fun updateEditor(transform: (ConnectionEditorState) -> ConnectionEditorState) {
@@ -269,6 +271,27 @@ class ModelConnectionsViewModel(
 
     private fun updateProbe(transform: ProbeUiState.() -> ProbeUiState) {
         _uiState.update { it.copy(probe = it.probe.transform()) }
+    }
+
+    private fun startModelDiscovery(connectionId: String) {
+        cancelModelDiscovery()
+        updateEditor { it.copy(refreshingModels = true, modelMessage = null) }
+        modelDiscoveryJob = viewModelScope.launch {
+            val result = repository.refreshModels(connectionId)
+            if (_uiState.value.editor?.draft?.id == connectionId) {
+                updateEditor {
+                    it.copy(
+                        refreshingModels = false,
+                        modelMessage = result.userMessage(),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun cancelModelDiscovery() {
+        modelDiscoveryJob?.cancel()
+        modelDiscoveryJob = null
     }
 
     class Factory(
@@ -286,18 +309,47 @@ private fun StoredConnection.toDraft() = ConnectionDraft(
     name = name,
     templateId = templateId,
     protocol = protocol,
-    streamEndpoint = streamEndpoint,
-    catalogEndpoint = catalogEndpoint,
-    authScheme = authScheme,
+    apiAddress = apiAddress,
     selectedModel = selectedModel,
 )
 
-private fun Throwable.userMessage(): String = when (this) {
-    is GatewayException.HttpFailure -> buildString {
-        append("HTTP ")
-        append(status)
-        requestId?.let { append(" · requestId=").append(it) }
+private fun ModelDiscoveryResult.userMessage(): String? = when (this) {
+    is ModelDiscoveryResult.Found,
+    is ModelDiscoveryResult.Empty,
+    -> null
+    is ModelDiscoveryResult.Unavailable -> when (failure.kind) {
+        ModelDiscoveryFailureKind.UNSUPPORTED -> null
+        ModelDiscoveryFailureKind.AUTHENTICATION -> "API Key 不可用"
+        ModelDiscoveryFailureKind.CREDENTIAL_CONFIRMATION -> "请确认 API 地址"
+        ModelDiscoveryFailureKind.RATE_LIMITED -> "请求过于频繁，请稍后再试"
+        ModelDiscoveryFailureKind.UNREACHABLE -> "无法连接到模型服务"
+        ModelDiscoveryFailureKind.INVALID_RESPONSE -> "模型列表不可识别"
+        ModelDiscoveryFailureKind.SERVICE -> failure.httpStatus?.let { "模型服务暂时不可用（HTTP $it）" }
+            ?: "模型服务暂时不可用"
     }
-    is GatewayException -> message ?: "模型网关错误"
-    else -> message ?: "未知错误"
 }
+
+private fun Throwable.userMessage(): String = when (this) {
+    is GatewayException.Authentication,
+    is GatewayException.AuthenticationFailure,
+    -> "API Key 不可用"
+    is GatewayException.RateLimited -> "请求过于频繁，请稍后再试"
+    is GatewayException.HttpFailure -> when (status) {
+        404 -> "API 地址或协议不匹配"
+        else -> "模型服务暂时不可用（HTTP $status）"
+    }
+    is GatewayException.Network -> "无法连接到模型服务"
+    is GatewayException.Security -> "API 地址未获授权"
+    is GatewayException.Configuration -> when {
+        message.orEmpty().contains("model", ignoreCase = true) -> "请选择模型"
+        message.orEmpty().contains("HTTPS", ignoreCase = true) -> "API 地址必须使用 HTTPS"
+        else -> "请检查连接信息"
+    }
+    is GatewayException -> "模型服务返回了无法识别的数据"
+    else -> "操作失败"
+}
+
+private val readyCredentialStatuses = setOf(
+    CredentialStatus.READY,
+    CredentialStatus.NOT_REQUIRED,
+)

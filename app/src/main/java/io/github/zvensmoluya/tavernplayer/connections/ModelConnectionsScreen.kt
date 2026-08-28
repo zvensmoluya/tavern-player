@@ -1,25 +1,30 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -37,10 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.zvensmoluya.modelgateway.AuthScheme
-import java.text.DateFormat
-import java.util.Date
+import java.net.URI
 
 @Composable
 fun ModelConnectionsRoute(viewModel: ModelConnectionsViewModel) {
@@ -52,20 +56,16 @@ fun ModelConnectionsRoute(viewModel: ModelConnectionsViewModel) {
             edit = viewModel::edit,
             closeEditor = viewModel::closeEditor,
             delete = viewModel::delete,
-            chooseTemplate = viewModel::chooseTemplate,
+            chooseProtocol = viewModel::chooseTemplate,
             updateName = viewModel::updateName,
-            updateStreamEndpoint = viewModel::updateStreamEndpoint,
-            updateCatalogEndpoint = viewModel::updateCatalogEndpoint,
-            updateAuthScheme = viewModel::updateAuthScheme,
+            updateApiAddress = viewModel::updateApiAddress,
             updateCredential = viewModel::updateCredential,
             updateModel = viewModel::updateModel,
             confirmReuse = viewModel::setConfirmCredentialReuse,
             save = viewModel::save,
             refreshModels = viewModel::refreshModels,
-            updateProbeSystem = viewModel::updateProbeSystem,
-            updateProbeUser = viewModel::updateProbeUser,
-            runProbe = viewModel::runProbe,
-            cancelProbe = viewModel::cancelProbe,
+            runTest = viewModel::runProbe,
+            cancelTest = viewModel::cancelProbe,
         ),
     )
 }
@@ -75,23 +75,18 @@ data class ConnectionScreenActions(
     val edit: (String) -> Unit,
     val closeEditor: () -> Unit,
     val delete: (String) -> Unit,
-    val chooseTemplate: (String) -> Unit,
+    val chooseProtocol: (String) -> Unit,
     val updateName: (String) -> Unit,
-    val updateStreamEndpoint: (String) -> Unit,
-    val updateCatalogEndpoint: (String) -> Unit,
-    val updateAuthScheme: (AuthScheme) -> Unit,
+    val updateApiAddress: (String) -> Unit,
     val updateCredential: (String) -> Unit,
     val updateModel: (String) -> Unit,
     val confirmReuse: (Boolean) -> Unit,
     val save: () -> Unit,
     val refreshModels: () -> Unit,
-    val updateProbeSystem: (String) -> Unit,
-    val updateProbeUser: (String) -> Unit,
-    val runProbe: () -> Unit,
-    val cancelProbe: () -> Unit,
+    val runTest: () -> Unit,
+    val cancelTest: () -> Unit,
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelConnectionsScreen(
     state: ConnectionsUiState,
@@ -101,91 +96,93 @@ fun ModelConnectionsScreen(
     if (editor == null) {
         ConnectionList(state, actions)
     } else {
-        val stored = state.connections.firstOrNull { it.id == editor.draft.id }
-        ConnectionEditor(editor, stored, state.probe, actions)
+        ConnectionEditor(
+            editor = editor,
+            stored = state.connections.firstOrNull { it.id == editor.draft.id },
+            probe = state.probe,
+            actions = actions,
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConnectionList(state: ConnectionsUiState, actions: ConnectionScreenActions) {
-    var addMenu by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<StoredConnection?>(null) }
     Scaffold(
-        topBar = { TopAppBar(title = { Text("模型连接") }) },
-        floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
-                    ConnectionTemplates.all.forEach { template ->
-                        DropdownMenuItem(
-                            text = { Text(template.displayName) },
-                            onClick = {
-                                addMenu = false
-                                actions.add(template.id)
-                            },
-                        )
+        topBar = {
+            TopAppBar(
+                title = { Text("模型") },
+                actions = {
+                    if (state.connections.isNotEmpty()) {
+                        TextButton(
+                            modifier = Modifier.testTag("addConnection"),
+                            onClick = { actions.add(ConnectionTemplates.openAiResponses.id) },
+                        ) { Text("添加") }
                     }
-                }
-                FloatingActionButton(
-                    modifier = Modifier.testTag("addConnection"),
-                    onClick = { addMenu = true },
-                ) { Text("+") }
-            }
+                },
+            )
         },
     ) { padding ->
-        if (!state.loading && state.connections.isEmpty()) {
-            Column(
+        when {
+            state.loading -> Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator() }
+
+            state.connections.isEmpty() -> Column(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("还没有模型连接", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(8.dp))
-                Text("从右下角选择协议模板。endpoint、鉴权和模型都可以随后编辑。")
+                Text("添加一个模型", style = MaterialTheme.typography.headlineSmall)
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    modifier = Modifier.testTag("addConnection"),
+                    onClick = { actions.add(ConnectionTemplates.openAiResponses.id) },
+                ) { Text("添加模型") }
             }
-        } else {
-            LazyColumn(
+
+            else -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(state.connections, key = StoredConnection::id) { connection ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(connection.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text(connection.protocol.name.replace('_', ' '), style = MaterialTheme.typography.bodySmall)
-                            Text(connection.selectedModel.ifBlank { "未选择模型" })
-                            Text(
-                                credentialStatusLabel(state.credentialStatuses[connection.id]),
-                                color = when (state.credentialStatuses[connection.id]) {
-                                    CredentialStatus.READY, CredentialStatus.NOT_REQUIRED -> MaterialTheme.colorScheme.primary
-                                    else -> MaterialTheme.colorScheme.error
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { actions.edit(connection.id) }) { Text("编辑") }
-                                TextButton(onClick = { pendingDelete = connection }) { Text("删除") }
+                    val status = state.credentialStatuses[connection.id]
+                    Card(
+                        onClick = { actions.edit(connection.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    connection.selectedModel.ifBlank { connection.name },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    "${protocolLabel(connection.protocol)} · ${addressHost(connection.streamEndpoint)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                connectionIssue(status, connection.selectedModel)?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                }
                             }
+                            Text("›", style = MaterialTheme.typography.headlineSmall)
                         }
                     }
                 }
             }
         }
-    }
-    pendingDelete?.let { connection ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("删除连接？") },
-            text = { Text("将同时删除 ${connection.name} 的密钥和模型缓存。") },
-            confirmButton = {
-                Button(onClick = {
-                    pendingDelete = null
-                    actions.delete(connection.id)
-                }) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } },
-        )
     }
 }
 
@@ -197,43 +194,52 @@ private fun ConnectionEditor(
     probe: ProbeUiState,
     actions: ConnectionScreenActions,
 ) {
-    var templateMenu by remember { mutableStateOf(false) }
-    var authMenu by remember { mutableStateOf(false) }
-    var modelMenu by remember { mutableStateOf(false) }
-    var reasoningExpanded by remember { mutableStateOf(false) }
+    var protocolMenu by remember { mutableStateOf(false) }
+    var modelPickerVisible by remember { mutableStateOf(false) }
+    var manualModel by remember { mutableStateOf(false) }
+    var moreSettings by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val cache = stored?.modelCache ?: ModelCache()
-    val canUseConnection = stored != null && stored.matches(editor.draft) &&
-        editor.credentialStatus in setOf(CredentialStatus.READY, CredentialStatus.NOT_REQUIRED)
+    val ready = editor.credentialStatus == CredentialStatus.READY ||
+        editor.credentialStatus == CredentialStatus.NOT_REQUIRED
+    val unchanged = stored?.matches(editor.draft) == true
+    val addressUnchanged = stored != null &&
+        editor.draft.apiAddress.trim().trimEnd('/') == stored.apiAddress
+    val canTest = stored != null && unchanged && addressUnchanged && ready &&
+        editor.draft.selectedModel.isNotBlank()
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (stored == null) "新建模型连接" else "编辑模型连接") },
+                title = { Text(if (stored == null) "添加模型" else "模型设置") },
                 navigationIcon = { TextButton(onClick = actions.closeEditor) { Text("返回") } },
                 actions = {
-                    if (stored != null) TextButton(onClick = { actions.delete(stored.id) }) { Text("删除") }
+                    if (stored != null) {
+                        TextButton(onClick = { confirmDelete = true }) { Text("删除") }
+                    }
                 },
             )
         },
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                SectionTitle("连接")
-                MenuButton(
-                    label = "模板：${ConnectionTemplates.require(editor.draft.templateId).displayName}",
-                    expanded = templateMenu,
-                    onExpand = { templateMenu = true },
-                    onDismiss = { templateMenu = false },
+                FieldLabel("接口协议")
+                MenuField(
+                    value = protocolLabel(editor.draft.protocol),
+                    expanded = protocolMenu,
+                    onExpand = { protocolMenu = true },
+                    onDismiss = { protocolMenu = false },
                 ) {
-                    ConnectionTemplates.all.forEach { template ->
+                    ConnectionTemplates.protocols.forEach { template ->
                         DropdownMenuItem(
                             text = { Text(template.displayName) },
                             onClick = {
-                                templateMenu = false
-                                actions.chooseTemplate(template.id)
+                                protocolMenu = false
+                                actions.chooseProtocol(template.id)
                             },
                         )
                     }
@@ -241,75 +247,23 @@ private fun ConnectionEditor(
             }
             item {
                 OutlinedTextField(
-                    value = editor.draft.name,
-                    onValueChange = actions.updateName,
-                    modifier = Modifier.fillMaxWidth().testTag("connectionName"),
-                    label = { Text("名称") },
+                    value = editor.draft.apiAddress,
+                    onValueChange = actions.updateApiAddress,
+                    modifier = Modifier.fillMaxWidth().testTag("apiAddress"),
+                    label = { Text("API 地址") },
                     singleLine = true,
                 )
-            }
-            item {
-                OutlinedTextField(
-                    value = editor.draft.streamEndpoint,
-                    onValueChange = actions.updateStreamEndpoint,
-                    modifier = Modifier.fillMaxWidth().testTag("streamEndpoint"),
-                    label = { Text("Stream endpoint") },
-                    supportingText = { Text("完整 HTTPS 操作 URL；不自动补 /v1") },
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = editor.draft.catalogEndpoint.orEmpty(),
-                    onValueChange = actions.updateCatalogEndpoint,
-                    modifier = Modifier.fillMaxWidth().testTag("catalogEndpoint"),
-                    label = { Text("Catalog endpoint（可选）") },
-                    supportingText = { Text("留空时始终可手填 model id") },
-                )
-            }
-            item {
-                MenuButton(
-                    label = "鉴权：${authLabel(editor.draft.authScheme)}",
-                    expanded = authMenu,
-                    onExpand = { authMenu = true },
-                    onDismiss = { authMenu = false },
-                ) {
-                    AuthScheme.entries.forEach { scheme ->
-                        DropdownMenuItem(
-                            text = { Text(authLabel(scheme)) },
-                            onClick = {
-                                authMenu = false
-                                actions.updateAuthScheme(scheme)
-                            },
-                        )
-                    }
-                }
             }
             item {
                 OutlinedTextField(
                     value = editor.credentialInput,
                     onValueChange = actions.updateCredential,
                     modifier = Modifier.fillMaxWidth().testTag("credential"),
-                    enabled = editor.draft.authScheme != AuthScheme.NONE,
-                    label = { Text("密钥") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    supportingText = {
-                        Text(
-                            when {
-                                editor.draft.authScheme == AuthScheme.NONE -> "此连接不使用凭据"
-                                editor.existingCredentialMask != null -> "已保存 ${editor.existingCredentialMask}；留空表示保留"
-                                else -> "密钥不会回填明文，也不会写入 DataStore"
-                            },
-                        )
+                    label = {
+                        Text(editor.existingCredentialMask?.let { "API Key · $it" } ?: "API Key（可选）")
                     },
+                    visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
-                )
-            }
-            item {
-                Text(
-                    credentialStatusLabel(editor.credentialStatus),
-                    color = if (editor.credentialStatus in setOf(CredentialStatus.READY, CredentialStatus.NOT_REQUIRED)) {
-                        MaterialTheme.colorScheme.primary
-                    } else MaterialTheme.colorScheme.error,
                 )
             }
             if (editor.credentialStatus == CredentialStatus.ORIGIN_CONFIRMATION_REQUIRED) {
@@ -319,7 +273,7 @@ private fun ConnectionEditor(
                             checked = editor.confirmCredentialReuse,
                             onCheckedChange = actions.confirmReuse,
                         )
-                        Text("我确认在新的 endpoint origin 继续使用原密钥")
+                        Text("允许向新地址发送已保存的 API Key")
                     }
                 }
             }
@@ -327,150 +281,284 @@ private fun ConnectionEditor(
                 Button(
                     onClick = actions.save,
                     enabled = !editor.saving,
-                    modifier = Modifier.testTag("saveConnection"),
-                ) { Text(if (editor.saving) "保存中…" else "保存连接") }
-                editor.message?.let { Text(it, modifier = Modifier.padding(top = 8.dp)) }
+                    modifier = Modifier.fillMaxWidth().testTag("saveConnection"),
+                ) {
+                    if (editor.saving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Spacer(Modifier.size(10.dp))
+                    }
+                    Text(if (stored == null) "连接" else "保存")
+                }
+                editor.message?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(top = 8.dp).testTag("connectionMessage"),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
-            item { HorizontalDivider(); SectionTitle("模型") }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+
+            if (stored != null) {
+                item { HorizontalDivider() }
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        if (editor.refreshingModels) {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                        } else {
+                            TextButton(
+                                onClick = actions.refreshModels,
+                                enabled = unchanged && addressUnchanged,
+                            ) {
+                                Text("重新获取")
+                            }
+                        }
+                    }
+                }
+                editor.modelMessage?.let { message ->
+                    item { StatusText(message, error = true) }
+                }
+                if (cache.models.isNotEmpty()) {
+                    item {
+                        OutlinedButton(
+                            onClick = { modelPickerVisible = true },
+                            modifier = Modifier.fillMaxWidth().testTag("modelPicker"),
+                        ) {
+                            Text(
+                                editor.draft.selectedModel.ifBlank { "选择模型" },
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("⌄")
+                        }
+                    }
+                }
+                item {
+                    if (cache.models.isNotEmpty()) {
+                        TextButton(onClick = { manualModel = !manualModel }) {
+                            Text(if (manualModel) "收起" else "输入模型 ID")
+                        }
+                    }
+                    if (manualModel || cache.models.isEmpty()) {
+                        OutlinedTextField(
+                            value = editor.draft.selectedModel,
+                            onValueChange = actions.updateModel,
+                            modifier = Modifier.fillMaxWidth().testTag("manualModelId"),
+                            label = { Text("模型 ID") },
+                            singleLine = true,
+                        )
+                    }
+                }
+                item {
                     Button(
-                        onClick = actions.refreshModels,
-                        enabled = canUseConnection && !editor.refreshingModels && !editor.draft.catalogEndpoint.isNullOrBlank(),
-                    ) { Text(if (editor.refreshingModels) "刷新中…" else "刷新模型") }
-                    cache.refreshedAtEpochMillis?.let {
-                        Text("缓存于 ${DateFormat.getDateTimeInstance().format(Date(it))}", style = MaterialTheme.typography.bodySmall)
+                        onClick = actions.save,
+                        enabled = editor.draft.selectedModel.isNotBlank() && !editor.saving,
+                        modifier = Modifier.fillMaxWidth().testTag("saveModel"),
+                    ) { Text("使用这个模型") }
+                }
+                item {
+                    OutlinedButton(
+                        onClick = if (probe.running) actions.cancelTest else actions.runTest,
+                        enabled = probe.running || canTest,
+                        modifier = Modifier.fillMaxWidth().testTag("testConnection"),
+                    ) { Text(if (probe.running) "取消测试" else "测试连接") }
+                    when {
+                        probe.error != null -> StatusText(probe.error, error = true)
+                        !probe.running && (probe.finishReason != null || probe.text.isNotEmpty()) ->
+                            StatusText("连接正常", error = false)
                     }
                 }
             }
-            if (cache.models.isNotEmpty()) {
-                item {
-                    MenuButton(
-                        label = "从缓存选择（${cache.models.size}）",
-                        expanded = modelMenu,
-                        onExpand = { modelMenu = true },
-                        onDismiss = { modelMenu = false },
+
+            item {
+                TextButton(onClick = { moreSettings = !moreSettings }) {
+                    Text(if (moreSettings) "收起更多设置" else "更多设置")
+                }
+                if (moreSettings) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = editor.draft.name,
+                            onValueChange = actions.updateName,
+                            modifier = Modifier.fillMaxWidth().testTag("connectionName"),
+                            label = { Text("连接名称") },
+                            singleLine = true,
+                        )
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+
+    if (confirmDelete && stored != null) {
+        DeleteDialog(
+            name = stored.name,
+            onDismiss = { confirmDelete = false },
+            onConfirm = {
+                confirmDelete = false
+                actions.delete(stored.id)
+            },
+        )
+    }
+    if (modelPickerVisible) {
+        ModelPickerSheet(
+            models = cache.models,
+            selected = editor.draft.selectedModel,
+            onDismiss = { modelPickerVisible = false },
+            onSelect = {
+                actions.updateModel(it)
+                modelPickerVisible = false
+            },
+            onManual = {
+                manualModel = true
+                modelPickerVisible = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun FieldLabel(value: String) {
+    Text(value, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(bottom = 6.dp))
+}
+
+@Composable
+private fun MenuField(
+    value: String,
+    expanded: Boolean,
+    onExpand: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    Column(modifier) {
+        OutlinedButton(onClick = onExpand, modifier = Modifier.fillMaxWidth()) {
+            Text(value, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("⌄")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, content = content)
+    }
+}
+
+@Composable
+private fun StatusText(value: String, error: Boolean) {
+    Text(
+        value,
+        modifier = Modifier.padding(top = 8.dp),
+        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelPickerSheet(
+    models: List<StoredModel>,
+    selected: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onManual: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val visibleModels = remember(models, query) {
+        val needle = query.trim()
+        models.asSequence()
+            .filter { model ->
+                needle.isBlank() || model.id.contains(needle, ignoreCase = true) ||
+                    model.name.orEmpty().contains(needle, ignoreCase = true)
+            }
+            .take(100)
+            .toList()
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("选择模型", style = MaterialTheme.typography.titleLarge)
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("搜索模型") },
+                singleLine = true,
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(visibleModels, key = StoredModel::id) { model ->
+                    TextButton(
+                        onClick = { onSelect(model.id) },
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        cache.models.forEach { model ->
-                            DropdownMenuItem(
-                                text = { Text(model.name?.let { "$it · ${model.id}" } ?: model.id) },
-                                onClick = {
-                                    modelMenu = false
-                                    actions.updateModel(model.id)
-                                },
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                model.name?.takeIf { it != model.id } ?: model.id,
+                                fontWeight = if (model.id == selected) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                            model.name?.takeIf { it != model.id }?.let {
+                                Text(
+                                    model.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 }
             }
-            item {
-                OutlinedTextField(
-                    value = editor.draft.selectedModel,
-                    onValueChange = actions.updateModel,
-                    modifier = Modifier.fillMaxWidth().testTag("manualModelId"),
-                    label = { Text("Model id") },
-                    supportingText = { Text("始终允许手填；不根据名称猜测能力") },
-                    singleLine = true,
-                )
+            TextButton(onClick = onManual, modifier = Modifier.align(Alignment.End)) {
+                Text("输入模型 ID")
             }
-            item { HorizontalDivider(); SectionTitle("一次性连接探针") }
-            item { Text("连接测试最多 512 tokens。temperature、top-p、top-k 均不发送。") }
-            item {
-                OutlinedTextField(
-                    value = probe.system,
-                    onValueChange = actions.updateProbeSystem,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("System") },
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = probe.user,
-                    onValueChange = actions.updateProbeUser,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("User") },
-                    minLines = 3,
-                )
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = actions.runProbe,
-                        enabled = canUseConnection && !probe.running && editor.draft.selectedModel.isNotBlank(),
-                    ) { Text(if (probe.running) "发送中…" else "发送") }
-                    OutlinedButton(onClick = actions.cancelProbe, enabled = probe.running) { Text("取消") }
-                }
-            }
-            if (probe.text.isNotEmpty()) {
-                item {
-                    Text("正文", fontWeight = FontWeight.SemiBold)
-                    Text(probe.text, modifier = Modifier.testTag("probeText"))
-                }
-            }
-            if (probe.reasoning.isNotEmpty()) {
-                item {
-                    TextButton(onClick = { reasoningExpanded = !reasoningExpanded }) {
-                        Text(if (reasoningExpanded) "收起思考摘要" else "展开思考摘要")
-                    }
-                    if (reasoningExpanded) Text(probe.reasoning)
-                }
-            }
-            if (probe.diagnostics.isNotEmpty()) {
-                item {
-                    Text("诊断摘要", fontWeight = FontWeight.SemiBold)
-                    Text(probe.diagnostics.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            probe.usage?.let { usage ->
-                item { Text("Usage: in=${usage.inputTokens ?: "?"}, out=${usage.outputTokens ?: "?"}, total=${usage.totalTokens ?: "?"}") }
-            }
-            probe.finishReason?.let { item { Text("结束状态：$it") } }
-            probe.error?.let { item { Text("探针失败：$it", color = MaterialTheme.colorScheme.error) } }
-            item { Spacer(Modifier.height(32.dp)) }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 4.dp))
+private fun DeleteDialog(name: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("删除 $name？") },
+        confirmButton = { Button(onClick = onConfirm) { Text("删除") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
-@Composable
-private fun MenuButton(
-    label: String,
-    expanded: Boolean,
-    onExpand: () -> Unit,
-    onDismiss: () -> Unit,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
-) {
-    Column {
-        OutlinedButton(onClick = onExpand) { Text(label) }
-        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, content = content)
-    }
-}
+private fun protocolLabel(protocol: io.github.zvensmoluya.modelgateway.ModelProtocol): String =
+    ConnectionTemplates.forProtocol(protocol).displayName
 
-private fun credentialStatusLabel(status: CredentialStatus?): String = when (status) {
-    CredentialStatus.READY -> "密钥可用"
-    CredentialStatus.MISSING -> "需要重新输入密钥"
-    CredentialStatus.ORIGIN_CONFIRMATION_REQUIRED -> "endpoint origin 已改变，密钥复用待确认"
-    CredentialStatus.NOT_REQUIRED -> "无需密钥"
-    null -> "正在检查密钥状态"
-}
+private fun addressHost(endpoint: String): String =
+    runCatching { URI(endpoint.replace("{model}", "model")).host }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { endpoint }
 
-private fun authLabel(scheme: AuthScheme): String = when (scheme) {
-    AuthScheme.BEARER -> "Bearer"
-    AuthScheme.X_API_KEY -> "x-api-key"
-    AuthScheme.X_GOOG_API_KEY -> "x-goog-api-key"
-    AuthScheme.QUERY_KEY -> "query key"
-    AuthScheme.NONE -> "none"
+private fun connectionIssue(status: CredentialStatus?, selectedModel: String): String? = when {
+    status == CredentialStatus.MISSING -> "需要 API Key"
+    status == CredentialStatus.ORIGIN_CONFIRMATION_REQUIRED -> "API 地址已更改"
+    selectedModel.isBlank() -> "请选择模型"
+    else -> null
 }
 
 private fun StoredConnection.matches(draft: ConnectionDraft): Boolean =
     name == draft.name.trim() &&
         templateId == draft.templateId &&
         protocol == draft.protocol &&
-        streamEndpoint == draft.streamEndpoint.trim() &&
-        catalogEndpoint.orEmpty() == draft.catalogEndpoint.orEmpty().trim() &&
-        authScheme == draft.authScheme &&
+        apiAddress == draft.apiAddress.trim().trimEnd('/') &&
         selectedModel == draft.selectedModel.trim()

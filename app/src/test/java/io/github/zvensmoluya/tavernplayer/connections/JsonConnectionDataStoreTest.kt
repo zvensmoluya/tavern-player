@@ -15,6 +15,38 @@ class JsonConnectionDataStoreTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun `legacy connection derives its user facing address`() {
+        val decoded = JsonConnectionDataStore.decodeState(
+            """
+            {
+              "schemaVersion": 1,
+              "connections": [{
+                "id": "legacy",
+                "name": "Legacy",
+                "templateId": "openai-responses",
+                "protocol": "OPENAI_RESPONSES",
+                "streamEndpoint": "https://gateway.example.test/v1/responses",
+                "catalogEndpoint": "https://wrong.example.test/v1/models",
+                "authScheme": "X_API_KEY",
+                "credentialRef": "credential_legacy",
+                "approvedOrigins": [
+                  "https://gateway.example.test:443",
+                  "https://wrong.example.test:443"
+                ],
+                "selectedModel": "model-a"
+              }]
+            }
+            """.trimIndent(),
+        )
+
+        val connection = decoded.connections.single()
+        assertEquals("https://gateway.example.test/v1", connection.apiAddress)
+        assertEquals("https://gateway.example.test/v1/models", connection.catalogEndpoint)
+        assertEquals(AuthScheme.BEARER, connection.authScheme)
+        assertEquals(setOf("https://gateway.example.test:443"), connection.approvedOrigins)
+    }
+
+    @Test
     fun `data store persists versioned connection state`() = runBlocking {
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
         val dataStore = PreferenceDataStoreFactory.create(scope = scope) {
@@ -28,6 +60,7 @@ class JsonConnectionDataStoreTest {
                 name = "Chat",
                 templateId = template.id,
                 protocol = template.protocol,
+                apiAddress = ConnectionEndpointResolver.displayAddress(template.protocol, template.streamEndpoint),
                 streamEndpoint = template.streamEndpoint,
                 catalogEndpoint = template.catalogEndpoint,
                 authScheme = AuthScheme.BEARER,

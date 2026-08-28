@@ -19,6 +19,46 @@ import java.util.concurrent.TimeUnit
 
 class CatalogAndSecurityTest {
     @Test
+    fun `catalog accepts common data and models envelopes without changing generation protocol`() = runBlocking {
+        HttpsTestServer().use { test ->
+            test.server.enqueue(
+                MockResponse(body = """{"models":[{"name":"models/compatible-a","displayName":"A"}]}"""),
+            )
+
+            val catalog = test.gateway().modelCatalog.list(
+                test.target(
+                    protocol = ModelProtocol.OPENAI_RESPONSES,
+                    path = "/v1/responses",
+                    catalogPath = "/v1/models",
+                ),
+            )
+
+            assertEquals(listOf("compatible-a"), catalog.models.map { it.id })
+            assertEquals("A", catalog.models.single().name)
+        }
+    }
+
+    @Test
+    fun `catalog rejects a successful response without a recognizable model list`() = runBlocking {
+        HttpsTestServer().use { test ->
+            test.server.enqueue(MockResponse(body = """{"result":"ok"}"""))
+
+            assertFails<GatewayException.Protocol> {
+                runBlocking {
+                    test.gateway().modelCatalog.list(
+                        test.target(
+                            protocol = ModelProtocol.OPENAI_RESPONSES,
+                            path = "/v1/responses",
+                            catalogPath = "/v1/models",
+                        ),
+                    )
+                }
+            }
+        }
+        Unit
+    }
+
+    @Test
     fun `gemini catalog paginates normalizes ids and records only explicit capabilities`() = runBlocking {
         HttpsTestServer().use { test ->
             test.server.enqueue(

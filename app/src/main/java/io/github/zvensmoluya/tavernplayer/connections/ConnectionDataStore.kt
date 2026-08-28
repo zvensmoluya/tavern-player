@@ -87,6 +87,7 @@ private fun StoredConnection.toJson(): JsonObject = buildJsonObject {
     put("name", name)
     put("templateId", templateId)
     put("protocol", protocol.name)
+    put("apiAddress", apiAddress)
     put("streamEndpoint", streamEndpoint)
     catalogEndpoint?.let { put("catalogEndpoint", it) }
     put("authScheme", authScheme.name)
@@ -114,15 +115,29 @@ private fun StoredConnection.toJson(): JsonObject = buildJsonObject {
 
 private fun JsonObject.toConnection(): StoredConnection {
     val cache = obj("modelCache")
-    return StoredConnection(
+    val protocol = ModelProtocol.valueOf(requireString("protocol"))
+    val storedStreamEndpoint = requireString("streamEndpoint")
+    val storedApiAddress = string("apiAddress")
+    val apiAddress = storedApiAddress
+        ?: ConnectionEndpointResolver.displayAddress(protocol, storedStreamEndpoint)
+    val migratedEndpoints = if (storedApiAddress == null) {
+        runCatching { ConnectionEndpointResolver.resolve(protocol, apiAddress) }.getOrNull()
+    } else null
+    val credentialRef = string("credentialRef")
+    val connection = StoredConnection(
         id = requireString("id"),
         name = requireString("name"),
         templateId = requireString("templateId"),
-        protocol = ModelProtocol.valueOf(requireString("protocol")),
-        streamEndpoint = requireString("streamEndpoint"),
-        catalogEndpoint = string("catalogEndpoint"),
-        authScheme = AuthScheme.valueOf(requireString("authScheme")),
-        credentialRef = string("credentialRef"),
+        protocol = protocol,
+        apiAddress = apiAddress,
+        streamEndpoint = migratedEndpoints?.streamEndpoint ?: storedStreamEndpoint,
+        catalogEndpoint = migratedEndpoints?.catalogEndpoint ?: string("catalogEndpoint"),
+        authScheme = if (credentialRef == null) {
+            AuthScheme.NONE
+        } else {
+            ConnectionTemplates.forProtocol(protocol).authScheme
+        },
+        credentialRef = credentialRef,
         credentialMask = string("credentialMask"),
         approvedOrigins = array("approvedOrigins").mapNotNull { it.jsonPrimitive.contentOrNull }.toSet(),
         selectedModel = string("selectedModel").orEmpty(),
@@ -141,6 +156,9 @@ private fun JsonObject.toConnection(): StoredConnection {
                 )
             },
         ),
+    )
+    return connection.copy(
+        approvedOrigins = connection.approvedOrigins.intersect(connection.currentOrigins()),
     )
 }
 
