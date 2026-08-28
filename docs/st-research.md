@@ -158,7 +158,9 @@ preset/
 
 模块名不是硬性要求，边界才是。尤其要保证 `content/compiler/runtime` 可以脱离 Android 和 Compose 做 JVM 测试。
 
-## MVP 建议：只验证一条垂直切片
+## 可供探索的垂直切片
+
+下面是一种基于本次调查的切片设想，用于暴露兼容语义和运行时边界问题，不是 MVP 验收范围或实施顺序。实际探索可以只取其中当前有用的部分。
 
 ### 输入范围
 
@@ -184,7 +186,7 @@ preset/
   -> 保存并显示会话
 ```
 
-### MVP 明确不做
+### 本次调查没有覆盖的方向
 
 - 多 Provider 管理界面；
 - V3 全部语义、CharX/BYAF 全部资产；
@@ -195,7 +197,7 @@ preset/
 
 这里的“轻量 LLM 网关”先指客户端内的 provider-neutral API 和一个 OpenAI-compatible adapter，不指另起一个服务器。等需要统一凭据、计费、路由或跨端复用时，再把同一接口外置为服务。
 
-## 调查后的上手顺序
+## 一种可能的实验顺序
 
 1. 固定一个脱敏的真实 V2 JSON fixture，并补一个 PNG fixture。
 2. 先写 `Content IR`、`Diagnostic`、`ExecutionPlan` 和 `ModelRequest` 的 Kotlin 类型，不写页面。
@@ -203,4 +205,4 @@ preset/
 4. 用 fake gateway 跑通一轮请求/响应，再接 OpenAI-compatible HTTP。
 5. 最后把同一条链路接到 Android 的导入、角色详情和聊天页面。
 
-这条顺序允许我们调查 ST 的复杂语义，同时不会因为一开始实现所有设置页而失去 MVP 节奏。
+这条顺序的价值在于尽早暴露 ST 语义问题，但它不构成前置条件。可以根据实现中的实际发现调整或放弃。
