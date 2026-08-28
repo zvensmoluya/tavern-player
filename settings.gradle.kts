@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "TavernPlayer"
 include(":app")
+include(":model-gateway")

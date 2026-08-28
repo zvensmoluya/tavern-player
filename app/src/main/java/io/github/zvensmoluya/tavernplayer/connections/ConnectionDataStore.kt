@@ -1,0 +1,160 @@
+package io.github.zvensmoluya.tavernplayer.connections
+
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import io.github.zvensmoluya.modelgateway.AuthScheme
+import io.github.zvensmoluya.modelgateway.GatewayException
+import io.github.zvensmoluya.modelgateway.ModelProtocol
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import java.io.IOException
+
+interface ConnectionStateStore {
+    val state: Flow<GatewayAppState>
+    suspend fun update(transform: (GatewayAppState) -> GatewayAppState)
+}
+
+class JsonConnectionDataStore(
+    private val dataStore: DataStore<Preferences>,
+) : ConnectionStateStore {
+    override val state: Flow<GatewayAppState> = dataStore.data
+        .catch { error ->
+            if (error is IOException) emit(androidx.datastore.preferences.core.emptyPreferences())
+            else throw error
+        }
+        .map { preferences ->
+            preferences[STATE_JSON]?.let(::decodeState) ?: GatewayAppState()
+        }
+
+    override suspend fun update(transform: (GatewayAppState) -> GatewayAppState) {
+        dataStore.edit { preferences ->
+            val current = preferences[STATE_JSON]?.let(::decodeState) ?: GatewayAppState()
+            preferences[STATE_JSON] = encodeState(transform(current))
+        }
+    }
+
+    companion object {
+        private val STATE_JSON = stringPreferencesKey("gateway_state_json_v1")
+        private val json = Json { ignoreUnknownKeys = true }
+
+        internal fun encodeState(state: GatewayAppState): String = buildJsonObject {
+            put("schemaVersion", state.schemaVersion)
+            state.recentConnectionId?.let { put("recentConnectionId", it) }
+            put("connections", buildJsonArray {
+                state.connections.forEach { add(it.toJson()) }
+            })
+        }.toString()
+
+        internal fun decodeState(value: String): GatewayAppState {
+            val root = try {
+                json.parseToJsonElement(value).jsonObject
+            } catch (error: Exception) {
+                throw GatewayException.Configuration("Stored connection data is malformed")
+            }
+            val version = root.long("schemaVersion")?.toInt() ?: 1
+            if (version > GatewayAppState.CURRENT_SCHEMA_VERSION) {
+                throw GatewayException.Configuration("Connection data uses unsupported schema version $version")
+            }
+            return GatewayAppState(
+                schemaVersion = version,
+                recentConnectionId = root.string("recentConnectionId"),
+                connections = root.array("connections").mapNotNull { element ->
+                    runCatching { element.jsonObject.toConnection() }.getOrNull()
+                },
+            )
+        }
+    }
+}
+
+private fun StoredConnection.toJson(): JsonObject = buildJsonObject {
+    put("id", id)
+    put("name", name)
+    put("templateId", templateId)
+    put("protocol", protocol.name)
+    put("streamEndpoint", streamEndpoint)
+    catalogEndpoint?.let { put("catalogEndpoint", it) }
+    put("authScheme", authScheme.name)
+    credentialRef?.let { put("credentialRef", it) }
+    credentialMask?.let { put("credentialMask", it) }
+    put("approvedOrigins", buildJsonArray { approvedOrigins.sorted().forEach { add(it) } })
+    put("selectedModel", selectedModel)
+    put("modelCache", buildJsonObject {
+        modelCache.refreshedAtEpochMillis?.let { put("refreshedAtEpochMillis", it) }
+        put("models", buildJsonArray {
+            modelCache.models.forEach { model ->
+                add(buildJsonObject {
+                    put("id", model.id)
+                    model.name?.let { put("name", it) }
+                    model.inputTokenLimit?.let { put("inputTokenLimit", it) }
+                    model.outputTokenLimit?.let { put("outputTokenLimit", it) }
+                    put("supportedOperations", buildJsonArray {
+                        model.supportedOperations.sorted().forEach { add(it) }
+                    })
+                })
+            }
+        })
+    })
+}
+
+private fun JsonObject.toConnection(): StoredConnection {
+    val cache = obj("modelCache")
+    return StoredConnection(
+        id = requireString("id"),
+        name = requireString("name"),
+        templateId = requireString("templateId"),
+        protocol = ModelProtocol.valueOf(requireString("protocol")),
+        streamEndpoint = requireString("streamEndpoint"),
+        catalogEndpoint = string("catalogEndpoint"),
+        authScheme = AuthScheme.valueOf(requireString("authScheme")),
+        credentialRef = string("credentialRef"),
+        credentialMask = string("credentialMask"),
+        approvedOrigins = array("approvedOrigins").mapNotNull { it.jsonPrimitive.contentOrNull }.toSet(),
+        selectedModel = string("selectedModel").orEmpty(),
+        modelCache = ModelCache(
+            refreshedAtEpochMillis = cache?.long("refreshedAtEpochMillis"),
+            models = cache?.array("models").orEmpty().mapNotNull { element ->
+                val model = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
+                val id = model.string("id") ?: return@mapNotNull null
+                StoredModel(
+                    id = id,
+                    name = model.string("name"),
+                    inputTokenLimit = model.long("inputTokenLimit"),
+                    outputTokenLimit = model.long("outputTokenLimit"),
+                    supportedOperations = model.array("supportedOperations")
+                        .mapNotNull { it.jsonPrimitive.contentOrNull }.toSet(),
+                )
+            },
+        ),
+    )
+}
+
+private fun JsonObject.requireString(name: String): String =
+    string(name) ?: throw GatewayException.Configuration("Stored connection is missing $name")
+
+private fun JsonObject.string(name: String): String? =
+    this[name]?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
+
+private fun JsonObject.long(name: String): Long? =
+    this[name]?.let { runCatching { it.jsonPrimitive.longOrNull }.getOrNull() }
+
+private fun JsonObject.array(name: String): JsonArray =
+    this[name]?.let { runCatching { it.jsonArray }.getOrNull() } ?: JsonArray(emptyList())
+
+private fun JsonObject.obj(name: String): JsonObject? =
+    this[name]?.let { runCatching { it.jsonObject }.getOrNull() }

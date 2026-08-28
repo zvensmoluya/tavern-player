@@ -1,6 +1,6 @@
 # SillyTavern 运行语义调查
 
-> 调查对象：`D:\thevox\SillyTavern`，当前 checkout 为 `release` 分支，版本 `1.18.0`。本文记录对 Tavern Player 架构有直接影响的事实，不是 SillyTavern 的完整说明书。
+> 调查对象：本机 SillyTavern checkout（当前位于相邻开发目录）。本文记录对 Tavern Player 架构有直接影响的事实，不保存本机绝对路径，也不是 SillyTavern 的完整说明书。
 
 ## 结论先行
 
@@ -19,7 +19,7 @@ Card / chat metadata / global settings / extensions / preset
 
 1. **Source adapter** 负责理解 ST 文件和历史约定。
 2. **Content compiler/runtime** 负责稳定、可诊断地执行内容语义。
-3. **LLM gateway** 负责把统一请求送到具体模型，并把响应/错误统一回来。
+3. **Model gateway** 负责忠实表达具体协议，只统一可靠传输、凭据边界和可诊断错误。
 
 Android UI 只消费运行时产出的消息和状态，不参与 Prompt 拼接。
 
@@ -130,7 +130,7 @@ ST 的统一聊天消息通常是 `{ role, content }`，但发送前会根据 Pr
 - stop strings、assistant prefill、reasoning、tool calls、图片等如何表达；
 - 流式响应如何解析，错误如何归一化。
 
-对 MVP 的建议是只支持一个 **OpenAI Chat Completions 兼容接口**，但从第一天就把它放在 `ModelGateway` 接口后面。不要让编译器直接依赖 HTTP JSON，也不要在 UI 里判断 Provider。
+首个实现不再以 **OpenAI-compatible** 为中心。当前 `ModelGateway` 直接提供 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个协议原生客户端。它们共享传输与安全能力，但保留各自的 state、reasoning/thinking、signature、usage 和 finish 语义。不要让编译器直接依赖 HTTP JSON，也不要把某个协议的字段伪装成所有 Provider 都支持的公共参数。
 
 ## 建议的长期模块边界
 
@@ -142,9 +142,11 @@ content/
   runtime/      session state, plan evaluation, transforms
 
 gateway/
-  api/          provider-neutral request/stream/error types
-  openai/       OpenAI-compatible adapter
-  ...           future Anthropic, Gemini, local backends
+  transport/    HTTPS、SSE、取消、上限、重定向和 typed error
+  responses/    OpenAI Responses 原生 request/event
+  chat/         OpenAI Chat Completions 原生 request/event
+  anthropic/    Anthropic Messages 原生 request/event
+  gemini/       Interactions 与 GenerateContent 原生 request/event
 
 chat/
   model/        conversation and message persistence
@@ -169,7 +171,7 @@ preset/
 - 一个角色自带 `character_book`；
 - 一个最小 context/system preset；
 - 一个 scoped Regex，明确作用于 AI output 或 prompt 其中之一；
-- 一个 OpenAI-compatible gateway。
+- 一个明确选定协议的模型连接。
 
 ### 运行范围
 
@@ -180,7 +182,7 @@ preset/
   -> 输入一条用户消息
   -> 扫描并激活世界书
   -> 按 Execution Plan 生成 messages
-  -> gateway 发 mock/真实请求
+  -> 对应的原生 client 发 mock/真实请求
   -> 解析回复
   -> 执行明确作用域的 Regex
   -> 保存并显示会话
@@ -188,21 +190,21 @@ preset/
 
 ### 本次调查没有覆盖的方向
 
-- 多 Provider 管理界面；
+- OpenRouter 聚合与自动路由；
 - V3 全部语义、CharX/BYAF 全部资产；
 - 完整 Prompt Manager 编辑器；
 - recursive world-info、group scoring、sticky/cooldown、宏语言全覆盖；
 - 工具调用、图片、多模态、TTS、生图、长期记忆；
 - 独立的远程“网关服务”。
 
-这里的“轻量 LLM 网关”先指客户端内的 provider-neutral API 和一个 OpenAI-compatible adapter，不指另起一个服务器。等需要统一凭据、计费、路由或跨端复用时，再把同一接口外置为服务。
+这里的“轻量 Model Gateway”指客户端内的协议原生 API 与共享可靠传输，不指另起一个服务器，也不等于 OpenAI-compatible adapter。OpenRouter 等聚合能力等到出现明确的统一路由需求时再设计，不能反过来限定当前原生客户端。
 
 ## 一种可能的实验顺序
 
 1. 固定一个脱敏的真实 V2 JSON fixture，并补一个 PNG fixture。
 2. 先写 `Content IR`、`Diagnostic`、`ExecutionPlan` 和 `ModelRequest` 的 Kotlin 类型，不写页面。
 3. 用 fixture 写 golden test：角色字段、示例对话、世界书触发、Regex、最终 messages。
-4. 用 fake gateway 跑通一轮请求/响应，再接 OpenAI-compatible HTTP。
+4. 用 fake gateway 跑通一轮请求/响应，再映射到用户所选的原生协议客户端。
 5. 最后把同一条链路接到 Android 的导入、角色详情和聊天页面。
 
 这条顺序的价值在于尽早暴露 ST 语义问题，但它不构成前置条件。可以根据实现中的实际发现调整或放弃。

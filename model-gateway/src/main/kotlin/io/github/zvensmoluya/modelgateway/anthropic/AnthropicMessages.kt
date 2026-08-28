@@ -1,0 +1,201 @@
+package io.github.zvensmoluya.modelgateway.anthropic
+
+import io.github.zvensmoluya.modelgateway.ConnectionTarget
+import io.github.zvensmoluya.modelgateway.GatewayException
+import io.github.zvensmoluya.modelgateway.ModelProtocol
+import io.github.zvensmoluya.modelgateway.StreamResult
+import io.github.zvensmoluya.modelgateway.TokenUsage
+import io.github.zvensmoluya.modelgateway.long
+import io.github.zvensmoluya.modelgateway.obj
+import io.github.zvensmoluya.modelgateway.string
+import io.github.zvensmoluya.modelgateway.transport.GatewayTransport
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+
+enum class AnthropicRole(val wire: String) {
+    USER("user"),
+    ASSISTANT("assistant"),
+}
+
+data class AnthropicMessage(
+    val role: AnthropicRole,
+    val text: String,
+)
+
+data class AnthropicThinking(
+    val budgetTokens: Int,
+)
+
+data class AnthropicMessagesRequest(
+    val model: String,
+    val messages: List<AnthropicMessage>,
+    val maxTokens: Int,
+    val system: String? = null,
+    val thinking: AnthropicThinking? = null,
+)
+
+sealed interface AnthropicMessagesEvent {
+    val raw: JsonObject
+
+    data class Started(val messageId: String?, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class TextDelta(val text: String, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class ThinkingDelta(val text: String, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class SignatureDelta(val signature: String, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Usage(val usage: TokenUsage, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Finished(val reason: String?, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Failed(val message: String?, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Lifecycle(val name: String, override val raw: JsonObject) : AnthropicMessagesEvent
+    data class Unknown(override val raw: JsonObject) : AnthropicMessagesEvent
+}
+
+class AnthropicMessagesClient internal constructor(
+    private val transport: GatewayTransport,
+) {
+    fun stream(target: ConnectionTarget, request: AnthropicMessagesRequest): Flow<AnthropicMessagesEvent> = flow {
+        if (target.protocol != ModelProtocol.ANTHROPIC_MESSAGES) {
+            throw GatewayException.Configuration("Anthropic client requires an ANTHROPIC_MESSAGES connection")
+        }
+        validateRequest(request)
+        transport.postSse(
+            target = target,
+            url = target.resolveStreamUrl(request.model),
+            jsonBody = request.toJson().toString(),
+            headers = mapOf("anthropic-version" to ANTHROPIC_VERSION),
+        ).collect { frame ->
+            parse(frame.data).forEach { emit(it) }
+        }
+    }
+
+    companion object {
+        const val ANTHROPIC_VERSION = "2023-06-01"
+    }
+}
+
+class AnthropicMessagesAccumulator {
+    private val text = StringBuilder()
+    private val thinking = StringBuilder()
+    private val signatures = mutableListOf<String>()
+    private var usage: TokenUsage? = null
+    private var finishReason: String? = null
+    private var messageId: String? = null
+    private var unknown = 0
+
+    fun accept(event: AnthropicMessagesEvent) {
+        when (event) {
+            is AnthropicMessagesEvent.Started -> messageId = event.messageId ?: messageId
+            is AnthropicMessagesEvent.TextDelta -> text.append(event.text)
+            is AnthropicMessagesEvent.ThinkingDelta -> thinking.append(event.text)
+            is AnthropicMessagesEvent.SignatureDelta -> signatures += event.signature
+            is AnthropicMessagesEvent.Usage -> usage = mergeUsage(usage, event.usage)
+            is AnthropicMessagesEvent.Finished -> finishReason = event.reason ?: finishReason
+            is AnthropicMessagesEvent.Failed -> finishReason = "failed"
+            is AnthropicMessagesEvent.Lifecycle -> Unit
+            is AnthropicMessagesEvent.Unknown -> unknown += 1
+        }
+    }
+
+    fun result(): StreamResult = StreamResult(
+        text = text.toString(),
+        reasoning = thinking.toString(),
+        signatures = signatures.toList(),
+        usage = usage,
+        finishReason = finishReason,
+        responseId = messageId,
+        unknownEventCount = unknown,
+    )
+}
+
+private val json = Json { ignoreUnknownKeys = true }
+
+private fun validateRequest(request: AnthropicMessagesRequest) {
+    if (request.model.isBlank()) throw GatewayException.Configuration("Model id is required")
+    if (request.messages.isEmpty()) throw GatewayException.Configuration("Anthropic messages cannot be empty")
+    if (request.maxTokens <= 0) throw GatewayException.Configuration("maxTokens must be positive")
+    if (request.thinking != null && request.thinking.budgetTokens <= 0) {
+        throw GatewayException.Configuration("Thinking budget must be positive")
+    }
+}
+
+private fun AnthropicMessagesRequest.toJson(): JsonObject = buildJsonObject {
+    put("model", model)
+    put("stream", true)
+    put("max_tokens", maxTokens)
+    put("messages", buildJsonArray {
+        messages.forEach { message ->
+            add(buildJsonObject {
+                put("role", message.role.wire)
+                put("content", message.text)
+            })
+        }
+    })
+    system?.let { put("system", it) }
+    thinking?.let {
+        put("thinking", buildJsonObject {
+            put("type", "enabled")
+            put("budget_tokens", it.budgetTokens)
+        })
+    }
+}
+
+private fun parse(data: String): List<AnthropicMessagesEvent> {
+    val raw = try {
+        json.parseToJsonElement(data) as? JsonObject
+            ?: throw GatewayException.Protocol("Anthropic event was not a JSON object")
+    } catch (error: GatewayException) {
+        throw error
+    } catch (error: Exception) {
+        throw GatewayException.Protocol("Malformed Anthropic event JSON", error)
+    }
+    return when (raw.string("type")) {
+        "message_start" -> buildList {
+            val message = raw.obj("message")
+            add(AnthropicMessagesEvent.Started(message?.string("id"), raw))
+            message?.obj("usage")?.let { add(AnthropicMessagesEvent.Usage(it.toUsage(), raw)) }
+        }
+        "content_block_delta" -> when (val delta = raw.obj("delta")) {
+            null -> listOf(AnthropicMessagesEvent.Unknown(raw))
+            else -> when (delta.string("type")) {
+                "text_delta" -> listOf(AnthropicMessagesEvent.TextDelta(delta.string("text").orEmpty(), raw))
+                "thinking_delta" -> listOf(AnthropicMessagesEvent.ThinkingDelta(delta.string("thinking").orEmpty(), raw))
+                "signature_delta" -> listOf(AnthropicMessagesEvent.SignatureDelta(delta.string("signature").orEmpty(), raw))
+                else -> listOf(AnthropicMessagesEvent.Unknown(raw))
+            }
+        }
+        "message_delta" -> buildList {
+            raw.obj("usage")?.let { add(AnthropicMessagesEvent.Usage(it.toUsage(), raw)) }
+            raw.obj("delta")?.string("stop_reason")?.let { add(AnthropicMessagesEvent.Finished(it, raw)) }
+            if (isEmpty()) add(AnthropicMessagesEvent.Unknown(raw))
+        }
+        "message_stop" -> listOf(AnthropicMessagesEvent.Finished(null, raw))
+        "error" -> listOf(AnthropicMessagesEvent.Failed(raw.obj("error")?.string("message"), raw))
+        "ping", "content_block_start", "content_block_stop" -> listOf(
+            AnthropicMessagesEvent.Lifecycle(raw.string("type").orEmpty(), raw),
+        )
+        else -> listOf(AnthropicMessagesEvent.Unknown(raw))
+    }
+}
+
+private fun JsonObject.toUsage(): TokenUsage = TokenUsage(
+    inputTokens = long("input_tokens"),
+    outputTokens = long("output_tokens"),
+    totalTokens = listOfNotNull(long("input_tokens"), long("output_tokens")).takeIf { it.isNotEmpty() }?.sum(),
+    cachedTokens = listOfNotNull(long("cache_read_input_tokens"), long("cache_creation_input_tokens"))
+        .takeIf { it.isNotEmpty() }?.sum(),
+    raw = this,
+)
+
+private fun mergeUsage(previous: TokenUsage?, next: TokenUsage): TokenUsage = TokenUsage(
+    inputTokens = next.inputTokens ?: previous?.inputTokens,
+    outputTokens = next.outputTokens ?: previous?.outputTokens,
+    totalTokens = if (next.inputTokens != null || next.outputTokens != null) {
+        (next.inputTokens ?: previous?.inputTokens ?: 0) + (next.outputTokens ?: previous?.outputTokens ?: 0)
+    } else previous?.totalTokens,
+    cachedTokens = next.cachedTokens ?: previous?.cachedTokens,
+    reasoningTokens = next.reasoningTokens ?: previous?.reasoningTokens,
+    raw = next.raw,
+)

@@ -78,12 +78,12 @@ Tavern Player 的长期目标，是把 SillyTavern 社区长期形成的角色�
 
 这里放真正不稳定的边界：
 
-- `LlmGateway`：模型请求、流式事件、取消和统一错误；
+- `ModelGateway`：五种协议原生请求、流式事件、取消和统一传输错误；
 - `Tokenizer` / `TokenCounter`：上下文预算所需的计数能力；
 - `AssetImporter`：外部资产导入入口；
 - repository ports：角色、Preset、会话和消息的存取。
 
-具体实现包括 OpenAI-compatible gateway、Room、文件系统、Android Keystore 和 Compose UI。
+当前 `:model-gateway` 实现包括 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 五个原生客户端。Android Keystore、DataStore 和 Compose 连接管理属于 `app`，不反向进入网关模块。
 
 ## 4. 依赖方向
 
@@ -93,7 +93,7 @@ Tavern Player 的长期目标，是把 SillyTavern 社区长期形成的角色�
 compat  -> CharacterPackage / Preset
 data    -> domain models + repository ports
 runtime -> domain models + TokenCounter port
-gateway -> GenerationRequest / gateway port
+gateway -> protocol-native request / event types + shared transport
 app     -> runtime / chat / gateway / repositories
 ```
 
@@ -244,10 +244,10 @@ Apply prompt-scoped transforms
 CompiledPlan + Trace + Diagnostics
         |
         v
-Provider-neutral GenerationRequest
+Protocol request mapping
         |
         v
-LlmGateway stream
+ModelGateway native client stream
         |
         v
 ResponsePipeline
@@ -258,27 +258,26 @@ MessageResult + StateDelta + Diagnostics
 
 最终顺序不能凭直觉确定。需要用真实 ST fixture 验证：宏到底在哪些阶段解析、世界书扫描使用什么上下文、示例对话插在什么位置、Regex 在哪个阶段生效，以及 token budget 如何影响结果。
 
-## 8. Gateway 边界
+## 8. Model Gateway 边界
 
-MVP 的“轻量 LLM 网关”先是一个客户端内的稳定边界，而不是远程服务。
+首个可运行切片已经将“轻量模型网关”实现为 Android 无关的 `:model-gateway` Kotlin/JVM 模块。它不是远程服务，也不是 OpenAI-compatible 统一接口：
 
 ```text
-LlmGateway
-  └─ OpenAiCompatibleGateway
+ModelGateway
+├─ responses
+├─ chatCompletions
+├─ anthropicMessages
+├─ geminiInteractions
+└─ geminiGenerateContent
 ```
 
-`GenerationRequest` 应尽量保持 Provider-neutral，至少表达：
+五个客户端分别接收自己的强类型 request，返回自己的 `Flow<ProtocolEvent>`。共享的是 HTTPS 校验、鉴权注入、超时、响应上限、同源重定向、SSE framing、取消和 typed error；正文、reasoning/thinking、signature、usage 与 finish 状态不在传输层互相冒充。
 
-- 有序消息；
-- 模型标识；
-- 生成参数；
-- stop/prefill 等明确策略；
-- 是否流式；
-- 取消信号。
+流式调用是唯一生成原语。每种协议提供 accumulator 得到最终 typed result，不维护第二套非流式 HTTP 路径。未知事件保留 raw JSON 并成为 `Unknown`，协议增加事件不会令流崩溃；畸形 JSON、越界响应和安全失败仍作为 `GatewayException` 抛出。
 
-OpenAI-compatible adapter 可以负责 HTTP 形状、SSE 解析和错误转换，但不能把 Provider 条件散落进 PromptCompiler、ChatScreen 或 MessageRenderer。
+连接保存完整操作 URL，不猜测 `/v1`，也不根据 endpoint 自动切换协议。Gemini Interactions 与 GenerateContent 是两个客户端；Vertex Express 复用 GenerateContent 客户端但使用独立连接模板。OpenRouter 的一个 key 对应多种协议和模型，属于以后可选的聚合层，不进入当前内核。
 
-未来如果需要 Anthropic、Gemini、本地后端或远程统一路由，应增加 adapter，而不是修改 CharacterPackage 的语义。
+Preset 与 ST Runtime 尚未开始映射生成参数。当前连接探针固定用协议原生字段发送 512 token 上限，并省略 temperature、top-p、top-k。等 Runtime 有真实需求时，再在明确的协议边界完成映射，而不是先发明共享 sampling options 或通用 Provider DSL。
 
 ## 9. 存储边界
 
