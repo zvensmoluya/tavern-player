@@ -19,22 +19,36 @@ import java.util.concurrent.TimeUnit
 
 class CatalogAndSecurityTest {
     @Test
-    fun `catalog accepts common data and models envelopes without changing generation protocol`() = runBlocking {
+    fun `catalog preserves opaque OpenAI and Anthropic model ids`() = runBlocking {
         HttpsTestServer().use { test ->
             test.server.enqueue(
                 MockResponse(body = """{"models":[{"name":"models/compatible-a","displayName":"A"}]}"""),
             )
+            test.server.enqueue(
+                MockResponse(body = """{"data":[{"id":"tenant/models/claude-compatible","display_name":"Claude Compatible"}]}"""),
+            )
 
-            val catalog = test.gateway().modelCatalog.list(
+            val gateway = test.gateway()
+            val openAiCatalog = gateway.modelCatalog.list(
                 test.target(
                     protocol = ModelProtocol.OPENAI_RESPONSES,
                     path = "/v1/responses",
                     catalogPath = "/v1/models",
                 ),
             )
+            val anthropicCatalog = gateway.modelCatalog.list(
+                test.target(
+                    protocol = ModelProtocol.ANTHROPIC_MESSAGES,
+                    path = "/v1/messages",
+                    authScheme = AuthScheme.X_API_KEY,
+                    catalogPath = "/v1/models",
+                ),
+            )
 
-            assertEquals(listOf("compatible-a"), catalog.models.map { it.id })
-            assertEquals("A", catalog.models.single().name)
+            assertEquals(listOf("models/compatible-a"), openAiCatalog.models.map { it.id })
+            assertEquals("A", openAiCatalog.models.single().name)
+            assertEquals(listOf("tenant/models/claude-compatible"), anthropicCatalog.models.map { it.id })
+            assertEquals("Claude Compatible", anthropicCatalog.models.single().name)
         }
     }
 
@@ -145,7 +159,7 @@ class CatalogAndSecurityTest {
         }
         assertEquals(
             "gemini-test",
-            EndpointRules.normalizeModelId(" models/gemini-test "),
+            EndpointRules.normalizeGeminiModelId(" models/gemini-test "),
         )
     }
 

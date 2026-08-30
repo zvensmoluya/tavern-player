@@ -125,7 +125,7 @@ class GeminiGenerateContentAccumulator {
 private val json = Json { ignoreUnknownKeys = true }
 
 private fun validateRequest(request: GeminiGenerateContentRequest) {
-    if (EndpointRules.normalizeModelId(request.model).isBlank()) {
+    if (EndpointRules.normalizeGeminiModelId(request.model).isBlank()) {
         throw GatewayException.Configuration("Model id is required")
     }
     if (request.contents.isEmpty()) throw GatewayException.Configuration("Gemini contents cannot be empty")

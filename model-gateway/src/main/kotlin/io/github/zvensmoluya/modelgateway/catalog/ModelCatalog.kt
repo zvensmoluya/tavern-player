@@ -108,7 +108,7 @@ private fun parseGemini(root: JsonObject): CatalogPage {
             val raw = element
             val serviceId = raw.string("name") ?: raw.string("id") ?: return@mapNotNull null
             ModelDescriptor(
-                id = EndpointRules.normalizeModelId(serviceId),
+                id = EndpointRules.normalizeGeminiModelId(serviceId),
                 name = raw.string("displayName") ?: raw.string("display_name"),
                 inputTokenLimit = raw.long("inputTokenLimit"),
                 outputTokenLimit = raw.long("outputTokenLimit"),
@@ -129,7 +129,7 @@ private fun parseAnthropic(root: JsonObject): CatalogPage {
             val raw = element
             val id = raw.string("id") ?: raw.string("name") ?: return@mapNotNull null
             ModelDescriptor(
-                id = EndpointRules.normalizeModelId(id),
+                id = id,
                 name = raw.string("display_name") ?: raw.string("displayName"),
                 inputTokenLimit = raw.long("input_token_limit") ?: raw.long("context_window"),
                 outputTokenLimit = raw.long("output_token_limit") ?: raw.long("max_output_tokens"),
@@ -149,7 +149,7 @@ private fun parseOpenAi(root: JsonObject): CatalogPage {
         val raw = element
         val id = raw.string("id") ?: raw.string("name") ?: return@mapNotNull null
         ModelDescriptor(
-            id = EndpointRules.normalizeModelId(id),
+            id = id,
             name = raw.string("displayName")
                 ?: raw.string("display_name")
                 ?: raw.string("name").takeIf { raw.string("id") != null },

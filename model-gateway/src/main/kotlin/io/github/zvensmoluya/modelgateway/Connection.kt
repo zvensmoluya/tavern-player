@@ -111,17 +111,19 @@ object EndpointRules {
 
     fun resolve(endpoint: String, protocol: ModelProtocol, model: String): HttpUrl {
         validate(endpoint, protocol)
-        val normalizedModel = normalizeModelId(model)
-        if (protocol == ModelProtocol.GEMINI_GENERATE_CONTENT && normalizedModel.isBlank()) {
-            throw GatewayException.Configuration("A model id is required")
+        if (protocol != ModelProtocol.GEMINI_GENERATE_CONTENT) {
+            return endpoint.toHttpUrlOrNull()
+                ?: throw GatewayException.Configuration("Resolved endpoint is invalid")
         }
+        val normalizedModel = normalizeGeminiModelId(model)
+        if (normalizedModel.isBlank()) throw GatewayException.Configuration("A model id is required")
         val encoded = URLEncoder.encode(normalizedModel, StandardCharsets.UTF_8)
             .replace("+", "%20")
         return endpoint.replace("{model}", encoded).toHttpUrlOrNull()
             ?: throw GatewayException.Configuration("Resolved endpoint is invalid")
     }
 
-    fun normalizeModelId(model: String): String = model.trim().removePrefix("models/")
+    fun normalizeGeminiModelId(model: String): String = model.trim().removePrefix("models/")
 
     fun origin(url: HttpUrl): String = "${url.scheme}://${url.host}:${url.port}"
 }
