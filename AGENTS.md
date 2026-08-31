@@ -36,3 +36,4 @@
 - 常用类型：`feat`、`fix`、`docs`、`test`、`refactor`、`build`、`ci`、`chore`。
 - summary 使用英文祈使语气，简短明确，不加句号。
 - 非简单变更的提交正文应简要说明变更目的、关键行为或兼容性影响，以及实际执行的验证命令。
+- 提交正文必须使用真实的 UTF-8 换行。禁止把 `\n`、`\r\n` 或其他 shell 转义序列写成正文中的字面字符；提交前用 `git show --format=fuller --stat HEAD` 检查渲染结果。
