@@ -28,6 +28,13 @@ SillyTavern 建立了这个生态。
 
 我们想做一个更适合消费它的 Player。
 
+## 当前文档
+
+- [产品与兼容性边界](docs/current-discussion-status.md)
+- [当前实现架构](docs/architecture.md)
+- [SillyTavern 单轮生成源码研究](docs/st-research.md)
+- [社区 Preset 样本调查](docs/preset-import-capabilities.md)
+
 ## 开源
 
 这个生态本来就是开放的。

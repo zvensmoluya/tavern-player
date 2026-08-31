@@ -28,6 +28,13 @@ SillyTavern built the ecosystem.
 
 We're building the player.
 
+## Current documentation
+
+- [Product and compatibility scope](docs/current-discussion-status.md)
+- [Implemented architecture](docs/architecture.md)
+- [SillyTavern turn-generation source study](docs/st-research.md)
+- [Community preset sample study](docs/preset-import-capabilities.md)
+
 ## Open source
 
 The ecosystem is already open.

@@ -1,6 +1,6 @@
 # 社区 Preset 导入能力调查
 
-> 状态：讨论中的比较记录，不是 Tavern Player 内核规范。
+> 状态：样本调查记录，不是 Tavern Player 内核规范。当前有效状态见 [`current-discussion-status.md`](current-discussion-status.md)。
 >
 > 样本：`source/梦鲸思客V4-0818-和谐版.json`。本轮只调查“这个文件导入 ST 时借用了什么宿主能力”，不评价其中 prompt、Regex 或脚本各自想完成的职责。
 
