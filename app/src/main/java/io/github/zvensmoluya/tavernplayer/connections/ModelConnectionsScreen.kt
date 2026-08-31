@@ -47,7 +47,10 @@ import androidx.compose.ui.unit.dp
 import java.net.URI
 
 @Composable
-fun ModelConnectionsRoute(viewModel: ModelConnectionsViewModel) {
+fun ModelConnectionsRoute(
+    viewModel: ModelConnectionsViewModel,
+    onBackToChat: (() -> Unit)? = null,
+) {
     val state by viewModel.uiState.collectAsState()
     ModelConnectionsScreen(
         state = state,
@@ -67,6 +70,7 @@ fun ModelConnectionsRoute(viewModel: ModelConnectionsViewModel) {
             runTest = viewModel::runProbe,
             cancelTest = viewModel::cancelProbe,
         ),
+        onBackToChat = onBackToChat,
     )
 }
 
@@ -91,10 +95,11 @@ data class ConnectionScreenActions(
 fun ModelConnectionsScreen(
     state: ConnectionsUiState,
     actions: ConnectionScreenActions,
+    onBackToChat: (() -> Unit)? = null,
 ) {
     val editor = state.editor
     if (editor == null) {
-        ConnectionList(state, actions)
+        ConnectionList(state, actions, onBackToChat)
     } else {
         ConnectionEditor(
             editor = editor,
@@ -107,12 +112,19 @@ fun ModelConnectionsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ConnectionList(state: ConnectionsUiState, actions: ConnectionScreenActions) {
+private fun ConnectionList(
+    state: ConnectionsUiState,
+    actions: ConnectionScreenActions,
+    onBackToChat: (() -> Unit)?,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("模型") },
                 actions = {
+                    onBackToChat?.let { onBack ->
+                        TextButton(onClick = onBack) { Text("返回聊天") }
+                    }
                     if (state.connections.isNotEmpty()) {
                         TextButton(
                             modifier = Modifier.testTag("addConnection"),

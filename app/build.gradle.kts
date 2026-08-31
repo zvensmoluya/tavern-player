@@ -31,6 +31,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":conversation-core"))
     implementation(project(":model-gateway"))
     implementation(libs.activity.compose)
     implementation(libs.datastore.preferences)

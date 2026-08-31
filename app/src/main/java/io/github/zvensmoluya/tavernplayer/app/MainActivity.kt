@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsRoute
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
+import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 
 class MainActivity : ComponentActivity() {
@@ -13,12 +14,15 @@ class MainActivity : ComponentActivity() {
     private val modelConnectionsViewModel by viewModels<ModelConnectionsViewModel> {
         ModelConnectionsViewModel.Factory(graph.connectionRepository, graph.probeService)
     }
+    private val chatViewModel by viewModels<ChatViewModel> {
+        ChatViewModel.Factory(graph.connectionRepository, graph.promptCompiler, graph.conversationGenerator)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             TavernPlayerTheme {
-                ModelConnectionsRoute(modelConnectionsViewModel)
+                TavernPlayerApp(chatViewModel, modelConnectionsViewModel)
             }
         }
     }

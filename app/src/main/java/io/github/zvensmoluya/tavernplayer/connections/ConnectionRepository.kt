@@ -168,6 +168,11 @@ class ConnectionRepository(
         }
     }
 
+    suspend fun activate(connectionId: String) {
+        requireConnection(connectionId)
+        stateStore.update { state -> state.copy(recentConnectionId = connectionId) }
+    }
+
     suspend fun delete(connectionId: String) {
         val connection = state.first().connections.firstOrNull { it.id == connectionId }
         stateStore.update { state ->
