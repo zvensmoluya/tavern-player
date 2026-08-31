@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -31,6 +32,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":content-core"))
     implementation(project(":conversation-core"))
     implementation(project(":model-gateway"))
     implementation(libs.activity.compose)

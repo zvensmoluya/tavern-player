@@ -41,7 +41,9 @@ object DemoConversationContent {
                 content = "你正在扮演{{char}}，与{{user}}进行沉浸式角色对话。",
                 systemPrompt = true,
             ),
+            marker("worldInfoBefore"),
             marker("charDescription"),
+            marker("worldInfoAfter"),
             marker("charPersonality"),
             marker("scenario"),
             marker("dialogueExamples"),
@@ -63,7 +65,9 @@ object DemoConversationContent {
         ),
         promptOrder = listOf(
             PromptOrderEntry("main"),
+            PromptOrderEntry("worldInfoBefore"),
             PromptOrderEntry("charDescription"),
+            PromptOrderEntry("worldInfoAfter"),
             PromptOrderEntry("charPersonality"),
             PromptOrderEntry("scenario"),
             PromptOrderEntry("toneReminder"),
@@ -74,8 +78,8 @@ object DemoConversationContent {
         newChatPrompt = "开始一段新的角色对话。",
         newExampleChatPrompt = "以下是示例对话。",
         assistantPrefill = "",
-        maxOutputTokens = 512,
-        declaredContextTokens = 8_192,
+        maxOutputTokens = 1_024,
+        declaredContextTokens = null,
     )
 
     private fun marker(identifier: String) = PromptDefinition(

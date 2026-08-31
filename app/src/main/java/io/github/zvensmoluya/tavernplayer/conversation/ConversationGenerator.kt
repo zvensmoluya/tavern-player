@@ -29,6 +29,7 @@ import io.github.zvensmoluya.modelgateway.responses.ResponsesRole
 import io.github.zvensmoluya.modelgateway.responses.ResponsesUsage
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import java.net.URI
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -57,6 +58,12 @@ data class ProviderRequestPreview(
     val assistantPrefillApplied: Boolean,
 )
 
+data class ProviderTokenValidation(
+    val inputTokens: Int,
+    val quality: TokenCountQuality,
+    val counter: String,
+)
+
 sealed interface GenerationEvent {
     data class RequestPrepared(val preview: ProviderRequestPreview) : GenerationEvent
     data class TextDelta(val text: String) : GenerationEvent
@@ -69,7 +76,10 @@ sealed interface GenerationEvent {
     data class Diagnostic(val summary: String) : GenerationEvent
 }
 
-fun interface ConversationGenerator {
+interface ConversationGenerator {
+    suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan): ProviderTokenValidation? =
+        plan.tokenAccounting?.let { ProviderTokenValidation(it.inputTokens, it.quality, it.tokenizer) }
+
     fun stream(connection: StoredConnection, plan: GenerationPlan): Flow<GenerationEvent>
 }
 
@@ -77,6 +87,36 @@ class ModelGatewayConversationGenerator(
     private val gateway: ModelGateway,
     private val repository: ConnectionRepository,
 ) : ConversationGenerator {
+    override suspend fun validateTokens(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+    ): ProviderTokenValidation? {
+        repository.ensureReady(connection)
+        val prepared = GenerationRequestMapper.map(connection, plan)
+        val host = runCatching { URI(connection.streamEndpoint.replace("{model}", "model")).host.orEmpty() }
+            .getOrDefault("")
+        return when {
+            prepared is PreparedGenerationRequest.Anthropic && host.equals("api.anthropic.com", ignoreCase = true) -> {
+                val count = gateway.anthropicMessages.countTokens(connection.target(), prepared.request)
+                ProviderTokenValidation(count.inputTokens.toIntSafeCount(), TokenCountQuality.EXACT, "anthropic-count-tokens")
+            }
+            prepared is PreparedGenerationRequest.GenerateContent &&
+                host.equals("generativelanguage.googleapis.com", ignoreCase = true) -> {
+                val count = gateway.geminiGenerateContent.countTokens(connection.target(), prepared.request)
+                ProviderTokenValidation(count.totalTokens.toIntSafeCount(), TokenCountQuality.EXACT, "gemini-countTokens")
+            }
+            (prepared is PreparedGenerationRequest.Responses || prepared is PreparedGenerationRequest.Chat) &&
+                host.equals("api.openai.com", ignoreCase = true) -> plan.tokenAccounting?.let {
+                ProviderTokenValidation(it.inputTokens, it.quality, it.tokenizer)
+            }
+            else -> ProviderTokenValidation(
+                inputTokens = prepared.conservativeInputTokens(),
+                quality = TokenCountQuality.ESTIMATED,
+                counter = "provider-request-utf8-upper-bound",
+            )
+        }
+    }
+
     override fun stream(connection: StoredConnection, plan: GenerationPlan): Flow<GenerationEvent> = flow {
         repository.ensureReady(connection)
         val prepared = GenerationRequestMapper.map(connection, plan)
@@ -200,6 +240,8 @@ class ModelGatewayConversationGenerator(
     }
 }
 
+private fun Long.toIntSafeCount(): Int = coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+
 internal sealed interface PreparedGenerationRequest {
     val preview: ProviderRequestPreview
 
@@ -228,6 +270,50 @@ internal sealed interface PreparedGenerationRequest {
         override val preview: ProviderRequestPreview,
     ) : PreparedGenerationRequest
 }
+
+internal fun PreparedGenerationRequest.conservativeInputTokens(): Int {
+    val payloads = when (this) {
+        is PreparedGenerationRequest.Responses -> request.input.flatMap { listOf(it.role.wire, it.text) }
+        is PreparedGenerationRequest.Chat -> request.messages.flatMap { listOf(it.role.wire, it.content) }
+        is PreparedGenerationRequest.Anthropic -> buildList {
+            request.system?.let(::add)
+            request.messages.forEach { message ->
+                add(message.role.wire)
+                add(message.text)
+            }
+        }
+        is PreparedGenerationRequest.Interactions -> buildList {
+            request.systemInstruction?.let(::add)
+            request.input.forEach { step ->
+                when (step) {
+                    is GeminiInteractionInputStep.UserInput -> add(step.text)
+                    is GeminiInteractionInputStep.ModelOutput -> add(step.text)
+                    is GeminiInteractionInputStep.Thought -> {
+                        add(step.signature)
+                        step.summary?.let(::add)
+                    }
+                }
+            }
+        }
+        is PreparedGenerationRequest.GenerateContent -> buildList {
+            request.systemInstruction?.let(::add)
+            request.contents.forEach { content ->
+                add(content.role.wire)
+                add(content.text)
+                content.thoughtSignature?.let(::add)
+            }
+        }
+    }
+    return payloads.sumOf { value ->
+        value.toByteArray(Charsets.UTF_8).size.toLong() + CONSERVATIVE_FIELD_OVERHEAD
+    }
+        .plus(CONSERVATIVE_REQUEST_OVERHEAD)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toInt()
+}
+
+private const val CONSERVATIVE_FIELD_OVERHEAD = 4
+private const val CONSERVATIVE_REQUEST_OVERHEAD = 16
 
 internal object GenerationRequestMapper {
     fun map(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest {

@@ -7,6 +7,9 @@ import io.github.zvensmoluya.tavernplayer.connections.AndroidKeystoreCredentialS
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.JsonConnectionDataStore
 import io.github.zvensmoluya.tavernplayer.connections.ProbeService
+import io.github.zvensmoluya.tavernplayer.characters.CharacterRepository
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
+import io.github.zvensmoluya.tavernplayer.conversation.DemoConversationContent
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
 
@@ -23,5 +26,13 @@ class AppGraph(context: Context) {
     )
     val probeService = ProbeService(gateway, connectionRepository)
     val promptCompiler = PromptCompiler()
+    val preset = DemoConversationContent.preset
+    val defaultPersona = DemoConversationContent.persona
+    val characterRepository = CharacterRepository(appContext.filesDir)
+    val conversationRepository = ConversationRepository(
+        filesDir = appContext.filesDir,
+        compiler = promptCompiler,
+        preset = preset,
+    )
     val conversationGenerator = ModelGatewayConversationGenerator(gateway, connectionRepository)
 }

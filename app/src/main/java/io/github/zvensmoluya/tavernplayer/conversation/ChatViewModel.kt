@@ -7,21 +7,23 @@ import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-enum class ChatMessageStatus {
-    COMPLETE,
-    STREAMING,
-    CANCELLED,
-    ERROR,
-}
+enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTED }
 
 data class AssistantGenerationMetadata(
     val presetId: String,
@@ -35,6 +37,10 @@ data class ChatMessageState(
     val message: ConversationMessage,
     val status: ChatMessageStatus = ChatMessageStatus.COMPLETE,
     val metadata: AssistantGenerationMetadata? = null,
+    val variantIndex: Int = 0,
+    val variantCount: Int = 1,
+    val displayContent: String = message.content,
+    val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
 )
 
 data class GenerationTraceState(
@@ -49,15 +55,19 @@ data class GenerationTraceState(
 )
 
 data class ChatUiState(
-    val character: CharacterSnapshot,
-    val persona: Persona,
-    val messages: List<ChatMessageState>,
+    val conversationId: String? = null,
+    val character: CharacterSnapshot = EMPTY_CHARACTER,
+    val persona: Persona = Persona("traveler", "旅人"),
+    val messages: List<ChatMessageState> = emptyList(),
     val input: String = "",
     val readyConnections: List<StoredConnection> = emptyList(),
     val selectedConnectionId: String? = null,
     val loadingConnections: Boolean = true,
+    val loadingConversation: Boolean = false,
     val running: Boolean = false,
     val retryAvailable: Boolean = false,
+    val regenerateAvailable: Boolean = false,
+    val variantNavigationAvailable: Boolean = false,
     val message: String? = null,
     val lastTrace: GenerationTraceState? = null,
 ) {
@@ -69,21 +79,40 @@ class ChatViewModel(
     private val repository: ConnectionRepository,
     private val compiler: PromptCompiler,
     private val generator: ConversationGenerator,
-    private val characterAsset: CharacterAsset = DemoConversationContent.character,
-    private val persona: Persona = DemoConversationContent.persona,
+    private val conversationRepository: ConversationRepository? = null,
     private val preset: Preset = DemoConversationContent.preset,
+    characterAsset: CharacterAsset = DemoConversationContent.character,
+    persona: Persona = DemoConversationContent.persona,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val now: () -> Long = System::currentTimeMillis,
+    private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
-    private val initialCharacter = characterAsset.snapshot()
-    private val _uiState = MutableStateFlow(newState(initialCharacter))
+    private var record: ConversationRecord = fallbackRecord(characterAsset, persona)
+    private val displayCache = record.selectedMessages().associate { it.id to it.content }.toMutableMap()
+    private val displayReasoningCache = record.selectedMessages()
+        .associate { message -> message.id to message.reasoning.map(ReasoningBlock::text) }
+        .toMutableMap()
+    private val _uiState = MutableStateFlow(
+        record.toUiState(
+            loadingConnections = true,
+            displayContents = displayCache,
+            displayReasoning = displayReasoningCache,
+        ),
+    )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
     private var generationJob: Job? = null
+    private var persistenceJob: Job? = null
+    private var persistenceDirty = false
+    private var rawAssistant = ""
+    private val rawReasoning = mutableListOf<ReasoningBlock>()
+    private var pendingPlanRuntime: ConversationRuntimeState? = null
+    private var pendingAssistantRuntime: ConversationRuntimeState? = null
 
     init {
         viewModelScope.launch {
             repository.state.collect { gatewayState ->
                 val ready = gatewayState.connections.filter { connection ->
-                    connection.selectedModel.isNotBlank() && repository.credentialStatus(connection) in readyStatuses
+                    connection.selectedModel.isNotBlank() && repository.credentialStatus(connection) in READY_STATUSES
                 }.sortedBy { it.name.lowercase() }
                 val current = _uiState.value.selectedConnectionId
                 val selected = when {
@@ -92,14 +121,27 @@ class ChatViewModel(
                     else -> ready.firstOrNull()?.id
                 }
                 _uiState.update {
-                    it.copy(
-                        readyConnections = ready,
-                        selectedConnectionId = selected,
-                        loadingConnections = false,
-                    )
+                    it.copy(readyConnections = ready, selectedConnectionId = selected, loadingConnections = false)
                 }
             }
         }
+    }
+
+    fun loadConversation(conversationId: String) {
+        val loaded = conversationRepository?.get(conversationId) ?: return
+        generationJob?.cancel()
+        record = loaded
+        displayCache.clear()
+        displayReasoningCache.clear()
+        val current = _uiState.value
+        _uiState.value = record.toUiState(
+            loadingConnections = current.loadingConnections,
+            readyConnections = current.readyConnections,
+            selectedConnectionId = current.selectedConnectionId,
+            displayContents = displayCache,
+            displayReasoning = displayReasoningCache,
+        )
+        viewModelScope.launch { refreshDisplayCache() }
     }
 
     fun updateInput(value: String) {
@@ -108,40 +150,79 @@ class ChatViewModel(
 
     fun send() {
         val state = _uiState.value
+        val connection = state.selectedConnection
         if (state.running || state.input.isBlank()) return
-        val expanded = compiler.expandConversationText(state.input, state.character, state.persona)
-        if (expanded is TextExpansionResult.Failure) {
-            _uiState.update {
-                it.copy(
-                    message = expanded.diagnostic.message,
-                    lastTrace = GenerationTraceState(compileDiagnostics = listOf(expanded.diagnostic)),
-                )
-            }
+        if (connection == null) {
+            _uiState.update { it.copy(message = "请先配置可用模型") }
             return
         }
-        val content = (expanded as TextExpansionResult.Success).text
-        val userMessage = ConversationMessage(
-            id = idGenerator(),
-            role = MessageRole.USER,
-            content = content,
-            authorName = state.persona.name,
-        )
-        _uiState.update {
-            it.copy(
-                messages = it.messages + ChatMessageState(userMessage),
-                input = "",
-                retryAvailable = false,
-                message = null,
+        val inputText = state.input
+        viewModelScope.launch {
+            val generationId = idGenerator()
+            val historyBefore = record.selectedMessages()
+            val projected = compiler.projectUserInput(
+                text = inputText,
+                character = record.character,
+                persona = record.persona,
+                preset = preset,
+                runtimeState = record.runtimeState,
+                history = historyBefore,
+                conversationId = record.id,
+                generationId = generationId,
+                modelId = connection.selectedModel,
+            ) as TextExpansionResult.Success
+            val userMessage = ConversationMessage(
+                id = idGenerator(),
+                role = MessageRole.USER,
+                content = projected.text,
+                authorName = record.persona.name,
+                createdAtEpochMillis = now(),
             )
+            val displayed = withContext(projectionDispatcher) {
+                compiler.projectDisplayText(
+                    text = userMessage.content,
+                    role = MessageRole.USER,
+                    character = record.character,
+                    persona = record.persona,
+                    preset = preset,
+                    runtimeState = projected.runtimeState,
+                    history = historyBefore,
+                    conversationId = record.id,
+                    generationId = generationId,
+                    modelId = connection.selectedModel,
+                ) as TextExpansionResult.Success
+            }
+            displayCache[userMessage.id] = displayed.text
+            val userTurn = ConversationTurn(
+                id = idGenerator(),
+                role = MessageRole.USER,
+                variants = listOf(MessageVariant(idGenerator(), userMessage)),
+            )
+            record = record.copy(turns = record.turns + userTurn, runtimeState = projected.runtimeState)
+            syncRecord(input = "", message = null, retryAvailable = false)
+            persistNow()
+            generate(connection, generationId, appendAssistantTurn = true)
         }
-        generateForCurrentHistory()
     }
 
     fun retry() {
         val state = _uiState.value
-        if (state.running || !state.retryAvailable || state.messages.lastOrNull()?.message?.role != MessageRole.USER) return
-        generateForCurrentHistory()
+        val connection = state.selectedConnection ?: return
+        if (state.running || !state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER) return
+        viewModelScope.launch { generate(connection, idGenerator(), appendAssistantTurn = true) }
     }
+
+    fun regenerate() {
+        val state = _uiState.value
+        val connection = state.selectedConnection ?: return
+        val last = record.turns.lastOrNull() ?: return
+        if (state.running || last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER) return
+        viewModelScope.launch { generate(connection, idGenerator(), appendAssistantTurn = false) }
+    }
+
+    fun previousVariant() = selectVariant(-1)
+
+    fun nextVariant() = selectVariant(1)
 
     fun cancel() {
         generationJob?.cancel()
@@ -159,125 +240,281 @@ class ChatViewModel(
 
     fun resetConversation() {
         generationJob?.cancel()
-        val snapshot = characterAsset.snapshot()
-        val current = _uiState.value
-        _uiState.value = newState(snapshot).copy(
-            readyConnections = current.readyConnections,
-            selectedConnectionId = current.selectedConnectionId,
-            loadingConnections = current.loadingConnections,
+        val previous = record
+        record = fallbackRecord(
+            io.github.zvensmoluya.tavernplayer.content.CharacterAsset(
+                id = record.character.assetId,
+                sourceSha256 = record.character.sourceSha256,
+                name = record.character.name,
+                nickname = record.character.promptName.takeIf { it != record.character.name },
+                description = record.character.description,
+                personality = record.character.personality,
+                scenario = record.character.scenario,
+                firstMessage = record.character.firstMessage,
+                alternateFirstMessages = record.character.alternateFirstMessages,
+                rawMessageExamples = record.character.rawMessageExamples,
+                systemPrompt = record.character.systemPrompt,
+                postHistoryInstructions = record.character.postHistoryInstructions,
+                creatorNotes = record.character.creatorNotes,
+                creator = record.character.creator,
+                characterVersion = record.character.characterVersion,
+                depthPrompt = record.character.depthPrompt,
+                worldBooks = record.character.worldBooks,
+                regexScripts = record.character.regexScripts,
+            ),
+            record.persona,
+        ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis)
+        displayCache.clear()
+        displayReasoningCache.clear()
+        val state = _uiState.value
+        _uiState.value = record.toUiState(
+            loadingConnections = state.loadingConnections,
+            readyConnections = state.readyConnections,
+            selectedConnectionId = state.selectedConnectionId,
+            displayContents = displayCache,
+            displayReasoning = displayReasoningCache,
         )
+        viewModelScope.launch {
+            persistNow()
+            refreshDisplayCache()
+        }
     }
 
-    private fun generateForCurrentHistory() {
-        val state = _uiState.value
-        val connection = state.selectedConnection
-        if (connection == null) {
-            _uiState.update { it.copy(message = "请先配置可用模型", retryAvailable = true) }
-            return
+    private suspend fun generate(
+        connection: StoredConnection,
+        generationId: String,
+        appendAssistantTurn: Boolean,
+    ) {
+        val evaluationInstant = Instant.ofEpochMilli(now())
+        val evaluationZoneId = ZoneId.systemDefault()
+        val history = if (appendAssistantTurn) record.selectedMessages() else record.turns.dropLast(1).map { it.selected.message }
+        val runtimeBeforeGeneration = if (appendAssistantTurn) {
+            record.runtimeState
+        } else {
+            record.turns.lastOrNull()?.selected?.runtimeStateBefore ?: record.runtimeState
         }
-        val compilation = compiler.compile(
-            NormalGenerationInput(
-                character = state.character,
-                persona = state.persona,
-                history = state.messages.map(ChatMessageState::message),
-                preset = preset,
+        val model = connection.modelCache.models.firstOrNull { it.id == connection.selectedModel }
+        val lastVisibleTurn = record.turns.lastOrNull()
+        val baseInput = NormalGenerationInput(
+            character = record.character,
+            persona = record.persona,
+            history = history,
+            preset = preset,
+            runtimeState = runtimeBeforeGeneration.copy(
+                lastGenerationType = if (appendAssistantTurn) "normal" else "regenerate",
             ),
+            conversationId = record.id,
+            generationId = generationId,
+            modelId = connection.selectedModel,
+            modelContextTokens = model?.inputTokenLimit?.toIntSafe(),
+            modelOutputTokens = model?.outputTokenLimit?.toIntSafe(),
+            firstDisplayedMessageId = 0,
+            lastSwipeId = lastVisibleTurn?.variants?.size ?: 1,
+            currentSwipeId = lastVisibleTurn?.selectedVariantIndex?.plus(1) ?: 1,
+            allChatLastMessageId = record.turns.lastIndex.takeIf { it >= 0 },
+            evaluationInstant = evaluationInstant,
+            evaluationZoneId = evaluationZoneId,
         )
-        if (compilation is CompilationResult.Failure) {
-            _uiState.update {
-                it.copy(
-                    message = compilation.diagnostics.firstOrNull()?.message ?: "Prompt 编排失败",
-                    retryAvailable = true,
-                    lastTrace = GenerationTraceState(
-                        compileDiagnostics = compilation.diagnostics,
-                        compileTrace = compilation.trace,
+        var localInputLimit: Int? = null
+        val validationDiagnostics = mutableListOf<CompilationDiagnostic>()
+        val validationTrace = mutableListOf<CompilationTraceEntry>()
+        var plan: GenerationPlan? = null
+        for (attempt in 0..MAX_PROVIDER_RECLIPS) {
+            val compilation = compiler.compile(baseInput.copy(maxInputTokens = localInputLimit))
+            if (compilation is CompilationResult.Failure) {
+                showCompilationFailure(
+                    compilation.diagnostics + validationDiagnostics,
+                    compilation.trace + validationTrace,
+                    retryAvailable = appendAssistantTurn,
+                )
+                return
+            }
+            val candidate = (compilation as CompilationResult.Success).plan
+            val validation = try {
+                generator.validateTokens(connection, candidate)
+            } catch (error: Exception) {
+                val diagnostic = CompilationDiagnostic(
+                    DiagnosticSeverity.ERROR,
+                    "PROVIDER_TOKEN_VALIDATION_FAILED",
+                    error.userMessage(),
+                )
+                showCompilationFailure(candidate.diagnostics + validationDiagnostics + diagnostic, candidate.trace + validationTrace, appendAssistantTurn)
+                return
+            }
+            val accounting = candidate.tokenAccounting
+            if (validation == null || accounting == null) {
+                plan = candidate
+                break
+            }
+            val contextLimit = accounting.contextLimit
+            val overflow = validation.inputTokens + candidate.maxOutputTokens - contextLimit
+            validationDiagnostics += CompilationDiagnostic(
+                DiagnosticSeverity.WARNING,
+                if (validation.quality == TokenCountQuality.EXACT) "PROVIDER_TOKEN_COUNT_EXACT" else "PROVIDER_TOKEN_COUNT_ESTIMATED",
+                "最终 Provider 请求输入 ${validation.inputTokens} tokens；计数器 ${validation.counter}",
+            )
+            validationTrace += CompilationTraceEntry(
+                stage = "provider-token-validation",
+                sourceIds = emptyList(),
+                decision = "attempt=${attempt + 1} input=${validation.inputTokens} output=${candidate.maxOutputTokens} context=$contextLimit",
+            )
+            if (overflow <= 0) {
+                plan = candidate.copy(
+                    diagnostics = (candidate.diagnostics + validationDiagnostics).distinctBy { Triple(it.code, it.sourceId, it.message) },
+                    trace = candidate.trace + validationTrace,
+                    tokenAccounting = accounting.copy(
+                        inputTokens = validation.inputTokens,
+                        quality = validation.quality,
+                        tokenizer = validation.counter,
                     ),
                 )
+                break
             }
-            return
+            if (attempt == MAX_PROVIDER_RECLIPS) {
+                val diagnostic = CompilationDiagnostic(
+                    DiagnosticSeverity.ERROR,
+                    "FINAL_PROVIDER_CONTEXT_OVERFLOW",
+                    "Provider 计数仍超出 context $contextLimit：输入 ${validation.inputTokens}，回复预留 ${candidate.maxOutputTokens}",
+                )
+                showCompilationFailure(candidate.diagnostics + validationDiagnostics + diagnostic, candidate.trace + validationTrace, appendAssistantTurn)
+                return
+            }
+            localInputLimit = (
+                accounting.inputTokens - overflow - PROVIDER_RECLIP_SAFETY_TOKENS
+                ).coerceAtLeast(0)
         }
-        val plan = (compilation as CompilationResult.Success).plan
-        val assistantId = idGenerator()
+        val finalPlan = checkNotNull(plan)
         val adapterId = connection.protocol.name
-        val placeholder = ConversationMessage(
-            id = assistantId,
+        val assistantMessage = ConversationMessage(
+            id = idGenerator(),
             role = MessageRole.ASSISTANT,
             content = "",
-            authorName = state.character.name,
+            authorName = record.character.promptName,
             adapterId = adapterId,
+            createdAtEpochMillis = now(),
         )
-        _uiState.update {
-            it.copy(
-                messages = it.messages + ChatMessageState(
-                    message = placeholder,
-                    status = ChatMessageStatus.STREAMING,
-                    metadata = AssistantGenerationMetadata(plan.presetId, adapterId, connection.selectedModel),
-                ),
-                running = true,
-                retryAvailable = false,
-                message = null,
-                lastTrace = GenerationTraceState(
-                    plan = plan,
-                    compileDiagnostics = plan.diagnostics,
-                    compileTrace = plan.trace,
+        val variant = MessageVariant(
+            id = idGenerator(),
+            message = assistantMessage,
+            status = PersistedMessageStatus.STREAMING,
+            presetId = finalPlan.presetId,
+            adapterId = adapterId,
+            model = connection.selectedModel,
+            generationPlan = finalPlan,
+            runtimeStateBefore = runtimeBeforeGeneration,
+            runtimeStateAfter = finalPlan.runtimeState,
+        )
+        record = if (appendAssistantTurn) {
+            record.copy(
+                turns = record.turns + ConversationTurn(idGenerator(), MessageRole.ASSISTANT, listOf(variant)),
+            )
+        } else {
+            val last = record.turns.last()
+            record.copy(
+                turns = record.turns.dropLast(1) + last.copy(
+                    variants = last.variants + variant,
+                    selectedVariantIndex = last.variants.size,
                 ),
             )
         }
+        rawAssistant = ""
+        rawReasoning.clear()
+        pendingPlanRuntime = finalPlan.runtimeState
+        pendingAssistantRuntime = null
+        displayCache[assistantMessage.id] = ""
+        displayReasoningCache[assistantMessage.id] = emptyList()
+        syncRecord(
+            running = true,
+            retryAvailable = false,
+            message = null,
+            trace = GenerationTraceState(
+                plan = finalPlan,
+                compileDiagnostics = finalPlan.diagnostics,
+                compileTrace = finalPlan.trace,
+            ),
+        )
+        persistNow()
+
         generationJob = viewModelScope.launch {
             try {
-                generator.stream(connection, plan).collect { event -> applyEvent(assistantId, event) }
-                finishIfStreamEnded(assistantId)
+                generator.stream(connection, finalPlan).collect { event ->
+                    applyEvent(variant.id, generationId, connection, evaluationInstant, evaluationZoneId, event)
+                }
+                finishIfStreamEnded(variant.id)
             } catch (cancelled: CancellationException) {
-                finishFailure(assistantId, cancelled = true, error = null)
+                finishFailure(variant.id, cancelled = true, error = null)
                 throw cancelled
             } catch (error: Exception) {
-                finishFailure(assistantId, cancelled = false, error = error)
+                finishFailure(variant.id, cancelled = false, error = error)
             } finally {
                 generationJob = null
+                persistNow()
             }
         }
     }
 
-    private fun applyEvent(assistantId: String, event: GenerationEvent) {
+    private suspend fun applyEvent(
+        variantId: String,
+        generationId: String,
+        connection: StoredConnection,
+        evaluationInstant: Instant,
+        evaluationZoneId: ZoneId,
+        event: GenerationEvent,
+    ) {
+        commitPreparedRuntime()
         when (event) {
             is GenerationEvent.RequestPrepared -> updateTrace { copy(providerPreview = event.preview) }
-            is GenerationEvent.TextDelta -> updateAssistant(assistantId) { state ->
-                state.copy(message = state.message.copy(content = state.message.content + event.text))
+            is GenerationEvent.TextDelta -> {
+                rawAssistant += event.text
+                reprojectAssistantOutput(variantId, generationId, connection, evaluationInstant, evaluationZoneId)
+                schedulePersist()
             }
-            GenerationEvent.ReasoningStarted -> updateAssistant(assistantId) { state ->
-                val reasoning = state.message.reasoning
-                if (reasoning.lastOrNull()?.let { it.text.isEmpty() && it.signature == null } == true) state
-                else state.copy(message = state.message.copy(reasoning = reasoning + ReasoningBlock()))
-            }
-            is GenerationEvent.ReasoningDelta -> updateAssistant(assistantId) { state ->
-                val reasoning = state.message.reasoning.ifEmpty { listOf(ReasoningBlock()) }.toMutableList()
-                val last = reasoning.removeAt(reasoning.lastIndex)
-                reasoning += last.copy(text = last.text + event.text)
-                state.copy(message = state.message.copy(reasoning = reasoning))
-            }
-            is GenerationEvent.ReasoningSignature -> updateAssistant(assistantId) { state ->
-                val reasoning = state.message.reasoning.ifEmpty { listOf(ReasoningBlock()) }.toMutableList()
-                val last = reasoning.removeAt(reasoning.lastIndex)
-                if (last.signature == null) {
-                    reasoning += last.copy(signature = event.signature)
-                } else {
-                    reasoning += last
-                    reasoning += ReasoningBlock(signature = event.signature)
+            GenerationEvent.ReasoningStarted -> {
+                if (rawReasoning.lastOrNull()?.let { it.text.isEmpty() && it.signature == null } != true) {
+                    rawReasoning += ReasoningBlock()
+                    updateVariant(variantId) { variant ->
+                        variant.copy(message = variant.message.copy(reasoning = variant.message.reasoning + ReasoningBlock()))
+                    }
                 }
-                state.copy(message = state.message.copy(reasoning = reasoning))
+                schedulePersist()
+            }
+            is GenerationEvent.ReasoningDelta -> {
+                if (rawReasoning.isEmpty()) rawReasoning += ReasoningBlock()
+                val lastIndex = rawReasoning.lastIndex
+                rawReasoning[lastIndex] = rawReasoning[lastIndex].copy(text = rawReasoning[lastIndex].text + event.text)
+                reprojectAssistantOutput(variantId, generationId, connection, evaluationInstant, evaluationZoneId)
+                schedulePersist()
+            }
+            is GenerationEvent.ReasoningSignature -> {
+                if (rawReasoning.isEmpty()) rawReasoning += ReasoningBlock()
+                val current = rawReasoning.last()
+                if (current.signature == null) {
+                    rawReasoning[rawReasoning.lastIndex] = current.copy(signature = event.signature)
+                } else {
+                    rawReasoning += ReasoningBlock(signature = event.signature)
+                }
+                updateVariant(variantId) { variant ->
+                    val reasoning = rawReasoning.mapIndexed { index, raw ->
+                        variant.message.reasoning.getOrNull(index)?.copy(signature = raw.signature)
+                            ?: ReasoningBlock(signature = raw.signature)
+                    }
+                    variant.copy(message = variant.message.copy(reasoning = reasoning))
+                }
+                schedulePersist()
             }
             GenerationEvent.ReasoningFinished -> Unit
             is GenerationEvent.Usage -> {
-                updateAssistant(assistantId) { state ->
-                    state.copy(metadata = state.metadata?.copy(usage = event.value))
-                }
+                updateVariant(variantId) { it.copy(inputTokens = event.value.inputTokens, outputTokens = event.value.outputTokens) }
                 updateTrace { copy(usage = event.value) }
             }
             is GenerationEvent.Finished -> {
-                updateAssistant(assistantId) { state ->
-                    state.copy(
-                        status = ChatMessageStatus.COMPLETE,
-                        metadata = state.metadata?.copy(finishReason = event.reason),
+                pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
+                pendingAssistantRuntime = null
+                updateVariant(variantId) {
+                    it.copy(
+                        status = PersistedMessageStatus.COMPLETE,
+                        finishReason = event.reason,
+                        runtimeStateAfter = record.runtimeState,
                     )
                 }
                 updateTrace { copy(finishReason = event.reason) }
@@ -288,94 +525,416 @@ class ChatViewModel(
         }
     }
 
-    private fun finishIfStreamEnded(assistantId: String) {
-        val assistant = _uiState.value.messages.firstOrNull { it.message.id == assistantId }
-        if (assistant == null) return
-        if (assistant.message.content.isBlank()) {
-            removeAssistant(assistantId)
-            _uiState.update {
-                it.copy(running = false, retryAvailable = true, message = "模型没有返回正文")
+    private suspend fun commitPreparedRuntime() {
+        val runtime = pendingPlanRuntime ?: return
+        pendingPlanRuntime = null
+        record = record.copy(runtimeState = runtime)
+        persistNow()
+        syncRecord()
+    }
+
+    private suspend fun reprojectAssistantOutput(
+        variantId: String,
+        generationId: String,
+        connection: StoredConnection,
+        evaluationInstant: Instant,
+        evaluationZoneId: ZoneId,
+    ) {
+        val history = record.selectedMessages().dropLast(1)
+        val projection = withContext(projectionDispatcher) {
+            compiler.projectAssistantOutput(
+                rawText = rawAssistant,
+                rawReasoning = rawReasoning.map(ReasoningBlock::text),
+                character = record.character,
+                persona = record.persona,
+                preset = preset,
+                runtimeState = record.runtimeState,
+                history = history,
+                conversationId = record.id,
+                generationId = generationId,
+                modelId = connection.selectedModel,
+                evaluationInstant = evaluationInstant,
+                evaluationZoneId = evaluationZoneId,
+            )
+        }
+        pendingAssistantRuntime = projection.runtimeState
+        val messageId = record.findVariant(variantId)?.message?.id
+        if (messageId != null) {
+            displayCache[messageId] = projection.displayText
+            displayReasoningCache[messageId] = projection.displayReasoning
+        }
+        updateVariant(variantId) { variant ->
+            val reasoning = projection.storageReasoning.mapIndexed { index, text ->
+                ReasoningBlock(text = text, signature = rawReasoning.getOrNull(index)?.signature)
             }
-            updateTrace { copy(error = "模型没有返回正文") }
-        } else {
-            updateAssistant(assistantId) { state ->
-                if (state.status == ChatMessageStatus.STREAMING) state.copy(status = ChatMessageStatus.COMPLETE) else state
+            val plan = variant.generationPlan?.let { plan ->
+                plan.copy(
+                    diagnostics = (plan.diagnostics + projection.diagnostics)
+                        .distinctBy { Triple(it.code, it.sourceId, it.message) },
+                )
             }
-            _uiState.update { it.copy(running = false, retryAvailable = false) }
+            variant.copy(
+                message = variant.message.copy(content = projection.storageText, reasoning = reasoning),
+                generationPlan = plan,
+                runtimeStateAfter = projection.runtimeState,
+            )
+        }
+        if (projection.diagnostics.isNotEmpty()) {
+            updateTrace {
+                copy(
+                    compileDiagnostics = (compileDiagnostics + projection.diagnostics)
+                        .distinctBy { Triple(it.code, it.sourceId, it.message) },
+                )
+            }
         }
     }
 
-    private fun finishFailure(assistantId: String, cancelled: Boolean, error: Exception?) {
-        val assistant = _uiState.value.messages.firstOrNull { it.message.id == assistantId }
-        val hasPartial = assistant?.message?.content?.isNotBlank() == true
+    private fun finishIfStreamEnded(variantId: String) {
+        pendingPlanRuntime = null
+        val variant = record.findVariant(variantId) ?: return
+        if (variant.message.content.isBlank()) {
+            variant.generationPlan?.runtimeState?.let { promptRuntime ->
+                record = record.copy(runtimeState = promptRuntime)
+            }
+            pendingAssistantRuntime = null
+            removeVariant(variantId)
+            _uiState.update { it.copy(running = false, retryAvailable = true, message = "模型没有返回正文") }
+            updateTrace { copy(error = "模型没有返回正文") }
+        } else {
+            pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
+            pendingAssistantRuntime = null
+            updateVariant(variantId) {
+                if (it.status == PersistedMessageStatus.STREAMING) {
+                    it.copy(status = PersistedMessageStatus.COMPLETE, runtimeStateAfter = record.runtimeState)
+                } else {
+                    it
+                }
+            }
+            _uiState.update { it.copy(running = false, retryAvailable = false, regenerateAvailable = true) }
+        }
+    }
+
+    private fun finishFailure(variantId: String, cancelled: Boolean, error: Exception?) {
+        pendingPlanRuntime = null
+        pendingAssistantRuntime = null
+        val variant = record.findVariant(variantId)
+        val hasPartial = variant?.message?.content?.isNotBlank() == true
         if (hasPartial) {
-            updateAssistant(assistantId) {
-                it.copy(status = if (cancelled) ChatMessageStatus.CANCELLED else ChatMessageStatus.ERROR)
+            updateVariant(variantId) {
+                it.copy(
+                    status = if (cancelled) PersistedMessageStatus.CANCELLED else PersistedMessageStatus.ERROR,
+                    runtimeStateAfter = record.runtimeState,
+                )
             }
         } else {
-            removeAssistant(assistantId)
+            removeVariant(variantId)
         }
         val userMessage = if (cancelled) "已停止生成" else error?.userMessage().orEmpty().ifBlank { "生成失败" }
-        _uiState.update {
-            it.copy(
-                running = false,
-                retryAvailable = !hasPartial,
-                message = userMessage,
-            )
-        }
+        _uiState.update { it.copy(running = false, retryAvailable = !hasPartial, message = userMessage) }
         updateTrace { copy(error = userMessage) }
     }
 
-    private fun updateAssistant(id: String, transform: (ChatMessageState) -> ChatMessageState) {
-        _uiState.update { state ->
-            state.copy(messages = state.messages.map { if (it.message.id == id) transform(it) else it })
+    private fun selectVariant(delta: Int) {
+        if (_uiState.value.running) return
+        val lastIndex = record.turns.indexOfLast { it.role == MessageRole.ASSISTANT }
+        if (lastIndex < 0) return
+        val turn = record.turns[lastIndex]
+        val next = (turn.selectedVariantIndex + delta).coerceIn(0, turn.variants.lastIndex)
+        if (next == turn.selectedVariantIndex) return
+        val selected = turn.variants[next]
+        record = record.copy(
+            turns = record.turns.mapIndexed { index, item -> if (index == lastIndex) item.copy(selectedVariantIndex = next) else item },
+            runtimeState = selected.runtimeStateAfter ?: record.runtimeState,
+        )
+        syncRecord(trace = record.persistedTrace())
+        schedulePersist()
+        viewModelScope.launch { refreshDisplayCache() }
+    }
+
+    private fun updateVariant(id: String, transform: (MessageVariant) -> MessageVariant) {
+        record = record.copy(
+            turns = record.turns.map { turn ->
+                turn.copy(variants = turn.variants.map { if (it.id == id) transform(it) else it })
+            },
+        )
+        syncRecord()
+    }
+
+    private fun removeVariant(id: String) {
+        record = record.copy(
+            turns = record.turns.mapNotNull { turn ->
+                val variants = turn.variants.filterNot { it.id == id }
+                variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
+                    turn.copy(variants = it, selectedVariantIndex = turn.selectedVariantIndex.coerceAtMost(it.lastIndex))
+                }
+            },
+        )
+        syncRecord()
+    }
+
+    private fun syncRecord(
+        input: String = _uiState.value.input,
+        running: Boolean = _uiState.value.running,
+        retryAvailable: Boolean = _uiState.value.retryAvailable,
+        message: String? = _uiState.value.message,
+        trace: GenerationTraceState? = _uiState.value.lastTrace,
+    ) {
+        val current = _uiState.value
+        _uiState.value = record.toUiState(
+            input = input,
+            loadingConnections = current.loadingConnections,
+            readyConnections = current.readyConnections,
+            selectedConnectionId = current.selectedConnectionId,
+            running = running,
+            retryAvailable = retryAvailable,
+            message = message,
+            lastTrace = trace,
+            displayContents = displayCache,
+            displayReasoning = displayReasoningCache,
+        )
+    }
+
+    private fun showCompilationFailure(
+        diagnostics: List<CompilationDiagnostic>,
+        trace: List<CompilationTraceEntry>,
+        retryAvailable: Boolean,
+    ) {
+        _uiState.update {
+            it.copy(
+                message = diagnostics.firstOrNull { item -> item.severity == DiagnosticSeverity.ERROR }?.message
+                    ?: "Prompt 编排失败",
+                retryAvailable = retryAvailable,
+                lastTrace = GenerationTraceState(
+                    compileDiagnostics = diagnostics,
+                    compileTrace = trace,
+                ),
+            )
         }
     }
 
-    private fun removeAssistant(id: String) {
-        _uiState.update { state -> state.copy(messages = state.messages.filterNot { it.message.id == id }) }
+    private suspend fun refreshDisplayCache() {
+        val snapshot = record
+        val messages = snapshot.selectedMessages()
+        val modelId = _uiState.value.selectedConnection?.selectedModel.orEmpty()
+        val rendered = withContext(projectionDispatcher) {
+            messages.mapIndexed { index, message ->
+                val content = compiler.projectDisplayText(
+                    text = message.content,
+                    role = message.role,
+                    character = snapshot.character,
+                    persona = snapshot.persona,
+                    preset = preset,
+                    runtimeState = snapshot.runtimeState,
+                    history = messages,
+                    conversationId = snapshot.id,
+                    generationId = "${snapshot.id}-display",
+                    modelId = modelId,
+                    depth = messages.lastIndex - index,
+                ) as TextExpansionResult.Success
+                val reasoning = message.reasoning.map { block ->
+                    (compiler.projectReasoningText(
+                        text = block.text,
+                        projection = RegexProjection.DISPLAY,
+                        character = snapshot.character,
+                        persona = snapshot.persona,
+                        preset = preset,
+                        runtimeState = snapshot.runtimeState,
+                        history = messages,
+                        conversationId = snapshot.id,
+                        generationId = "${snapshot.id}-display",
+                        modelId = modelId,
+                        depth = messages.lastIndex - index,
+                    ) as TextExpansionResult.Success).text
+                }
+                RenderedMessage(message.id, content.text, reasoning)
+            }
+        }
+        if (record.id != snapshot.id) return
+        rendered.forEach { message ->
+            displayCache[message.id] = message.content
+            displayReasoningCache[message.id] = message.reasoning
+        }
+        syncRecord()
+    }
+
+    private fun schedulePersist() {
+        if (conversationRepository == null) return
+        persistenceDirty = true
+        if (persistenceJob?.isActive == true) return
+        persistenceJob = viewModelScope.launch {
+            delay(STREAM_PERSIST_INTERVAL_MILLIS)
+            val snapshot = record
+            persistenceDirty = false
+            val saved = conversationRepository.save(snapshot)
+            if (record == snapshot) {
+                record = saved
+            } else {
+                persistenceDirty = true
+            }
+            persistenceJob = null
+            if (persistenceDirty) schedulePersist()
+        }
+    }
+
+    private suspend fun persistNow() {
+        val scheduled = persistenceJob
+        persistenceJob = null
+        scheduled?.cancelAndJoin()
+        persistenceDirty = false
+        conversationRepository?.let { repository ->
+            val snapshot = record
+            val saved = repository.save(snapshot)
+            if (record == snapshot) record = saved
+        }
     }
 
     private fun updateTrace(transform: GenerationTraceState.() -> GenerationTraceState) {
-        _uiState.update { state ->
-            state.lastTrace?.let { state.copy(lastTrace = it.transform()) } ?: state
-        }
+        _uiState.update { state -> state.lastTrace?.let { state.copy(lastTrace = it.transform()) } ?: state }
     }
 
-    private fun newState(character: CharacterSnapshot): ChatUiState {
-        val opening = when (val result = compiler.expandConversationText(character.firstMessage, character, persona)) {
-            is TextExpansionResult.Success -> result.text
-            is TextExpansionResult.Failure -> character.firstMessage
-        }
-        val messages = opening.takeIf(String::isNotBlank)?.let {
-            listOf(
-                ChatMessageState(
-                    ConversationMessage(
-                        id = idGenerator(),
-                        role = MessageRole.ASSISTANT,
-                        content = it,
-                        authorName = character.name,
-                    ),
+    private fun fallbackRecord(characterAsset: CharacterAsset, persona: Persona): ConversationRecord {
+        val snapshot = characterAsset.snapshot()
+        val timestamp = now()
+        val variants = (listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages).mapIndexedNotNull { index, greeting ->
+            if (greeting.isBlank()) return@mapIndexedNotNull null
+            val expanded = compiler.expandConversationText(
+                greeting,
+                snapshot,
+                persona,
+                generationId = "fallback-opening-$index",
+            ) as TextExpansionResult.Success
+            MessageVariant(
+                id = idGenerator(),
+                message = ConversationMessage(
+                    idGenerator(),
+                    MessageRole.ASSISTANT,
+                    expanded.text,
+                    snapshot.promptName,
+                    createdAtEpochMillis = timestamp,
                 ),
+                runtimeStateBefore = ConversationRuntimeState(),
+                runtimeStateAfter = expanded.runtimeState,
             )
-        }.orEmpty()
-        return ChatUiState(character = character, persona = persona, messages = messages)
+        }
+        return ConversationRecord(
+            id = "fallback",
+            character = snapshot,
+            persona = persona,
+            turns = variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
+                listOf(ConversationTurn(idGenerator(), MessageRole.ASSISTANT, it))
+            }.orEmpty(),
+            runtimeState = variants.firstOrNull()?.runtimeStateAfter ?: ConversationRuntimeState(),
+            createdAtEpochMillis = timestamp,
+            updatedAtEpochMillis = timestamp,
+        )
     }
 
     class Factory(
         private val repository: ConnectionRepository,
         private val compiler: PromptCompiler,
         private val generator: ConversationGenerator,
+        private val conversationRepository: ConversationRepository? = null,
+        private val preset: Preset = DemoConversationContent.preset,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, compiler, generator) as T
+            ChatViewModel(repository, compiler, generator, conversationRepository, preset) as T
     }
 
     companion object {
-        private val readyStatuses = setOf(CredentialStatus.READY, CredentialStatus.NOT_REQUIRED)
+        private val READY_STATUSES = setOf(CredentialStatus.READY, CredentialStatus.NOT_REQUIRED)
+        private const val MAX_PROVIDER_RECLIPS = 3
+        private const val PROVIDER_RECLIP_SAFETY_TOKENS = 16
+        private const val STREAM_PERSIST_INTERVAL_MILLIS = 500L
     }
 }
+
+private fun ConversationRecord.selectedMessages(): List<ConversationMessage> = turns.map(ConversationTurn::selected).map(MessageVariant::message)
+
+private fun ConversationRecord.findVariant(id: String): MessageVariant? = turns.asSequence()
+    .flatMap { it.variants.asSequence() }
+    .firstOrNull { it.id == id }
+
+private fun ConversationRecord.toUiState(
+    input: String = "",
+    loadingConnections: Boolean,
+    readyConnections: List<StoredConnection> = emptyList(),
+    selectedConnectionId: String? = null,
+    running: Boolean = false,
+    retryAvailable: Boolean = false,
+    message: String? = null,
+    lastTrace: GenerationTraceState? = null,
+    displayContents: Map<String, String> = emptyMap(),
+    displayReasoning: Map<String, List<String>> = emptyMap(),
+): ChatUiState = ChatUiState(
+    conversationId = id,
+    character = character,
+    persona = persona,
+    messages = turns.map { turn ->
+        val variant = turn.selected
+        val presetId = variant.presetId
+        val adapterId = variant.adapterId
+        val model = variant.model
+        ChatMessageState(
+            message = variant.message,
+            displayContent = displayContents[variant.message.id] ?: variant.message.content,
+            displayReasoning = displayReasoning[variant.message.id] ?: variant.message.reasoning.map(ReasoningBlock::text),
+            status = variant.status.toUiStatus(),
+            metadata = if (presetId != null && adapterId != null && model != null) {
+                AssistantGenerationMetadata(
+                    presetId = presetId,
+                    adapterId = adapterId,
+                    model = model,
+                    usage = GenerationUsage(variant.inputTokens, variant.outputTokens),
+                    finishReason = variant.finishReason,
+                )
+            } else null,
+            variantIndex = turn.selectedVariantIndex,
+            variantCount = turn.variants.size,
+        )
+    },
+    input = input,
+    readyConnections = readyConnections,
+    selectedConnectionId = selectedConnectionId,
+    loadingConnections = loadingConnections,
+    running = running,
+    retryAvailable = retryAvailable,
+    regenerateAvailable = turns.lastOrNull()?.role == MessageRole.ASSISTANT &&
+        turns.dropLast(1).lastOrNull()?.role == MessageRole.USER,
+    variantNavigationAvailable = turns.lastOrNull()?.let { it.role == MessageRole.ASSISTANT && it.variants.size > 1 } == true,
+    message = message,
+    lastTrace = lastTrace ?: persistedTrace(),
+)
+
+private data class RenderedMessage(
+    val id: String,
+    val content: String,
+    val reasoning: List<String>,
+)
+
+private fun ConversationRecord.persistedTrace(): GenerationTraceState? {
+    val variant = turns.asReversed().firstNotNullOfOrNull { turn ->
+        turn.takeIf { it.role == MessageRole.ASSISTANT }?.selected?.takeIf { it.generationPlan != null }
+    } ?: return null
+    val plan = variant.generationPlan ?: return null
+    return GenerationTraceState(
+        plan = plan,
+        compileDiagnostics = plan.diagnostics,
+        compileTrace = plan.trace,
+        usage = GenerationUsage(variant.inputTokens, variant.outputTokens),
+        finishReason = variant.finishReason,
+    )
+}
+
+private fun PersistedMessageStatus.toUiStatus(): ChatMessageStatus = when (this) {
+    PersistedMessageStatus.COMPLETE -> ChatMessageStatus.COMPLETE
+    PersistedMessageStatus.STREAMING -> ChatMessageStatus.STREAMING
+    PersistedMessageStatus.INTERRUPTED -> ChatMessageStatus.INTERRUPTED
+    PersistedMessageStatus.CANCELLED -> ChatMessageStatus.CANCELLED
+    PersistedMessageStatus.ERROR -> ChatMessageStatus.ERROR
+}
+
+private fun Long.toIntSafe(): Int? = takeIf { it in 1..Int.MAX_VALUE }?.toInt()
 
 private fun Throwable.userMessage(): String = when (this) {
     is GatewayException.Authentication,
@@ -389,3 +948,8 @@ private fun Throwable.userMessage(): String = when (this) {
     is GatewayException.Protocol -> diagnostic
     else -> "生成失败"
 }
+
+private val EMPTY_CHARACTER = io.github.zvensmoluya.tavernplayer.content.CharacterAsset(
+    id = "loading",
+    name = "",
+).snapshot()

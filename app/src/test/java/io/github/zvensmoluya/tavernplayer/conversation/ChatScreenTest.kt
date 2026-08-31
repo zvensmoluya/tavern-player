@@ -2,9 +2,11 @@ package io.github.zvensmoluya.tavernplayer.conversation
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -15,6 +17,7 @@ import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -161,6 +164,34 @@ class ChatScreenTest {
         assertTrue(manageCalled)
     }
 
+    @Test
+    fun `opening swipe controls do not offer regenerate`() {
+        var previous = false
+        var next = false
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state().copy(
+                        messages = listOf(ChatMessageState(message(), variantIndex = 0, variantCount = 2)),
+                        variantNavigationAvailable = true,
+                        regenerateAvailable = false,
+                    ),
+                    actions = actions(
+                        previousVariant = { previous = true },
+                        nextVariant = { next = true },
+                    ),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("previousVariant").assertIsNotEnabled()
+        compose.onNodeWithTag("nextVariant").performClick()
+        compose.onAllNodesWithTag("regenerate").assertCountEquals(0)
+
+        assertFalse(previous)
+        assertTrue(next)
+    }
+
     private fun state(
         input: String = "",
         running: Boolean = false,
@@ -218,6 +249,8 @@ class ChatScreenTest {
         selectConnection: (String) -> Unit = {},
         reset: () -> Unit = {},
         openModels: () -> Unit = {},
+        previousVariant: () -> Unit = {},
+        nextVariant: () -> Unit = {},
     ) = ChatScreenActions(
         updateInput = updateInput,
         send = send,
@@ -226,5 +259,7 @@ class ChatScreenTest {
         selectConnection = selectConnection,
         reset = reset,
         openModels = openModels,
+        previousVariant = previousVariant,
+        nextVariant = nextVariant,
     )
 }

@@ -42,6 +42,7 @@ import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 @Composable
 fun ChatRoute(
     viewModel: ChatViewModel,
+    onBack: () -> Unit,
     onOpenModels: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -49,11 +50,15 @@ fun ChatRoute(
         state = state,
         actions = ChatScreenActions(
             updateInput = viewModel::updateInput,
-            send = viewModel::send,
+            send = { if (state.selectedConnection == null) onOpenModels() else viewModel.send() },
             cancel = viewModel::cancel,
             retry = viewModel::retry,
+            regenerate = viewModel::regenerate,
+            previousVariant = viewModel::previousVariant,
+            nextVariant = viewModel::nextVariant,
             selectConnection = viewModel::selectConnection,
             reset = viewModel::resetConversation,
+            back = onBack,
             openModels = onOpenModels,
         ),
     )
@@ -67,6 +72,10 @@ data class ChatScreenActions(
     val selectConnection: (String) -> Unit,
     val reset: () -> Unit,
     val openModels: () -> Unit,
+    val regenerate: () -> Unit = {},
+    val previousVariant: () -> Unit = {},
+    val nextVariant: () -> Unit = {},
+    val back: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -94,6 +103,13 @@ fun ChatScreen(
                         }
                     }
                 },
+                navigationIcon = {
+                    TextButton(
+                        modifier = Modifier.testTag("backToCharacter"),
+                        enabled = !state.running,
+                        onClick = actions.back,
+                    ) { Text("返回") }
+                },
                 actions = {
                     if (state.lastTrace != null) {
                         TextButton(
@@ -107,11 +123,6 @@ fun ChatScreen(
                         enabled = !state.running,
                         onClick = { modelPickerVisible = true },
                     ) { Text("模型") }
-                    TextButton(
-                        modifier = Modifier.testTag("resetConversation"),
-                        enabled = !state.running,
-                        onClick = actions.reset,
-                    ) { Text("重置") }
                 },
             )
         },
@@ -147,6 +158,36 @@ fun ChatScreen(
                     ) { Text("重试这一轮") }
                 }
             }
+            if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) {
+                item("assistant-variants") {
+                    val last = state.messages.lastOrNull()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (last != null && state.variantNavigationAvailable) {
+                            TextButton(
+                                enabled = last.variantIndex > 0,
+                                onClick = actions.previousVariant,
+                                modifier = Modifier.testTag("previousVariant"),
+                            ) { Text("上一条") }
+                            Text("${last.variantIndex + 1} / ${last.variantCount}")
+                            TextButton(
+                                enabled = last.variantIndex < last.variantCount - 1,
+                                onClick = actions.nextVariant,
+                                modifier = Modifier.testTag("nextVariant"),
+                            ) { Text("下一条") }
+                        }
+                        if (state.regenerateAvailable) {
+                            OutlinedButton(
+                                onClick = actions.regenerate,
+                                modifier = Modifier.testTag("regenerate"),
+                            ) { Text("重新生成") }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -178,6 +219,13 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (!state.loadingConnections && state.readyConnections.isEmpty()) {
+            Text(
+                "尚未配置模型；输入会保留，发送时可前往配置。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         OutlinedTextField(
             value = state.input,
             onValueChange = actions.updateInput,
@@ -196,7 +244,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             } else {
                 Button(
                     modifier = Modifier.testTag("sendMessage"),
-                    enabled = state.input.isNotBlank() && state.selectedConnection != null,
+                    enabled = state.input.isNotBlank(),
                     onClick = actions.send,
                 ) { Text("发送") }
             }
@@ -223,12 +271,12 @@ private fun MessageBubble(state: ChatMessageState) {
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                if (state.message.content.isNotEmpty()) {
-                    Text(state.message.content, style = MaterialTheme.typography.bodyLarge)
+                if (state.displayContent.isNotEmpty()) {
+                    SafeMarkdownText(state.displayContent)
                 } else if (state.status == ChatMessageStatus.STREAMING) {
                     Text("正在生成…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                val reasoning = state.message.reasoning.joinToString("\n") { it.text }.trim()
+                val reasoning = state.displayReasoning.joinToString("\n").trim()
                 if (reasoning.isNotEmpty()) {
                     TextButton(onClick = { reasoningVisible = !reasoningVisible }) {
                         Text(if (reasoningVisible) "收起思考" else "查看思考")
@@ -245,6 +293,11 @@ private fun MessageBubble(state: ChatMessageState) {
                     ChatMessageStatus.CANCELLED -> Text("已停止", style = MaterialTheme.typography.labelSmall)
                     ChatMessageStatus.ERROR -> Text(
                         "生成中断",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    ChatMessageStatus.INTERRUPTED -> Text(
+                        "上次生成被进程中断",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -270,6 +323,12 @@ private fun ModelPicker(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("选择模型", style = MaterialTheme.typography.titleLarge)
+            if (connections.isEmpty()) {
+                Text(
+                    "还没有可用连接。可以先保留当前对话，再去配置模型。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             connections.forEach { connection ->
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("connection-${connection.id}"),
@@ -309,6 +368,29 @@ private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
                     TraceBlock(
                         title = "${diagnostic.severity}: ${diagnostic.code}",
                         content = diagnostic.message,
+                    )
+                }
+            }
+            trace.plan?.tokenAccounting?.let { accounting ->
+                item("token-accounting") {
+                    TraceBlock(
+                        title = "Context 与 Token",
+                        content = "context=${accounting.contextLimit} input=${accounting.inputTokens} " +
+                            "reservedOutput=${accounting.reservedOutputTokens} quality=${accounting.quality} " +
+                            "counter=${accounting.tokenizer}",
+                    )
+                }
+            }
+            trace.plan?.activatedWorldBookEntries?.takeIf(List<String>::isNotEmpty)?.let { entries ->
+                item("world-book-activation") {
+                    TraceBlock("激活的 World Book 条目", entries.joinToString("\n"))
+                }
+            }
+            trace.compileTrace.forEachIndexed { index, entry ->
+                item("compile-trace-$index") {
+                    TraceBlock(
+                        title = "${entry.stage} · ${entry.decision}",
+                        content = entry.sourceIds.joinToString().ifBlank { "（无 source id）" },
                     )
                 }
             }

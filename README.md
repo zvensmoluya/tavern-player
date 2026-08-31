@@ -24,6 +24,19 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 
 > **复杂留在内部，其余保持简单。**
 
+## 当前可用
+
+当前 Android 版本已经打通单角色 Character Card 对话闭环：
+
+- 导入并保存 V1 / V2 / V3 JSON 或 PNG / APNG 角色卡；
+- 浏览角色定义、creator notes 与兼容性报告；
+- 使用卡片开场和备用开场创建独立 Conversation；
+- 在发送时执行卡片 World Book、Character Regex、Macro、Prompt 编排与 context 预算；
+- 使用已配置的 OpenAI、Anthropic 或 Gemini 协议连接流式生成；
+- 保存消息候选、角色快照和运行状态，并在进程重启后恢复。
+
+第三方脚本、远程资源和富 HTML 不会执行或联网加载。它们会原样保存在导入内容中，并显示兼容性告警。
+
 SillyTavern 建立了这个生态。
 
 我们想做一个更适合消费它的 Player。
@@ -34,6 +47,17 @@ SillyTavern 建立了这个生态。
 - [当前实现架构](docs/architecture.md)
 - [SillyTavern 单轮生成源码研究](docs/st-research.md)
 - [社区 Preset 样本调查](docs/preset-import-capabilities.md)
+
+## 验证
+
+核心回归检查：
+
+```powershell
+.\gradlew.bat :content-core:test :conversation-core:test :model-gateway:test :app:testDebugUnitTest
+.\gradlew.bat lint assembleDebug
+```
+
+可选的本地社区角色卡兼容测试可通过 `-DcommunityCard=<path>` 指定文件；`source/` 仅作为本机验收材料，不进入版本库。
 
 ## 开源
 

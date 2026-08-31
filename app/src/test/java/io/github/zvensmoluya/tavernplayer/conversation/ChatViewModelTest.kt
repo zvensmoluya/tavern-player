@@ -10,7 +10,10 @@ import io.github.zvensmoluya.tavernplayer.connections.CredentialStore
 import io.github.zvensmoluya.tavernplayer.connections.GatewayAppState
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import java.io.IOException
+import java.nio.file.Files
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +57,190 @@ class ChatViewModelTest {
         assertEquals("stop", state.messages.last().metadata?.finishReason)
         assertEquals(14L, state.lastTrace?.usage?.totalTokens)
         assertNotNull(state.lastTrace?.providerPreview)
+        assertTrue(state.regenerateAvailable)
+    }
+
+    @Test
+    fun `opening greetings are swipe variants but cannot be regenerated`() = runTest {
+        val character = DemoConversationContent.character.copy(
+            alternateFirstMessages = listOf("备用开场，{{user}}。"),
+        )
+        val viewModel = viewModel(FakeGenerator { _, _ -> flow { } }, character)
+
+        assertEquals(2, viewModel.uiState.value.messages.single().variantCount)
+        assertTrue(viewModel.uiState.value.variantNavigationAvailable)
+        assertFalse(viewModel.uiState.value.regenerateAvailable)
+
+        viewModel.nextVariant()
+
+        assertEquals("备用开场，旅人。", viewModel.uiState.value.messages.single().message.content)
+        assertEquals(1, viewModel.uiState.value.messages.single().variantIndex)
+    }
+
+    @Test
+    fun `regenerate adds an assistant variant and switching it has no generation side effect`() = runTest {
+        var response = 0
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                response += 1
+                emit(GenerationEvent.TextDelta("回复$response"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator)
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+        viewModel.regenerate()
+
+        assertEquals(2, generator.calls)
+        assertEquals(2, viewModel.uiState.value.messages.last().variantCount)
+        assertEquals("回复2", viewModel.uiState.value.messages.last().message.content)
+
+        viewModel.previousVariant()
+
+        assertEquals(2, generator.calls)
+        assertEquals("回复1", viewModel.uiState.value.messages.last().message.content)
+    }
+
+    @Test
+    fun `regenerate replays from turn runtime and swipe restores each cached candidate state`() = runTest {
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                emit(GenerationEvent.TextDelta("{{incvar::answer}}"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator)
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+        assertEquals("1", viewModel.uiState.value.messages.last().message.content)
+
+        viewModel.regenerate()
+        assertEquals("1", viewModel.uiState.value.messages.last().message.content)
+
+        viewModel.previousVariant()
+        viewModel.regenerate()
+        assertEquals("1", viewModel.uiState.value.messages.last().message.content)
+        assertEquals(3, generator.calls)
+    }
+
+    @Test
+    fun `reasoning uses separate canonical storage and safe display projections`() = runTest {
+        val character = DemoConversationContent.character.copy(
+            regexScripts = listOf(
+                CharacterRegexDefinition(
+                    id = "reasoning-storage",
+                    name = "Reasoning storage",
+                    findRegex = "secret",
+                    replaceString = "stored",
+                    placements = setOf(RegexPlacement.REASONING),
+                ),
+                CharacterRegexDefinition(
+                    id = "reasoning-display",
+                    name = "Reasoning display",
+                    findRegex = "stored",
+                    replaceString = "shown",
+                    placements = setOf(RegexPlacement.REASONING),
+                    markdownOnly = true,
+                ),
+            ),
+        )
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                emit(GenerationEvent.ReasoningDelta("secret"))
+                emit(GenerationEvent.ReasoningSignature("opaque"))
+                emit(GenerationEvent.TextDelta("正文"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator, character)
+
+        viewModel.updateInput("开始")
+        viewModel.send()
+
+        val assistant = viewModel.uiState.value.messages.last()
+        assertEquals("stored", assistant.message.reasoning.single().text)
+        assertEquals("opaque", assistant.message.reasoning.single().signature)
+        assertEquals(listOf("shown"), assistant.displayReasoning)
+    }
+
+    @Test
+    fun `reasoning-only empty response does not commit assistant output mutations`() = runTest {
+        val character = DemoConversationContent.character.copy(
+            regexScripts = listOf(
+                CharacterRegexDefinition(
+                    id = "reasoning-state",
+                    name = "Reasoning state",
+                    findRegex = "thought",
+                    replaceString = "{{setvar::reasoning-side-effect::yes}}thought",
+                    placements = setOf(RegexPlacement.REASONING),
+                ),
+            ),
+        )
+        var attempt = 0
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                attempt += 1
+                if (attempt == 1) {
+                    emit(GenerationEvent.ReasoningDelta("thought"))
+                } else {
+                    emit(GenerationEvent.TextDelta("{{getvar::reasoning-side-effect}}"))
+                }
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator, character)
+
+        viewModel.updateInput("开始")
+        viewModel.send()
+
+        assertTrue(viewModel.uiState.value.retryAvailable)
+        viewModel.retry()
+
+        assertEquals(2, generator.calls)
+        assertTrue(viewModel.uiState.value.retryAvailable)
+        assertEquals(listOf(MessageRole.ASSISTANT, MessageRole.USER), viewModel.uiState.value.messages.map { it.message.role })
+    }
+
+    @Test
+    fun `prompt runtime mutations are not committed when request preparation never succeeds`() = runTest {
+        val directory = Files.createTempDirectory("tavern-chat-runtime").toFile()
+        try {
+            val compiler = PromptCompiler()
+            var repositoryId = 0
+            val conversations = ConversationRepository(
+                directory,
+                compiler,
+                DemoConversationContent.preset,
+                idFactory = { "repository-${repositoryId++}" },
+                ioDispatcher = mainDispatcherRule.dispatcher,
+            )
+            val character = DemoConversationContent.character.copy(
+                description = "{{setvar::planned::yes}}${DemoConversationContent.character.description}",
+            )
+            val created = conversations.create(character, DemoConversationContent.persona)
+            var messageId = 0
+            val viewModel = ChatViewModel(
+                repository = repository(),
+                compiler = compiler,
+                generator = FakeGenerator { _, _ -> flow { throw IOException("before request") } },
+                conversationRepository = conversations,
+                characterAsset = character,
+                idGenerator = { "runtime-${messageId++}" },
+                projectionDispatcher = mainDispatcherRule.dispatcher,
+            )
+            viewModel.loadConversation(created.id)
+
+            viewModel.updateInput("开始")
+            viewModel.send()
+
+            assertEquals(null, conversations.get(created.id)?.runtimeState?.localVariables?.get("planned"))
+            assertTrue(viewModel.uiState.value.toString(), viewModel.uiState.value.retryAvailable)
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test
@@ -112,26 +299,37 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `unsupported user macro stays in composer and never calls generator`() = runTest {
-        val generator = FakeGenerator { _, _ -> error("must not run") }
+    fun `global variable macro remains literal and is never downgraded to local state`() = runTest {
+        val generator = FakeGenerator { connection, _ ->
+            flow {
+                emit(GenerationEvent.RequestPrepared(preview(connection)))
+                emit(GenerationEvent.TextDelta("收到。"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
         val viewModel = viewModel(generator)
 
-        viewModel.updateInput("{{getvar::mood}}")
+        viewModel.updateInput("{{getglobalvar::mood}}")
         viewModel.send()
 
-        assertEquals("{{getvar::mood}}", viewModel.uiState.value.input)
-        assertEquals(1, viewModel.uiState.value.messages.size)
-        assertTrue(viewModel.uiState.value.message.orEmpty().contains("Unsupported macro"))
-        assertEquals(0, generator.calls)
+        assertEquals("", viewModel.uiState.value.input)
+        assertEquals("{{getglobalvar::mood}}", viewModel.uiState.value.messages[1].message.content)
+        assertTrue(viewModel.uiState.value.lastTrace?.compileDiagnostics.orEmpty().any { it.code == "UNSUPPORTED_MACRO" })
+        assertEquals(1, generator.calls)
     }
 
-    private fun viewModel(generator: FakeGenerator): ChatViewModel {
+    private fun viewModel(
+        generator: FakeGenerator,
+        character: CharacterAsset = DemoConversationContent.character,
+    ): ChatViewModel {
         var id = 0
         return ChatViewModel(
             repository = repository(),
             compiler = PromptCompiler(),
             generator = generator,
+            characterAsset = character,
             idGenerator = { "message-${id++}" },
+            projectionDispatcher = mainDispatcherRule.dispatcher,
         )
     }
 

@@ -2,7 +2,7 @@
 
 > 状态：当前有效的产品与兼容性决定。
 >
-> 范围：V1 的单角色、普通、结构化文本对话。本文不规定 runtime、类、接口、存储结构或实现阶段。
+> 范围：V1 的单角色、普通、结构化文本对话。已落地的代码边界见 [`architecture.md`](architecture.md)。
 
 ## 1. 产品与兼容原则
 
@@ -20,6 +20,8 @@
 - 在当前范围内不裁剪 Character Card 的官方行为语义，包括角色定义、开场与备用开场、示例对话、system prompt / post-history override 和 depth prompt。
 - Character Book、Character-scoped Regex 和卡片文本中的 Macro 保留关联关系，但分别受 World Book、Regex 和 Macro 的产品边界约束。
 - Character Card 字段最终怎样进入请求，遵循后续实现的 ST Preset / Prompt 编排语义。
+- 当前导入基线是 Character Card V2 / V3，并兼容 V1 JSON 与 PNG；不支持 CHARX、YAML、BYAF 和独立 Preset 导入。
+- V3 `nickname` 是 Prompt 与聊天作者身份，角色库仍显示卡片 `name`。
 
 ### Preset
 
@@ -46,7 +48,7 @@
 ## 3. Conversation 与剧情状态
 
 - 一个 Character 可以创建多个独立 Conversation。
-- Conversation 保留 edit、delete、regenerate、continue 和 swipe。branch / checkpoint 作为历史能力保留，具体产品形态以后决定；impersonate、quiet 和自动操作不作为 V1 核心要求。
+- Conversation 当前实现 opening swipe、assistant regenerate / swipe 和进程恢复。edit、delete、continue、branch / checkpoint 留在后续 Conversation 工作；impersonate、quiet 和自动操作不作为 V1 核心要求。
 - 创建 Conversation 时，从当前 Character Asset 实例化 Character Snapshot：`Character Asset -> Character Snapshot -> Conversation`。
 - Character Asset 的后续修改不会隐式改变旧 Conversation。旧 Conversation 升级角色版本必须显式进行。
 - Conversation 不维护 ST 式的 scenario、system prompt、examples 等 Character override patch。未来若允许会话内修改角色设定，修改的是该 Conversation 自己的 Character Snapshot。
@@ -61,7 +63,7 @@
 - 保留当前 Conversation 范围内 local variables 的读取与修改。
 - 不支持跨角色、跨会话共享的 global variables，也不得把 global variable 自动降级为 local variable。
 - group、Text Completion 和第三方扩展动态 Macro 随对应领域排除。
-- legacy engine 与 experimental macro engine 中哪一个作为 ST 行为基线，仍需事实确认。
+- 行为基线固定为 SillyTavern 1.18.0（commit `8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8`）默认的新 Macro Engine；只纳入当前产品边界列出的 Macro。
 
 ### Regex
 
@@ -93,8 +95,10 @@
 - Preset 中依赖 ST Tool runtime 的 `function_calling`、tool recursion 和相关字段当前不产生能力。
 - 不运行第三方脚本、扩展事件系统或任意扩展 Macro。未来是否把某项扩展能力重新实现为原生能力，必须另行明确决定。
 
-## 7. 尚未决定
+## 7. 当前交付边界
 
-- Character Card、Preset、World Book、Macro、Regex、Persona、Conversation、Context、Tools 以及 Provider / Response 的 V1 顶层能力边界已经确定，不再继续做横向能力盘点。
-- 仍待确认的是：内部模型与导入规范化方式、Macro 行为基线、发送侧准确编排与求值、token accounting 实现、回复清理 / 持久化 / 展示细节，以及兼容性验证方法。
-- 这些问题属于后续事实确认或设计工作，不自动重新打开已经冻结的产品能力边界。
+- Character Card 导入、不可变 Character Snapshot、Macro / Regex / World Book 编排、token accounting、流式发送和 Conversation 恢复已经形成实现契约。
+- 默认 Persona 暂时固定为“旅人”；Persona 管理器仍未进入当前阶段。
+- 使用一个内置结构化聊天 Preset；社区 Preset 样本的独立导入不在当前阶段。
+- 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
+- 后续工作集中在 Conversation 编辑能力、Persona / Preset 产品化与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。
