@@ -23,6 +23,7 @@ local.properties
 # Compiled and generated output
 *.class
 out/
+/model-gateway/bin/
 
 # Logs and OS files
 *.log
