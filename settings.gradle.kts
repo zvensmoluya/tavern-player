@@ -18,3 +18,4 @@ rootProject.name = "TavernPlayer"
 include(":app")
 include(":model-gateway")
 include(":conversation-core")
+include(":content-core")
