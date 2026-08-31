@@ -1,24 +1,26 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-enum class MessageRole {
-    SYSTEM,
-    USER,
-    ASSISTANT,
-}
+import io.github.zvensmoluya.tavernplayer.content.CharacterDepthPrompt
+import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import java.time.Instant
+import java.time.ZoneId
+import kotlinx.serialization.Serializable
 
-enum class InjectionPosition {
-    RELATIVE,
-    ABSOLUTE,
-}
+typealias CharacterAsset = io.github.zvensmoluya.tavernplayer.content.CharacterAsset
+typealias CharacterSnapshot = io.github.zvensmoluya.tavernplayer.content.CharacterSnapshot
 
-data class ExampleMessage(
-    val role: MessageRole,
-    val content: String,
-)
+@Serializable
+enum class MessageRole { SYSTEM, USER, ASSISTANT }
 
-data class DialogueExample(
-    val messages: List<ExampleMessage>,
-)
+@Serializable
+enum class InjectionPosition { RELATIVE, ABSOLUTE }
+
+@Serializable
+data class ExampleMessage(val role: MessageRole, val content: String)
+
+@Serializable
+data class DialogueExample(val messages: List<ExampleMessage>)
 
 data class DepthPrompt(
     val content: String,
@@ -27,61 +29,45 @@ data class DepthPrompt(
     val order: Int = 100,
 )
 
-data class CharacterAsset(
-    val id: String,
-    val name: String,
-    val description: String = "",
-    val personality: String = "",
-    val scenario: String = "",
-    val firstMessage: String = "",
-    val alternateFirstMessages: List<String> = emptyList(),
-    val examples: List<DialogueExample> = emptyList(),
-    val systemPrompt: String = "",
-    val postHistoryInstructions: String = "",
-    val depthPrompt: DepthPrompt? = null,
-) {
-    fun snapshot(): CharacterSnapshot = CharacterSnapshot(
-        assetId = id,
-        name = name,
-        description = description,
-        personality = personality,
-        scenario = scenario,
-        firstMessage = firstMessage,
-        alternateFirstMessages = alternateFirstMessages.toList(),
-        examples = examples.map { example ->
-            DialogueExample(example.messages.map(ExampleMessage::copy))
-        },
-        systemPrompt = systemPrompt,
-        postHistoryInstructions = postHistoryInstructions,
-        depthPrompt = depthPrompt?.copy(),
-    )
-}
-
-data class CharacterSnapshot(
-    val assetId: String,
-    val name: String,
-    val description: String,
-    val personality: String,
-    val scenario: String,
-    val firstMessage: String,
-    val alternateFirstMessages: List<String>,
-    val examples: List<DialogueExample>,
-    val systemPrompt: String,
-    val postHistoryInstructions: String,
-    val depthPrompt: DepthPrompt?,
+@Suppress("FunctionName")
+fun CharacterAsset(
+    id: String,
+    name: String,
+    description: String = "",
+    personality: String = "",
+    scenario: String = "",
+    firstMessage: String = "",
+    alternateFirstMessages: List<String> = emptyList(),
+    examples: List<DialogueExample> = emptyList(),
+    systemPrompt: String = "",
+    postHistoryInstructions: String = "",
+    depthPrompt: DepthPrompt? = null,
+): CharacterAsset = io.github.zvensmoluya.tavernplayer.content.CharacterAsset(
+    id = id,
+    name = name,
+    description = description,
+    personality = personality,
+    scenario = scenario,
+    firstMessage = firstMessage,
+    alternateFirstMessages = alternateFirstMessages.toList(),
+    rawMessageExamples = encodeDialogueExamples(examples),
+    systemPrompt = systemPrompt,
+    postHistoryInstructions = postHistoryInstructions,
+    depthPrompt = depthPrompt?.let {
+        CharacterDepthPrompt(it.content, it.role.toContentRole(), it.depth, it.order)
+    },
 )
 
-data class Persona(
-    val id: String,
-    val name: String,
-    val avatar: String? = null,
-)
+val CharacterSnapshot.examples: List<DialogueExample>
+    get() = parseDialogueExamples(rawMessageExamples, promptName, "User")
 
-data class ReasoningBlock(
-    val text: String = "",
-    val signature: String? = null,
-)
+@Serializable
+data class Persona(val id: String, val name: String, val avatar: String? = null)
 
+@Serializable
+data class ReasoningBlock(val text: String = "", val signature: String? = null)
+
+@Serializable
 data class ConversationMessage(
     val id: String,
     val role: MessageRole,
@@ -89,8 +75,10 @@ data class ConversationMessage(
     val authorName: String,
     val reasoning: List<ReasoningBlock> = emptyList(),
     val adapterId: String? = null,
+    val createdAtEpochMillis: Long = 0,
 )
 
+@Serializable
 data class PromptDefinition(
     val identifier: String,
     val role: MessageRole,
@@ -104,11 +92,10 @@ data class PromptDefinition(
     val injectionTriggers: Set<String> = emptySet(),
 )
 
-data class PromptOrderEntry(
-    val identifier: String,
-    val enabled: Boolean = true,
-)
+@Serializable
+data class PromptOrderEntry(val identifier: String, val enabled: Boolean = true)
 
+@Serializable
 data class Preset(
     val id: String,
     val name: String,
@@ -119,6 +106,27 @@ data class Preset(
     val assistantPrefill: String = "",
     val maxOutputTokens: Int,
     val declaredContextTokens: Int? = null,
+    val regexScripts: List<CharacterRegexDefinition> = emptyList(),
+)
+
+@Serializable
+data class MacroValue(val text: String, val numeric: Boolean = false)
+
+@Serializable
+data class WorldBookEntryRuntimeState(
+    val stickyRemaining: Int = 0,
+    val cooldownRemaining: Int = 0,
+    val delayRemaining: Int = 0,
+    val delayStartedTurn: Int? = null,
+    val lastActivatedTurn: Int? = null,
+)
+
+@Serializable
+data class ConversationRuntimeState(
+    val localVariables: Map<String, MacroValue> = emptyMap(),
+    val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
+    val generationIndex: Int = 0,
+    val lastGenerationType: String = "normal",
 )
 
 data class NormalGenerationInput(
@@ -126,13 +134,28 @@ data class NormalGenerationInput(
     val persona: Persona,
     val history: List<ConversationMessage>,
     val preset: Preset,
+    val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
+    val conversationId: String = "preview",
+    val generationId: String = "preview-0",
+    val inputText: String = history.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty(),
+    val modelId: String = "",
+    val modelContextTokens: Int? = null,
+    val modelOutputTokens: Int? = null,
+    val maxInputTokens: Int? = null,
+    val firstIncludedMessageId: Int? = null,
+    val firstDisplayedMessageId: Int? = 0,
+    val lastSwipeId: Int = 1,
+    val currentSwipeId: Int = 1,
+    val allChatLastMessageId: Int? = history.lastIndex.takeIf { it >= 0 },
+    val evaluationInstant: Instant = Instant.now(),
+    val evaluationZoneId: ZoneId = ZoneId.systemDefault(),
+    val chatRangeResolutionPass: Int = 0,
 )
 
-data class PromptOrigin(
-    val stage: String,
-    val sourceIds: List<String>,
-)
+@Serializable
+data class PromptOrigin(val stage: String, val sourceIds: List<String>)
 
+@Serializable
 data class PreparedMessage(
     val role: MessageRole,
     val content: String,
@@ -142,11 +165,10 @@ data class PreparedMessage(
     val adapterId: String? = null,
 )
 
-enum class DiagnosticSeverity {
-    WARNING,
-    ERROR,
-}
+@Serializable
+enum class DiagnosticSeverity { WARNING, ERROR }
 
+@Serializable
 data class CompilationDiagnostic(
     val severity: DiagnosticSeverity,
     val code: String,
@@ -154,6 +176,7 @@ data class CompilationDiagnostic(
     val sourceId: String? = null,
 )
 
+@Serializable
 data class CompilationTraceEntry(
     val stage: String,
     val sourceIds: List<String>,
@@ -162,6 +185,19 @@ data class CompilationTraceEntry(
     val content: String? = null,
 )
 
+@Serializable
+enum class TokenCountQuality { EXACT, ESTIMATED }
+
+@Serializable
+data class TokenAccountingReport(
+    val inputTokens: Int,
+    val contextLimit: Int,
+    val reservedOutputTokens: Int,
+    val quality: TokenCountQuality,
+    val tokenizer: String,
+)
+
+@Serializable
 data class GenerationPlan(
     val messages: List<PreparedMessage>,
     val maxOutputTokens: Int,
@@ -171,11 +207,13 @@ data class GenerationPlan(
     val presetName: String,
     val diagnostics: List<CompilationDiagnostic>,
     val trace: List<CompilationTraceEntry>,
+    val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
+    val tokenAccounting: TokenAccountingReport? = null,
+    val activatedWorldBookEntries: List<String> = emptyList(),
 )
 
 sealed interface CompilationResult {
     data class Success(val plan: GenerationPlan) : CompilationResult
-
     data class Failure(
         val diagnostics: List<CompilationDiagnostic>,
         val trace: List<CompilationTraceEntry> = emptyList(),
@@ -183,6 +221,120 @@ sealed interface CompilationResult {
 }
 
 sealed interface TextExpansionResult {
-    data class Success(val text: String) : TextExpansionResult
+    data class Success(
+        val text: String,
+        val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
+        val diagnostics: List<CompilationDiagnostic> = emptyList(),
+    ) : TextExpansionResult
     data class Failure(val diagnostic: CompilationDiagnostic) : TextExpansionResult
+}
+
+@Serializable
+enum class PersistedMessageStatus { COMPLETE, STREAMING, INTERRUPTED, CANCELLED, ERROR }
+
+@Serializable
+data class MessageVariant(
+    val id: String,
+    val message: ConversationMessage,
+    val status: PersistedMessageStatus = PersistedMessageStatus.COMPLETE,
+    val presetId: String? = null,
+    val adapterId: String? = null,
+    val model: String? = null,
+    val finishReason: String? = null,
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
+    val generationPlan: GenerationPlan? = null,
+    val runtimeStateBefore: ConversationRuntimeState? = null,
+    val runtimeStateAfter: ConversationRuntimeState? = null,
+)
+
+@Serializable
+data class ConversationTurn(
+    val id: String,
+    val role: MessageRole,
+    val variants: List<MessageVariant>,
+    val selectedVariantIndex: Int = 0,
+) {
+    val selected: MessageVariant
+        get() = variants[selectedVariantIndex.coerceIn(0, variants.lastIndex)]
+}
+
+@Serializable
+data class ConversationRecord(
+    val schemaVersion: Int = 1,
+    val id: String,
+    val character: CharacterSnapshot,
+    val persona: Persona,
+    val turns: List<ConversationTurn>,
+    val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
+    val createdAtEpochMillis: Long,
+    val updatedAtEpochMillis: Long,
+)
+
+fun ContentRole.toMessageRole(): MessageRole = when (this) {
+    ContentRole.SYSTEM -> MessageRole.SYSTEM
+    ContentRole.USER -> MessageRole.USER
+    ContentRole.ASSISTANT -> MessageRole.ASSISTANT
+}
+
+fun MessageRole.toContentRole(): ContentRole = when (this) {
+    MessageRole.SYSTEM -> ContentRole.SYSTEM
+    MessageRole.USER -> ContentRole.USER
+    MessageRole.ASSISTANT -> ContentRole.ASSISTANT
+}
+
+fun parseDialogueExamples(raw: String, characterName: String, userName: String): List<DialogueExample> {
+    if (raw.isBlank()) return emptyList()
+    val normalized = raw
+        .replace("{{char}}", characterName, ignoreCase = true)
+        .replace("<char>", characterName, ignoreCase = true)
+        .replace("<bot>", characterName, ignoreCase = true)
+        .replace("{{user}}", userName, ignoreCase = true)
+        .replace("<user>", userName, ignoreCase = true)
+    return normalized.split(Regex("(?im)^\\s*<START>\\s*$"))
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .mapNotNull { block ->
+            val messages = mutableListOf<ExampleMessage>()
+            var role: MessageRole? = null
+            val content = StringBuilder()
+            fun flush() {
+                val currentRole = role ?: return
+                messages += ExampleMessage(currentRole, content.toString().trim())
+                content.clear()
+            }
+            block.lineSequence().forEach { line ->
+                val userPrefix = "$userName:"
+                val charPrefix = "$characterName:"
+                when {
+                    line.startsWith(userPrefix, ignoreCase = true) -> {
+                        flush()
+                        role = MessageRole.USER
+                        content.append(line.substring(userPrefix.length).trimStart())
+                    }
+                    line.startsWith(charPrefix, ignoreCase = true) -> {
+                        flush()
+                        role = MessageRole.ASSISTANT
+                        content.append(line.substring(charPrefix.length).trimStart())
+                    }
+                    role != null -> {
+                        if (content.isNotEmpty()) content.append('\n')
+                        content.append(line)
+                    }
+                }
+            }
+            flush()
+            messages.takeIf(List<ExampleMessage>::isNotEmpty)?.let(::DialogueExample)
+        }
+}
+
+private fun encodeDialogueExamples(examples: List<DialogueExample>): String = examples.joinToString("\n") { example ->
+    buildString {
+        append("<START>\n")
+        example.messages.forEach { message ->
+            append(if (message.role == MessageRole.USER) "{{user}}: " else "{{char}}: ")
+            append(message.content)
+            append('\n')
+        }
+    }.trimEnd()
 }

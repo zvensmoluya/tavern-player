@@ -121,6 +121,41 @@ class GatewayTransport(
         }
     }
 
+    suspend fun postJson(
+        target: ConnectionTarget,
+        url: HttpUrl,
+        jsonBody: String,
+        headers: Map<String, String> = emptyMap(),
+    ): String {
+        target.validate()
+        val credential = resolveAndAuthorize(target, url)
+        return withContext(Dispatchers.IO) {
+            val callRef = AtomicReference<Call?>()
+            val requestJob = currentCoroutineContext().job
+            requestJob.invokeOnCompletion { callRef.get()?.cancel() }
+            val request = buildRequest(
+                target,
+                url,
+                credential,
+                headers + ("Accept" to "application/json"),
+                method = "POST",
+                jsonBody = jsonBody,
+            )
+            val response = executeFollowingRedirects(request, target, credential, callRef, requestJob)
+            response.use {
+                requireSuccess(it, credential)
+                try {
+                    LimitedSource(it.body.source(), maxResponseBytes).buffer().readUtf8()
+                } catch (error: LimitExceededException) {
+                    throw GatewayException.ResponseTooLarge(maxResponseBytes)
+                } catch (error: IOException) {
+                    currentCoroutineContext().ensureActive()
+                    throw GatewayException.Network(error)
+                }
+            }
+        }
+    }
+
     private suspend fun resolveAndAuthorize(target: ConnectionTarget, url: HttpUrl): SecretValue? {
         if (target.authScheme == AuthScheme.NONE) return null
         val origin = EndpointRules.origin(url)

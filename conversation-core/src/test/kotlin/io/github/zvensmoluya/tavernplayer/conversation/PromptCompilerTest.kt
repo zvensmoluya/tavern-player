@@ -1,5 +1,9 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
+import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
+import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -32,9 +36,78 @@ class PromptCompilerTest {
         )
         assertEquals(512, result.plan.maxOutputTokens)
         assertEquals("", result.plan.assistantPrefill)
-        assertTrue(result.plan.diagnostics.any { it.code == "CONTEXT_BUDGET_NOT_ENFORCED" })
+        assertTrue(result.plan.diagnostics.any { it.code == "TOKEN_COUNT_ESTIMATED" })
         assertTrue(result.plan.trace.any { it.stage == "depth-injection" && it.sourceIds == listOf("tone") })
         assertFalse(result.plan.messages.any { "unused" in it.content })
+    }
+
+    @Test
+    fun `character scan preview does not commit macro mutations twice`() {
+        val original = baseInput()
+        val input = original.copy(
+            character = original.character.copy(description = "{{incvar::scan-count}}A quiet inn."),
+        )
+
+        val result = compiler.compile(input) as CompilationResult.Success
+
+        assertEquals("1", result.plan.runtimeState.localVariables["scan-count"]?.text)
+    }
+
+    @Test
+    fun `known model context is shared by macros world budget and final accounting`() {
+        val original = baseInput()
+        val input = original.copy(
+            modelId = "gpt-4o",
+            modelContextTokens = null,
+            character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book"))),
+            preset = original.preset.copy(
+                declaredContextTokens = null,
+                prompts = original.preset.prompts.map { prompt ->
+                    if (prompt.identifier == "main") prompt.copy(content = "{{maxContext}}") else prompt
+                },
+            ),
+        )
+
+        val result = compiler.compile(input) as CompilationResult.Success
+
+        assertTrue(result.plan.messages.any { it.content.startsWith("128000") })
+        assertEquals(128_000, result.plan.tokenAccounting?.contextLimit)
+        assertTrue(result.plan.trace.any { it.stage == "world-book-budget" && it.decision.contains("budget=31872") })
+    }
+
+    @Test
+    fun `first included message macro is resolved after context trimming stabilizes`() {
+        val character = CharacterAsset(id = "card", name = "Ash").snapshot()
+        val history = listOf(
+            ConversationMessage("m0", MessageRole.ASSISTANT, "a".repeat(40), "Ash"),
+            ConversationMessage("m1", MessageRole.USER, "b".repeat(40), "Traveler"),
+            ConversationMessage("m2", MessageRole.ASSISTANT, "c".repeat(40), "Ash"),
+            ConversationMessage("m3", MessageRole.USER, "new", "Traveler"),
+        )
+        val preset = Preset(
+            id = "range",
+            name = "Range",
+            prompts = listOf(
+                PromptDefinition("main", MessageRole.SYSTEM, "first={{firstIncludedMessageId}}"),
+                PromptDefinition("chatHistory", MessageRole.SYSTEM, marker = true),
+            ),
+            promptOrder = listOf(PromptOrderEntry("main"), PromptOrderEntry("chatHistory")),
+            maxOutputTokens = 10,
+        )
+
+        val result = compiler.compile(
+            NormalGenerationInput(
+                character = character,
+                persona = Persona("persona", "Traveler"),
+                history = history,
+                preset = preset,
+                modelId = "unknown",
+                modelContextTokens = 80,
+            ),
+        ) as CompilationResult.Success
+
+        assertEquals("first=2", result.plan.messages.first().content)
+        assertTrue(result.plan.trace.any { it.stage == "chat-range" && it.decision == "firstIncludedMessageId=2" })
     }
 
     @Test
@@ -56,12 +129,13 @@ class PromptCompilerTest {
     }
 
     @Test
-    fun `unknown macros and missing prompt references block generation`() {
+    fun `unknown macros remain visible while missing prompt references block generation`() {
         val macroInput = baseInput().let { value ->
-            value.copy(character = value.character.copy(description = "{{getvar::mood}}"))
+            value.copy(character = value.character.copy(description = "{{third_party_macro::mood}}"))
         }
-        val macroFailure = compiler.compile(macroInput) as CompilationResult.Failure
-        assertTrue(macroFailure.diagnostics.any { it.code == "UNSUPPORTED_MACRO" })
+        val macroResult = compiler.compile(macroInput) as CompilationResult.Success
+        assertTrue(macroResult.plan.diagnostics.any { it.code == "UNSUPPORTED_MACRO" })
+        assertTrue(macroResult.plan.messages.any { "{{third_party_macro::mood}}" in it.content })
 
         val referenceInput = baseInput().let { value ->
             value.copy(
@@ -77,18 +151,35 @@ class PromptCompilerTest {
     @Test
     fun `snapshot owns copied character collections`() {
         val alternate = mutableListOf("第一条备用开场")
-        val exampleMessages = mutableListOf(ExampleMessage(MessageRole.USER, "旧示例"))
+        val keys = mutableListOf("rain")
+        val trimStrings = mutableListOf("trim")
         val asset = baseAsset().copy(
             alternateFirstMessages = alternate,
-            examples = listOf(DialogueExample(exampleMessages)),
+            rawMessageExamples = "<START>\nUser: 旧示例",
+            worldBooks = listOf(
+                WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", keys = keys))),
+            ),
+            regexScripts = listOf(
+                CharacterRegexDefinition(
+                    id = "regex",
+                    name = "regex",
+                    findRegex = "rain",
+                    replaceString = "sun",
+                    trimStrings = trimStrings,
+                    placements = setOf(RegexPlacement.AI_OUTPUT),
+                ),
+            ),
         )
 
         val snapshot = asset.snapshot()
         alternate[0] = "已修改"
-        exampleMessages[0] = ExampleMessage(MessageRole.USER, "已修改")
+        keys[0] = "changed"
+        trimStrings[0] = "changed"
 
         assertEquals("第一条备用开场", snapshot.alternateFirstMessages.single())
         assertEquals("旧示例", snapshot.examples.single().messages.single().content)
+        assertEquals("rain", snapshot.worldBooks.single().entries.single().keys.single())
+        assertEquals("trim", snapshot.regexScripts.single().trimStrings.single())
     }
 
     @Test
@@ -100,8 +191,71 @@ class PromptCompilerTest {
             TextExpansionResult.Success("旅人遇见米拉"),
             compiler.expandConversationText("{{user}}遇见{{char}}", character, persona),
         )
-        val failure = compiler.expandConversationText("{{random::a::b}}", character, persona)
-        assertTrue(failure is TextExpansionResult.Failure)
+        val random = compiler.expandConversationText("{{random::a::b}}", character, persona) as TextExpansionResult.Success
+        assertTrue(random.text in setOf("a", "b"))
+    }
+
+    @Test
+    fun `cumulative assistant output replays reasoning and text in one transaction`() {
+        val input = baseInput()
+        val first = compiler.projectAssistantOutput(
+            rawText = "count={{getvar::count}}",
+            rawReasoning = listOf("{{incvar::count}}"),
+            character = input.character,
+            persona = input.persona,
+            preset = input.preset,
+            runtimeState = ConversationRuntimeState(),
+            history = input.history,
+            conversationId = "chat",
+            generationId = "attempt",
+            modelId = "custom",
+        )
+        val replay = compiler.projectAssistantOutput(
+            rawText = "count={{getvar::count}}",
+            rawReasoning = listOf("{{incvar::count}}"),
+            character = input.character,
+            persona = input.persona,
+            preset = input.preset,
+            runtimeState = ConversationRuntimeState(),
+            history = input.history,
+            conversationId = "chat",
+            generationId = "attempt",
+            modelId = "custom",
+        )
+
+        assertEquals(listOf("1"), first.storageReasoning)
+        assertEquals("count=1", first.storageText)
+        assertEquals("1", first.runtimeState.localVariables["count"]?.text)
+        assertEquals(first, replay)
+    }
+
+    @Test
+    fun `reasoning prompt projection is applied before provider replay`() {
+        val input = baseInput().let { original ->
+            original.copy(
+                character = original.character.copy(
+                    regexScripts = listOf(
+                        CharacterRegexDefinition(
+                            id = "reasoning-prompt",
+                            name = "Reasoning prompt",
+                            findRegex = "private",
+                            replaceString = "projected",
+                            placements = setOf(RegexPlacement.REASONING),
+                            promptOnly = true,
+                        ),
+                    ),
+                ),
+                history = original.history.mapIndexed { index, message ->
+                    if (index == 0) message.copy(reasoning = listOf(ReasoningBlock("private", "signature"))) else message
+                },
+            )
+        }
+
+        val plan = (compiler.compile(input) as CompilationResult.Success).plan
+        val opening = plan.messages.first { it.origin.sourceIds == listOf("opening") }
+
+        assertEquals("projected", opening.reasoning.single().text)
+        assertEquals("signature", opening.reasoning.single().signature)
     }
 
     private fun baseInput(): NormalGenerationInput {

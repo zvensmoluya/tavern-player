@@ -55,6 +55,8 @@ data class AnthropicMessagesResult(
     val unknownEventCount: Int,
 )
 
+data class AnthropicTokenCount(val inputTokens: Long, val raw: JsonObject)
+
 sealed interface AnthropicMessagesEvent {
     val raw: JsonObject
 
@@ -85,6 +87,42 @@ class AnthropicMessagesClient internal constructor(
         ).collect { frame ->
             parse(frame.data).forEach { emit(it) }
         }
+    }
+
+    suspend fun countTokens(target: ConnectionTarget, request: AnthropicMessagesRequest): AnthropicTokenCount {
+        if (target.protocol != ModelProtocol.ANTHROPIC_MESSAGES) {
+            throw GatewayException.Configuration("Anthropic client requires an ANTHROPIC_MESSAGES connection")
+        }
+        validateRequest(request)
+        val streamUrl = target.resolveStreamUrl(request.model)
+        val countUrl = streamUrl.newBuilder()
+            .encodedPath(streamUrl.encodedPath.trimEnd('/') + "/count_tokens")
+            .query(null)
+            .build()
+        val body = buildJsonObject {
+            put("model", request.model)
+            put("messages", buildJsonArray {
+                request.messages.forEach { message ->
+                    add(buildJsonObject {
+                        put("role", message.role.wire)
+                        put("content", message.text)
+                    })
+                }
+            })
+            request.system?.let { put("system", it) }
+        }
+        val raw = parseJsonObject(
+            transport.postJson(
+                target,
+                countUrl,
+                body.toString(),
+                headers = mapOf("anthropic-version" to ANTHROPIC_VERSION),
+            ),
+            "Anthropic token count",
+        )
+        val count = raw.long("input_tokens")
+            ?: throw GatewayException.Protocol("Anthropic token count response omitted input_tokens")
+        return AnthropicTokenCount(count, raw)
     }
 
     companion object {
@@ -127,6 +165,15 @@ class AnthropicMessagesAccumulator {
 }
 
 private val json = Json { ignoreUnknownKeys = true }
+
+private fun parseJsonObject(value: String, label: String): JsonObject = try {
+    json.parseToJsonElement(value) as? JsonObject
+        ?: throw GatewayException.Protocol("$label response was not a JSON object")
+} catch (error: GatewayException) {
+    throw error
+} catch (error: Exception) {
+    throw GatewayException.Protocol("Malformed $label response JSON", error)
+}
 
 private fun validateRequest(request: AnthropicMessagesRequest) {
     if (request.model.isBlank()) throw GatewayException.Configuration("Model id is required")

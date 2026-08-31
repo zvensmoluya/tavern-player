@@ -64,6 +64,8 @@ data class GeminiGenerateContentResult(
     val unknownEventCount: Int,
 )
 
+data class GeminiTokenCount(val totalTokens: Long, val raw: JsonObject)
+
 sealed interface GeminiGenerateContentEvent {
     val raw: JsonObject
 
@@ -90,6 +92,36 @@ class GeminiGenerateContentClient internal constructor(
         ).collect { frame ->
             parse(frame.data).forEach { emit(it) }
         }
+    }
+
+    suspend fun countTokens(target: ConnectionTarget, request: GeminiGenerateContentRequest): GeminiTokenCount {
+        if (target.protocol != ModelProtocol.GEMINI_GENERATE_CONTENT) {
+            throw GatewayException.Configuration("GenerateContent client requires a GEMINI_GENERATE_CONTENT connection")
+        }
+        validateRequest(request)
+        val streamUrl = target.resolveStreamUrl(request.model)
+        val countPath = streamUrl.encodedPath
+            .replace(":streamGenerateContent", ":countTokens")
+            .replace(":generateContent", ":countTokens")
+        if (countPath == streamUrl.encodedPath) {
+            throw GatewayException.Configuration("GenerateContent endpoint cannot derive the countTokens endpoint")
+        }
+        val countUrl = streamUrl.newBuilder()
+            .encodedPath(countPath)
+            .removeAllQueryParameters("alt")
+            .build()
+        val body = buildJsonObject {
+            put("contents", request.toJson().getValue("contents"))
+            request.systemInstruction?.let {
+                put("systemInstruction", buildJsonObject {
+                    put("parts", buildJsonArray { add(buildJsonObject { put("text", it) }) })
+                })
+            }
+        }
+        val raw = parseTokenCountJson(transport.postJson(target, countUrl, body.toString()))
+        val count = raw.long("totalTokens")
+            ?: throw GatewayException.Protocol("Gemini token count response omitted totalTokens")
+        return GeminiTokenCount(count, raw)
     }
 }
 
@@ -123,6 +155,15 @@ class GeminiGenerateContentAccumulator {
 }
 
 private val json = Json { ignoreUnknownKeys = true }
+
+private fun parseTokenCountJson(value: String): JsonObject = try {
+    json.parseToJsonElement(value) as? JsonObject
+        ?: throw GatewayException.Protocol("Gemini token count response was not a JSON object")
+} catch (error: GatewayException) {
+    throw error
+} catch (error: Exception) {
+    throw GatewayException.Protocol("Malformed Gemini token count response JSON", error)
+}
 
 private fun validateRequest(request: GeminiGenerateContentRequest) {
     if (EndpointRules.normalizeGeminiModelId(request.model).isBlank()) {
