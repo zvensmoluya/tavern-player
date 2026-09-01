@@ -27,6 +27,19 @@ class ConnectionRepository(
         val currentState = state.first()
         val previous = currentState.connections.firstOrNull { it.id == draft.id }
         val endpoints = ConnectionEndpointResolver.resolve(draft.protocol, draft.apiAddress)
+        val selectedModel = draft.selectedModel.trim()
+        val contextTokenLimitOverride = draft.contextTokenLimitOverride.optionalTokenLimit("context")
+        val outputTokenLimitOverride = draft.outputTokenLimitOverride.optionalTokenLimit("output")
+        if (selectedModel.isBlank() && (contextTokenLimitOverride != null || outputTokenLimitOverride != null)) {
+            throw GatewayException.Configuration("A model is required before setting token limits")
+        }
+        val tokenLimitOverrides = previous?.modelTokenLimitOverrides.orEmpty().toMutableMap().apply {
+            if (selectedModel.isNotBlank()) {
+                val limits = ModelTokenLimits(contextTokenLimitOverride, outputTokenLimitOverride)
+                if (limits.contextTokens == null && limits.outputTokens == null) remove(selectedModel)
+                else put(selectedModel, limits)
+            }
+        }.toMap()
         val ref = previous?.credentialRef ?: "credential_${safeConnectionId(draft.id)}"
         val credential = newCredential.trim()
         val hasStoredCredential = previous?.credentialRef?.let { credentialStore.contains(it) } == true
@@ -54,8 +67,9 @@ class ConnectionRepository(
             credentialRef = if (authScheme == AuthScheme.NONE) null else ref,
             credentialMask = previous?.credentialMask,
             approvedOrigins = previous?.approvedOrigins.orEmpty(),
-            selectedModel = draft.selectedModel.trim(),
+            selectedModel = selectedModel,
             modelCache = previous?.modelCache ?: ModelCache(),
+            modelTokenLimitOverrides = tokenLimitOverrides,
         )
         val currentOrigins = candidate.currentOrigins()
         val stored = when {
@@ -213,6 +227,15 @@ class ConnectionRepository(
         private fun safeConnectionId(id: String): String =
             id.replace(Regex("[^A-Za-z0-9_-]"), "_").take(96).ifBlank { "connection" }
     }
+}
+
+private fun String.optionalTokenLimit(name: String): Long? {
+    if (isBlank()) return null
+    val value = trim().toLongOrNull()
+    if (value == null || value !in 1..Int.MAX_VALUE.toLong()) {
+        throw GatewayException.Configuration("$name token limit must be a positive 32-bit integer")
+    }
+    return value
 }
 
 private fun Throwable.toDiscoveryFailure(): ModelDiscoveryFailure = when (this) {

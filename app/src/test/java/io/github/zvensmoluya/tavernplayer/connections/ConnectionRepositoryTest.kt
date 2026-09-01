@@ -147,8 +147,43 @@ class ConnectionRepositoryTest {
         val decoded = JsonConnectionDataStore.decodeState(JsonConnectionDataStore.encodeState(state))
 
         assertEquals(state, decoded)
-        assertEquals(1, decoded.schemaVersion)
+        assertEquals(GatewayAppState.CURRENT_SCHEMA_VERSION, decoded.schemaVersion)
         assertNull(decoded.connections.single().modelCache.models.single().asDescriptor().raw["unknown"])
+    }
+
+    @Test
+    fun `manual token limits are stored per model and override only supplied catalog fields`() = runBlocking {
+        val cachedConnection = StoredConnection(
+            id = "limits",
+            name = "Limits",
+            templateId = ConnectionTemplates.openAiResponses.id,
+            protocol = ModelProtocol.OPENAI_RESPONSES,
+            apiAddress = "https://gateway.example.test/v1",
+            streamEndpoint = "https://gateway.example.test/v1/responses",
+            catalogEndpoint = "https://gateway.example.test/v1/models",
+            authScheme = AuthScheme.NONE,
+            credentialRef = null,
+            credentialMask = null,
+            approvedOrigins = emptySet(),
+            selectedModel = "custom-model",
+            modelCache = ModelCache(
+                models = listOf(StoredModel("custom-model", inputTokenLimit = 64_000, outputTokenLimit = 8_000)),
+            ),
+        )
+        val stateStore = FakeConnectionStateStore(GatewayAppState(connections = listOf(cachedConnection)))
+        val repository = repository(stateStore, FakeCredentialStore())
+
+        val stored = repository.save(
+            draft = cachedConnection.toDraft().copy(
+                contextTokenLimitOverride = "128000",
+                outputTokenLimitOverride = "",
+            ),
+            newCredential = "",
+            confirmCredentialReuse = false,
+        )
+
+        assertEquals(ModelTokenLimits(contextTokens = 128_000), stored.modelTokenLimitOverrides["custom-model"])
+        assertEquals(ModelTokenLimits(contextTokens = 128_000, outputTokens = 8_000), stored.effectiveTokenLimits())
     }
 
     @Test

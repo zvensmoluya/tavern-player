@@ -72,7 +72,7 @@ class JsonConnectionDataStore(
                 throw GatewayException.Configuration("Connection data uses unsupported schema version $version")
             }
             return GatewayAppState(
-                schemaVersion = version,
+                schemaVersion = GatewayAppState.CURRENT_SCHEMA_VERSION,
                 recentConnectionId = root.string("recentConnectionId"),
                 connections = root.array("connections").mapNotNull { element ->
                     runCatching { element.jsonObject.toConnection() }.getOrNull()
@@ -110,6 +110,15 @@ private fun StoredConnection.toJson(): JsonObject = buildJsonObject {
                 })
             }
         })
+    })
+    put("modelTokenLimitOverrides", buildJsonArray {
+        modelTokenLimitOverrides.toSortedMap().forEach { (modelId, limits) ->
+            add(buildJsonObject {
+                put("modelId", modelId)
+                limits.contextTokens?.let { put("contextTokens", it) }
+                limits.outputTokens?.let { put("outputTokens", it) }
+            })
+        }
     })
 }
 
@@ -156,6 +165,15 @@ private fun JsonObject.toConnection(): StoredConnection {
                 )
             },
         ),
+        modelTokenLimitOverrides = array("modelTokenLimitOverrides").mapNotNull { element ->
+            val value = runCatching { element.jsonObject }.getOrNull() ?: return@mapNotNull null
+            val modelId = value.string("modelId")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            val limits = ModelTokenLimits(
+                contextTokens = value.long("contextTokens")?.takeIf { it in 1..Int.MAX_VALUE.toLong() },
+                outputTokens = value.long("outputTokens")?.takeIf { it in 1..Int.MAX_VALUE.toLong() },
+            )
+            if (limits.contextTokens == null && limits.outputTokens == null) null else modelId to limits
+        }.toMap(),
     )
     return connection.copy(
         approvedOrigins = connection.approvedOrigins.intersect(connection.currentOrigins()),

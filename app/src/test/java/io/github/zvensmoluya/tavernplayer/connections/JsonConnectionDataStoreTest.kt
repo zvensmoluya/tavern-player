@@ -40,6 +40,7 @@ class JsonConnectionDataStoreTest {
         )
 
         val connection = decoded.connections.single()
+        assertEquals(GatewayAppState.CURRENT_SCHEMA_VERSION, decoded.schemaVersion)
         assertEquals("https://gateway.example.test/v1", connection.apiAddress)
         assertEquals("https://gateway.example.test/v1/models", connection.catalogEndpoint)
         assertEquals(AuthScheme.BEARER, connection.authScheme)
@@ -68,6 +69,9 @@ class JsonConnectionDataStoreTest {
                 credentialMask = "•••• 1234",
                 approvedOrigins = setOf("https://api.openai.com:443"),
                 selectedModel = "chat-model",
+                modelTokenLimitOverrides = mapOf(
+                    "chat-model" to ModelTokenLimits(contextTokens = 128_000, outputTokens = 16_384),
+                ),
             )
 
             store.update { it.copy(connections = listOf(connection), recentConnectionId = connection.id) }

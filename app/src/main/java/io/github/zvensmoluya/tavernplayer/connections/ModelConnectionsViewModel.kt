@@ -154,7 +154,27 @@ class ModelConnectionsViewModel(
 
     fun updateName(value: String) = updateDraft { copy(name = value) }
     fun updateApiAddress(value: String) = updateDraft { copy(apiAddress = value) }
-    fun updateModel(value: String) = updateDraft { copy(selectedModel = value) }
+    fun updateModel(value: String) = updateEditor { editor ->
+        val limits = _uiState.value.connections
+            .firstOrNull { it.id == editor.draft.id }
+            ?.modelTokenLimitOverrides
+            ?.get(value.trim())
+        editor.copy(
+            draft = editor.draft.copy(
+                selectedModel = value,
+                contextTokenLimitOverride = limits?.contextTokens?.toString().orEmpty(),
+                outputTokenLimitOverride = limits?.outputTokens?.toString().orEmpty(),
+            ),
+            message = null,
+            modelMessage = null,
+        )
+    }
+    fun updateContextTokenLimit(value: String) = updateDraft {
+        copy(contextTokenLimitOverride = value.filter(Char::isDigit))
+    }
+    fun updateOutputTokenLimit(value: String) = updateDraft {
+        copy(outputTokenLimitOverride = value.filter(Char::isDigit))
+    }
     fun updateCredential(value: String) = updateEditor {
         it.copy(credentialInput = value, message = null, modelMessage = null)
     }
@@ -311,6 +331,8 @@ private fun StoredConnection.toDraft() = ConnectionDraft(
     protocol = protocol,
     apiAddress = apiAddress,
     selectedModel = selectedModel,
+    contextTokenLimitOverride = modelTokenLimitOverrides[selectedModel]?.contextTokens?.toString().orEmpty(),
+    outputTokenLimitOverride = modelTokenLimitOverrides[selectedModel]?.outputTokens?.toString().orEmpty(),
 )
 
 private fun ModelDiscoveryResult.userMessage(): String? = when (this) {
@@ -341,6 +363,7 @@ private fun Throwable.userMessage(): String = when (this) {
     is GatewayException.Network -> "无法连接到模型服务"
     is GatewayException.Security -> "API 地址未获授权"
     is GatewayException.Configuration -> when {
+        message.orEmpty().contains("token limit", ignoreCase = true) -> "Token 上限必须是正整数"
         message.orEmpty().contains("model", ignoreCase = true) -> "请选择模型"
         message.orEmpty().contains("HTTPS", ignoreCase = true) -> "API 地址必须使用 HTTPS"
         else -> "请检查连接信息"

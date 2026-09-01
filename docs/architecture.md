@@ -68,7 +68,7 @@ World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 ke
 
 - 已映射的 OpenAI 模型使用 JTokkit 的 r50k / p50k / cl100k / o200k 编码与消息 framing；
 - 未知或自定义 endpoint 使用带消息开销的保守 UTF-8 估算；
-- context limit 依次取模型目录、已验证模型表和 32K fallback，再受 Preset 上限约束；
+- context limit 依次取当前模型的用户覆盖、模型目录、已验证模型表和 32K fallback，再受 Preset 上限约束；
 - 模型目录未提供 output limit 时，回复预留采用“不超过有效 context 一半、最高 16384”的安全 fallback，并且只在 Preset 请求更高值时收敛；模型目录提供的 output limit 仍然优先。
 
 最终协议请求构造后，Anthropic 与 Gemini 使用官方 count-tokens endpoint 验证；OpenAI 已映射模型使用本地精确计数；其余请求保持 `ESTIMATED`。超限时最多按同一优先级重新裁剪三次。
@@ -84,6 +84,8 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 `PresetRepository` 以一个原子 app-private manifest 保存用户 Preset、清理后的 source 树和全局 active ID，内置默认由代码注入。它提供导入、激活、显式保存、重命名、复制、删除和安全导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始未清理 Preset 不落盘。
 
 `ConversationRepository` 保存完整 Character Snapshot、Persona、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
+
+模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 
 界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库和 Chat 都可以进入 Preset 中心；Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出，详情默认只展示普通 Prompt 与 Regex 快速开关；单项内容、兼容字段和结构设置位于逐层次级入口，请求参数使用独立 bottom sheet 并逐项拔插。全部修改仍显式保存或取消，不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 

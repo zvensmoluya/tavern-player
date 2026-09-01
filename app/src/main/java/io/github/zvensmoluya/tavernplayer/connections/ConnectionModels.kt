@@ -29,6 +29,11 @@ data class ModelCache(
     val refreshedAtEpochMillis: Long? = null,
 )
 
+data class ModelTokenLimits(
+    val contextTokens: Long? = null,
+    val outputTokens: Long? = null,
+)
+
 data class StoredConnection(
     val id: String,
     val name: String,
@@ -43,6 +48,7 @@ data class StoredConnection(
     val approvedOrigins: Set<String>,
     val selectedModel: String,
     val modelCache: ModelCache = ModelCache(),
+    val modelTokenLimitOverrides: Map<String, ModelTokenLimits> = emptyMap(),
 ) {
     fun target(): ConnectionTarget = ConnectionTarget(
         protocol = protocol,
@@ -59,6 +65,16 @@ data class StoredConnection(
             add(EndpointRules.origin(EndpointRules.validate(it, protocol, isCatalog = true)))
         }
     }
+
+    fun effectiveTokenLimits(modelId: String = selectedModel): ModelTokenLimits {
+        val normalizedId = modelId.trim()
+        val discovered = modelCache.models.firstOrNull { it.id == normalizedId }
+        val override = modelTokenLimitOverrides[normalizedId]
+        return ModelTokenLimits(
+            contextTokens = override?.contextTokens ?: discovered?.inputTokenLimit,
+            outputTokens = override?.outputTokens ?: discovered?.outputTokenLimit,
+        )
+    }
 }
 
 data class GatewayAppState(
@@ -67,7 +83,7 @@ data class GatewayAppState(
     val recentConnectionId: String? = null,
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 1
+        const val CURRENT_SCHEMA_VERSION = 2
     }
 }
 
@@ -78,6 +94,8 @@ data class ConnectionDraft(
     val protocol: ModelProtocol,
     val apiAddress: String,
     val selectedModel: String,
+    val contextTokenLimitOverride: String = "",
+    val outputTokenLimitOverride: String = "",
 )
 
 sealed interface ModelDiscoveryResult {

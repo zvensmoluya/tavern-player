@@ -345,7 +345,7 @@ class ChatViewModel(
         } else {
             record.turns.lastOrNull()?.selected?.runtimeStateBefore ?: record.runtimeState
         }
-        val model = connection.modelCache.models.firstOrNull { it.id == connection.selectedModel }
+        val modelTokenLimits = connection.effectiveTokenLimits()
         val lastVisibleTurn = record.turns.lastOrNull()
         val baseInput = NormalGenerationInput(
             character = record.character,
@@ -358,8 +358,8 @@ class ChatViewModel(
             conversationId = record.id,
             generationId = generationId,
             modelId = connection.selectedModel,
-            modelContextTokens = model?.inputTokenLimit?.toIntSafe(),
-            modelOutputTokens = model?.outputTokenLimit?.toIntSafe(),
+            modelContextTokens = modelTokenLimits.contextTokens?.toIntSafe(),
+            modelOutputTokens = modelTokenLimits.outputTokens?.toIntSafe(),
             firstDisplayedMessageId = 0,
             lastSwipeId = lastVisibleTurn?.variants?.size ?: 1,
             currentSwipeId = lastVisibleTurn?.selectedVariantIndex?.plus(1) ?: 1,

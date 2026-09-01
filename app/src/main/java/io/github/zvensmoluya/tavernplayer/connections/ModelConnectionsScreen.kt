@@ -64,6 +64,8 @@ fun ModelConnectionsRoute(
             updateApiAddress = viewModel::updateApiAddress,
             updateCredential = viewModel::updateCredential,
             updateModel = viewModel::updateModel,
+            updateContextTokenLimit = viewModel::updateContextTokenLimit,
+            updateOutputTokenLimit = viewModel::updateOutputTokenLimit,
             confirmReuse = viewModel::setConfirmCredentialReuse,
             save = viewModel::save,
             refreshModels = viewModel::refreshModels,
@@ -84,6 +86,8 @@ data class ConnectionScreenActions(
     val updateApiAddress: (String) -> Unit,
     val updateCredential: (String) -> Unit,
     val updateModel: (String) -> Unit,
+    val updateContextTokenLimit: (String) -> Unit,
+    val updateOutputTokenLimit: (String) -> Unit,
     val confirmReuse: (Boolean) -> Unit,
     val save: () -> Unit,
     val refreshModels: () -> Unit,
@@ -209,9 +213,11 @@ private fun ConnectionEditor(
     var protocolMenu by remember { mutableStateOf(false) }
     var modelPickerVisible by remember { mutableStateOf(false) }
     var manualModel by remember { mutableStateOf(false) }
+    var tokenLimitsVisible by remember { mutableStateOf(false) }
     var moreSettings by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val cache = stored?.modelCache ?: ModelCache()
+    val discoveredModel = cache.models.firstOrNull { it.id == editor.draft.selectedModel.trim() }
     val ready = editor.credentialStatus == CredentialStatus.READY ||
         editor.credentialStatus == CredentialStatus.NOT_REQUIRED
     val unchanged = stored?.matches(editor.draft) == true
@@ -234,7 +240,7 @@ private fun ConnectionEditor(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("connectionEditorList"),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -369,6 +375,47 @@ private fun ConnectionEditor(
                             label = { Text("模型 ID") },
                             singleLine = true,
                         )
+                    }
+                }
+                if (editor.draft.selectedModel.isNotBlank()) {
+                    item {
+                        TextButton(onClick = { tokenLimitsVisible = !tokenLimitsVisible }) {
+                            Text(if (tokenLimitsVisible) "收起 Token 上限" else "设置 Token 上限（可选）")
+                        }
+                        if (tokenLimitsVisible) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    discoveredModel?.let { model ->
+                                        val context = model.inputTokenLimit?.toString() ?: "未知"
+                                        val output = model.outputTokenLimit?.toString() ?: "未知"
+                                        "模型目录：context $context · output $output"
+                                    } ?: "模型目录没有提供这个模型的 Token 上限",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    "留空时使用模型目录或安全 fallback；这里的值只覆盖当前模型，不修改 Preset。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                OutlinedTextField(
+                                    value = editor.draft.contextTokenLimitOverride,
+                                    onValueChange = actions.updateContextTokenLimit,
+                                    modifier = Modifier.fillMaxWidth().testTag("contextTokenLimitOverride"),
+                                    label = { Text("Context 上限") },
+                                    placeholder = { Text("例如 128000") },
+                                    singleLine = true,
+                                )
+                                OutlinedTextField(
+                                    value = editor.draft.outputTokenLimitOverride,
+                                    onValueChange = actions.updateOutputTokenLimit,
+                                    modifier = Modifier.fillMaxWidth().testTag("outputTokenLimitOverride"),
+                                    label = { Text("单次回复上限") },
+                                    placeholder = { Text("例如 16384") },
+                                    singleLine = true,
+                                )
+                            }
+                        }
                     }
                 }
                 item {
@@ -573,4 +620,8 @@ private fun StoredConnection.matches(draft: ConnectionDraft): Boolean =
         templateId == draft.templateId &&
         protocol == draft.protocol &&
         apiAddress == draft.apiAddress.trim().trimEnd('/') &&
-        selectedModel == draft.selectedModel.trim()
+        selectedModel == draft.selectedModel.trim() &&
+        modelTokenLimitOverrides[selectedModel]?.contextTokens?.toString().orEmpty() ==
+        draft.contextTokenLimitOverride.trim() &&
+        modelTokenLimitOverrides[selectedModel]?.outputTokens?.toString().orEmpty() ==
+        draft.outputTokenLimitOverride.trim()

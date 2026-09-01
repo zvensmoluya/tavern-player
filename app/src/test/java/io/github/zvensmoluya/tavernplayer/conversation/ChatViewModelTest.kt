@@ -9,6 +9,7 @@ import io.github.zvensmoluya.tavernplayer.connections.ConnectionStateStore
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStore
 import io.github.zvensmoluya.tavernplayer.connections.GatewayAppState
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
+import io.github.zvensmoluya.tavernplayer.connections.ModelTokenLimits
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
@@ -392,6 +393,43 @@ class ChatViewModelTest {
         assertEquals("preset-b", viewModel.uiState.value.messages.last().metadata?.presetId)
     }
 
+    @Test
+    fun `generation uses selected model token limit overrides`() = runTest {
+        val connection = connection().copy(
+            modelTokenLimitOverrides = mapOf(
+                "model" to ModelTokenLimits(contextTokens = 128_000, outputTokens = 32_000),
+            ),
+        )
+        val preset = DemoConversationContent.preset.copy(
+            generationSettings = DemoConversationContent.preset.generationSettings.copy(
+                maxContextTokens = 2_000_000,
+                maxOutputTokens = 65_535,
+            ),
+        )
+        var captured: GenerationPlan? = null
+        val generator = FakeGenerator { _, plan ->
+            captured = plan
+            flow {
+                emit(GenerationEvent.TextDelta("完成"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = ChatViewModel(
+            repository = repository(connection),
+            compiler = PromptCompiler(),
+            generator = generator,
+            presetSource = FixedPresetSource(preset),
+            projectionDispatcher = mainDispatcherRule.dispatcher,
+        )
+
+        viewModel.updateInput("开始")
+        viewModel.send()
+
+        assertEquals(128_000, captured?.tokenAccounting?.contextLimit)
+        assertEquals(32_000, captured?.maxOutputTokens)
+        assertTrue(captured?.diagnostics.orEmpty().none { it.code.endsWith("_FALLBACK") })
+    }
+
     private fun viewModel(
         generator: FakeGenerator,
         character: CharacterAsset = DemoConversationContent.character,
@@ -417,8 +455,7 @@ class ChatViewModelTest {
         }
     }
 
-    private fun repository(): ConnectionRepository {
-        val connection = connection()
+    private fun repository(connection: StoredConnection = connection()): ConnectionRepository {
         return ConnectionRepository(
             stateStore = FakeStateStore(GatewayAppState(connections = listOf(connection), recentConnectionId = connection.id)),
             credentialStore = FakeCredentialStore(),
