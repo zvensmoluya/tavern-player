@@ -20,7 +20,7 @@
 - 在当前范围内不裁剪 Character Card 的官方行为语义，包括角色定义、开场与备用开场、示例对话、system prompt / post-history override 和 depth prompt。
 - Character Book、Character-scoped Regex 和卡片文本中的 Macro 保留关联关系，但分别受 World Book、Regex 和 Macro 的产品边界约束。
 - Character Card 字段最终怎样进入请求，遵循后续实现的 ST Preset / Prompt 编排语义。
-- 当前导入基线是 Character Card V2 / V3，并兼容 V1 JSON 与 PNG；不支持 CHARX、YAML、BYAF 和独立 Preset 导入。
+- 当前 Character 导入基线是 Character Card V2 / V3，并兼容 V1 JSON 与 PNG；不支持 CHARX、YAML 和 BYAF。
 - V3 `nickname` 是 Prompt 与聊天作者身份，角色库仍显示卡片 `name`。
 
 ### Preset
@@ -30,6 +30,11 @@
 - Preset 是当前全局活跃的生成配置和写作策略。切换 Preset 后，所有后续生成直接使用新 Preset。
 - Preset 不属于 Conversation 的剧情状态；Conversation 不保存 Preset snapshot、版本引用或历史绑定。单次生成 metadata 可以记录当时使用的 Preset，但这只是诊断信息。
 - Preset 引用的 Macro、Regex、Tools 和 Provider 特殊能力分别受对应领域的产品边界约束。
+- 当前只导入不超过 32 MiB、可识别的 ST OpenAI / Chat Completion JSON；不支持 Text Completion Preset、空白创建、Provider / 模型绑定或第三方脚本授权。
+- 内置“默认”Preset 使用 ST 默认 Prompt 骨架、中性 main prompt、模型 context 上限和 1024 回复上限。它不可删除或直接编辑，只能复制。
+- 导入保留定义池、全局 Prompt order、未使用定义、Prompt / Regex / 控制字段和未知扩展；连接 endpoint、代理密码、自定义 headers/body、账户标识等敏感数据在落盘前删除，原始未清理文件不会保存。
+- 名称大小写不敏感且唯一；重复内容复用已有资产，同名异内容自动编号。删除 active 项会原子回退到内置默认。
+- 编辑采用显式保存 / 取消。可以编辑已有 Prompt 与 order、生成参数和控制 Prompt，并启停已有 Preset Regex；不新增或删除 Prompt 定义，也不新建或重写 Regex。
 
 ### World Book
 
@@ -70,6 +75,7 @@
 - 只保留 Character-scoped 和 Preset-scoped Regex，删除 application-global Regex。
 - Regex 是 Character / Preset 的附属运行能力，不建立独立 Regex 资产或全局管理层。
 - 已保留规则的 placement、顺序、深度、Prompt / storage / display 投影和 Macro replacement 等行为，以 ST 的可观察语义为基线，并受 Macro 产品边界约束。
+- Regex 的生产单规则熔断为 250 ms；执行策略可在测试中注入，超时或工作队列拒绝只禁用当前 Conversation 中的坏规则并产生诊断。
 
 ### Token / Context
 
@@ -81,11 +87,14 @@
 - role / system 转换、模型参数映射、流式事件解析、usage、finish reason 和错误处理属于 Provider adapter 的基础职责。
 - Tavern Player 强制采用自己的流式生成策略，不兼容 Preset 的 streaming 开关；Provider 不支持 streaming 时进行能力降级。
 - 支持 Reasoning / Thinking 的接收、保存和必要展示。Provider 的 reasoning 与 thought signature 映射在 adapter 中处理。
+- Provider 返回的原始 reasoning 与 thought signature 始终保存；当前 Preset 的 `show_thoughts` 和 display Regex 只控制展示投影。
 - Assistant Prefill 是内容语义，予以保留；各 Provider 的具体表达由 adapter 处理。
 - 不使用 `previous_response_id` 等 Provider Hosted State。供应商托管状态不是 Conversation 语义或运行依赖。
 - 不支持 Provider 原生多候选 `n`；swipe 通过再次生成新候选实现。
 - V1 不支持 Multimodal，包括用户图片、附件、模型图片生成和图片内联。
 - V1 不支持 JSON Schema / structured output、Provider web search、logprobs 等特殊生成模式。
+- OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 分别映射各自能表达的 Preset 参数。未知模型能力采用保守省略，所有省略或降级进入请求预览与上下文诊断，不阻止普通生成。
+- `top_a`、`min_p`、`repetition_penalty` 以及协议无法表达的 assistant prefill 只保留、导出并告警。Tavern Player 强制 `stream=true`、单候选和无 Provider hosted state。
 
 ## 6. Tools、扩展与外部系统
 
@@ -99,6 +108,6 @@
 
 - Character Card 导入、不可变 Character Snapshot、Macro / Regex / World Book 编排、token accounting、流式发送和 Conversation 恢复已经形成实现契约。
 - 默认 Persona 暂时固定为“旅人”；Persona 管理器仍未进入当前阶段。
-- 使用一个内置结构化聊天 Preset；社区 Preset 样本的独立导入不在当前阶段。
+- 全局 Preset 资产库、ST OpenAI Preset 导入 / 导出、受控编辑、五协议参数映射和聊天快捷切换已经形成实现契约。
 - 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
-- 后续工作集中在 Conversation 编辑能力、Persona / Preset 产品化与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。
+- 后续工作集中在 Conversation 编辑能力、Persona 产品化与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。
