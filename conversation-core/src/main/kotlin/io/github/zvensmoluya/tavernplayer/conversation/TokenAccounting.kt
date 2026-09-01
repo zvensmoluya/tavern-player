@@ -21,7 +21,10 @@ class DefaultTokenAccounting : TokenAccounting {
         val profile = profileFor(modelId)
         if (profile == null) {
             return TokenCount(
-                tokens = messages.sumOf { it.content.toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD } + REQUEST_OVERHEAD,
+                tokens = messages.sumOf {
+                    it.content.toByteArray(Charsets.UTF_8).size +
+                        it.authorName.orEmpty().toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD
+                } + REQUEST_OVERHEAD,
                 quality = TokenCountQuality.ESTIMATED,
                 tokenizer = "utf8-byte-upper-bound",
             )
@@ -32,6 +35,7 @@ class DefaultTokenAccounting : TokenAccounting {
                 tokens = messages.sumOf { message ->
                     encoding.countTokens(message.role.name.lowercase()) +
                         encoding.countTokens(message.content) +
+                        message.authorName?.let(encoding::countTokens).orZero() +
                         profile.tokensPerMessage
                 } + profile.replyPrimerTokens,
                 quality = if (profile.exactMessageFraming) TokenCountQuality.EXACT else TokenCountQuality.ESTIMATED,
@@ -39,7 +43,10 @@ class DefaultTokenAccounting : TokenAccounting {
             )
         } catch (_: Exception) {
             TokenCount(
-                tokens = messages.sumOf { it.content.toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD } + REQUEST_OVERHEAD,
+                tokens = messages.sumOf {
+                    it.content.toByteArray(Charsets.UTF_8).size +
+                        it.authorName.orEmpty().toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD
+                } + REQUEST_OVERHEAD,
                 quality = TokenCountQuality.ESTIMATED,
                 tokenizer = "utf8-byte-upper-bound",
             )
@@ -93,6 +100,8 @@ class DefaultTokenAccounting : TokenAccounting {
     )
 }
 
+private fun Int?.orZero(): Int = this ?: 0
+
 data class TokenBudgetResult(
     val messages: List<PreparedMessage>,
     val report: TokenAccountingReport,
@@ -106,11 +115,11 @@ class ContextBudgeter(
 ) {
     fun contextLimit(input: NormalGenerationInput): Int {
         val modelLimit = input.modelContextTokens ?: knownContextLimit(input.modelId) ?: DEFAULT_CONTEXT_LIMIT
-        return input.preset.declaredContextTokens?.let { minOf(it, modelLimit) } ?: modelLimit
+        return input.preset.generationSettings.maxContextTokens?.let { minOf(it, modelLimit) } ?: modelLimit
     }
 
     fun outputLimit(input: NormalGenerationInput): Int =
-        minOf(input.preset.maxOutputTokens, input.modelOutputTokens ?: Int.MAX_VALUE)
+        minOf(input.preset.generationSettings.maxOutputTokens, input.modelOutputTokens ?: Int.MAX_VALUE)
 
     fun budget(
         messages: List<PreparedMessage>,

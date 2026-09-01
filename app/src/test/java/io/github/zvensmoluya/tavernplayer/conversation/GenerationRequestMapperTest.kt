@@ -4,10 +4,14 @@ import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicRole
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicThinkingType
 import io.github.zvensmoluya.modelgateway.gemini.GeminiContentRole
 import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionInputStep
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
+import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
+import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -60,7 +64,6 @@ class GenerationRequestMapperTest {
         assertEquals(listOf(GeminiContentRole.USER, GeminiContentRole.MODEL, GeminiContentRole.USER), generate.request.contents.map { it.role })
         assertEquals("sig", generate.request.contents[1].thoughtSignature)
         assertNull(generate.request.previousStateForTest())
-        assertEquals(false, generate.request.store)
 
         val interactions = GenerationRequestMapper.map(
             connection(ModelProtocol.GEMINI_INTERACTIONS),
@@ -79,17 +82,106 @@ class GenerationRequestMapperTest {
     }
 
     @Test
-    fun `non Anthropic adapters reject assistant prefill`() {
+    fun `unsupported assistant prefill is omitted and diagnosed without blocking generation`() {
         listOf(
             ModelProtocol.OPENAI_RESPONSES,
             ModelProtocol.OPENAI_CHAT_COMPLETIONS,
             ModelProtocol.GEMINI_INTERACTIONS,
             ModelProtocol.GEMINI_GENERATE_CONTENT,
         ).forEach { protocol ->
-            assertThrows(GatewayException.Configuration::class.java) {
-                GenerationRequestMapper.map(connection(protocol), plan(prefill = "prefix"))
-            }
+            val prepared = GenerationRequestMapper.map(connection(protocol), plan(prefill = "prefix"))
+            assertFalse(prepared.preview.assistantPrefillApplied)
+            assertTrue(prepared.preview.omittedPresetControls.any { it.control == "assistant_prefill" })
         }
+    }
+
+    @Test
+    fun `five protocol adapters map supported controls and diagnose every meaningful omission`() {
+        val tuned = plan().copy(
+            maxOutputTokens = 4_096,
+            generationSettings = PresetGenerationSettings(
+                maxContextTokens = 8_192,
+                maxOutputTokens = 4_096,
+                temperature = 0.7,
+                topP = 0.8,
+                topK = 32,
+                topA = 0.2,
+                minP = 0.1,
+                repetitionPenalty = 1.1,
+                frequencyPenalty = 0.2,
+                presencePenalty = -0.1,
+                seed = 42,
+                reasoningEffort = PresetReasoningEffort.HIGH,
+                verbosity = PresetVerbosity.HIGH,
+            ),
+        )
+
+        val responses = GenerationRequestMapper.map(connection(ModelProtocol.OPENAI_RESPONSES), tuned)
+            as PreparedGenerationRequest.Responses
+        assertEquals(0.7, responses.request.temperature)
+        assertEquals(0.8, responses.request.topP)
+        assertEquals("high", responses.request.reasoning?.effort)
+        assertEquals("high", responses.request.text?.verbosity)
+        assertTrue(responses.preview.omittedPresetControls.any { it.control == "seed" })
+
+        val chat = GenerationRequestMapper.map(connection(ModelProtocol.OPENAI_CHAT_COMPLETIONS), tuned)
+            as PreparedGenerationRequest.Chat
+        assertEquals(0.2, chat.request.frequencyPenalty)
+        assertEquals(-0.1, chat.request.presencePenalty)
+        assertEquals(42, chat.request.seed)
+        assertEquals("high", chat.request.reasoningEffort)
+        assertEquals("high", chat.request.verbosity)
+
+        val anthropic = GenerationRequestMapper.map(
+            connection(ModelProtocol.ANTHROPIC_MESSAGES, "claude-opus-4-7"),
+            tuned,
+        ) as PreparedGenerationRequest.Anthropic
+        assertEquals(AnthropicThinkingType.ADAPTIVE, anthropic.request.thinking?.type)
+        assertEquals("high", anthropic.request.outputConfig?.effort)
+        assertNull(anthropic.request.temperature)
+        assertTrue(anthropic.preview.omittedPresetControls.any { it.control == "temperature" })
+
+        val interactions = GenerationRequestMapper.map(connection(ModelProtocol.GEMINI_INTERACTIONS), tuned)
+            as PreparedGenerationRequest.Interactions
+        assertEquals(42, interactions.request.seed)
+        assertEquals("high", interactions.request.thinkingLevel)
+        assertTrue(interactions.preview.omittedPresetControls.any { it.control == "temperature" })
+
+        val generate = GenerationRequestMapper.map(connection(ModelProtocol.GEMINI_GENERATE_CONTENT), tuned)
+            as PreparedGenerationRequest.GenerateContent
+        assertEquals(0.7, generate.request.temperature)
+        assertEquals(32, generate.request.topK)
+        assertEquals(42, generate.request.seed)
+        assertEquals("high", generate.request.thinking?.thinkingLevel)
+
+        listOf(responses, chat, anthropic, interactions, generate).forEach { prepared ->
+            assertTrue(prepared.preview.appliedPresetControls.contains("output_limit"))
+            assertTrue(prepared.preview.omittedPresetControls.any { it.control == "top_a" })
+            assertTrue(prepared.preview.omittedPresetControls.any { it.control == "min_p" })
+            assertTrue(prepared.preview.omittedPresetControls.any { it.control == "repetition_penalty" })
+            assertFalse(prepared.preview.usesHostedState)
+            assertEquals(false, prepared.preview.store)
+        }
+    }
+
+    @Test
+    fun `unknown model capability conservatively omits reasoning and verbosity`() {
+        val tuned = plan().copy(
+            generationSettings = plan().generationSettings.copy(
+                reasoningEffort = PresetReasoningEffort.MAX,
+                verbosity = PresetVerbosity.LOW,
+            ),
+        )
+
+        val prepared = GenerationRequestMapper.map(
+            connection(ModelProtocol.OPENAI_CHAT_COMPLETIONS, "custom-model"),
+            tuned,
+        ) as PreparedGenerationRequest.Chat
+
+        assertNull(prepared.request.reasoningEffort)
+        assertNull(prepared.request.verbosity)
+        assertTrue(prepared.preview.omittedPresetControls.any { it.control == "reasoning_effort" })
+        assertTrue(prepared.preview.omittedPresetControls.any { it.control == "verbosity" })
     }
 
     @Test
@@ -130,6 +222,11 @@ class GenerationRequestMapperTest {
         assistantPrefill = prefill,
         presetId = "preset",
         presetName = "Preset",
+        presetContentSha256 = "fingerprint",
+        generationSettings = PresetGenerationSettings(
+            maxContextTokens = 8_192,
+            maxOutputTokens = 512,
+        ),
         diagnostics = emptyList(),
         trace = emptyList(),
     )
@@ -147,7 +244,14 @@ class GenerationRequestMapperTest {
         adapterId = adapterId,
     )
 
-    private fun connection(protocol: ModelProtocol) = StoredConnection(
+    private fun connection(
+        protocol: ModelProtocol,
+        model: String = when (protocol) {
+            ModelProtocol.OPENAI_RESPONSES, ModelProtocol.OPENAI_CHAT_COMPLETIONS -> "gpt-5.6"
+            ModelProtocol.ANTHROPIC_MESSAGES -> "claude-sonnet-4-5-20250929"
+            ModelProtocol.GEMINI_INTERACTIONS, ModelProtocol.GEMINI_GENERATE_CONTENT -> "gemini-3-flash-preview"
+        },
+    ) = StoredConnection(
         id = protocol.name,
         name = protocol.name,
         templateId = protocol.name,
@@ -159,7 +263,7 @@ class GenerationRequestMapperTest {
         credentialRef = null,
         credentialMask = null,
         approvedOrigins = emptySet(),
-        selectedModel = "model",
+        selectedModel = model,
         modelCache = ModelCache(),
     )
 }

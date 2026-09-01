@@ -25,8 +25,18 @@ data class AnthropicMessage(
     val text: String,
 )
 
+enum class AnthropicThinkingType(val wire: String) {
+    ENABLED("enabled"),
+    ADAPTIVE("adaptive"),
+}
+
 data class AnthropicThinking(
-    val budgetTokens: Int,
+    val type: AnthropicThinkingType,
+    val budgetTokens: Int? = null,
+)
+
+data class AnthropicOutputConfig(
+    val effort: String? = null,
 )
 
 data class AnthropicMessagesRequest(
@@ -35,6 +45,10 @@ data class AnthropicMessagesRequest(
     val maxTokens: Int,
     val system: String? = null,
     val thinking: AnthropicThinking? = null,
+    val outputConfig: AnthropicOutputConfig? = null,
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val topK: Int? = null,
 )
 
 data class AnthropicUsage(
@@ -179,8 +193,22 @@ private fun validateRequest(request: AnthropicMessagesRequest) {
     if (request.model.isBlank()) throw GatewayException.Configuration("Model id is required")
     if (request.messages.isEmpty()) throw GatewayException.Configuration("Anthropic messages cannot be empty")
     if (request.maxTokens <= 0) throw GatewayException.Configuration("maxTokens must be positive")
-    if (request.thinking != null && request.thinking.budgetTokens <= 0) {
-        throw GatewayException.Configuration("Thinking budget must be positive")
+    if (request.thinking?.type == AnthropicThinkingType.ENABLED &&
+        (request.thinking.budgetTokens == null || request.thinking.budgetTokens <= 0)
+    ) {
+        throw GatewayException.Configuration("Enabled thinking requires a positive budget")
+    }
+    if (request.thinking?.type == AnthropicThinkingType.ADAPTIVE && request.thinking.budgetTokens != null) {
+        throw GatewayException.Configuration("Adaptive thinking cannot include a token budget")
+    }
+    if (request.temperature != null && request.temperature !in 0.0..1.0) {
+        throw GatewayException.Configuration("temperature must be between 0 and 1")
+    }
+    if (request.topP != null && request.topP !in 0.0..1.0) {
+        throw GatewayException.Configuration("topP must be between 0 and 1")
+    }
+    if (request.topK != null && request.topK < 0) {
+        throw GatewayException.Configuration("topK must not be negative")
     }
 }
 
@@ -199,10 +227,18 @@ private fun AnthropicMessagesRequest.toJson(): JsonObject = buildJsonObject {
     system?.let { put("system", it) }
     thinking?.let {
         put("thinking", buildJsonObject {
-            put("type", "enabled")
-            put("budget_tokens", it.budgetTokens)
+            put("type", it.type.wire)
+            it.budgetTokens?.let { budget -> put("budget_tokens", budget) }
         })
     }
+    outputConfig?.let { config ->
+        put("output_config", buildJsonObject {
+            config.effort?.let { put("effort", it) }
+        })
+    }
+    temperature?.let { put("temperature", it) }
+    topP?.let { put("top_p", it) }
+    topK?.let { put("top_k", it) }
 }
 
 private fun parse(data: String): List<AnthropicMessagesEvent> {

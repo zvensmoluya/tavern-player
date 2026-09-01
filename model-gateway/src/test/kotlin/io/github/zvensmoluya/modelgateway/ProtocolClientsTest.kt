@@ -4,8 +4,10 @@ import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessage
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessagesAccumulator
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessagesEvent
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessagesRequest
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicOutputConfig
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicRole
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicThinking
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicThinkingType
 import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsAccumulator
 import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsEvent
 import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsRequest
@@ -27,6 +29,7 @@ import io.github.zvensmoluya.modelgateway.responses.ResponsesInputMessage
 import io.github.zvensmoluya.modelgateway.responses.ResponsesReasoning
 import io.github.zvensmoluya.modelgateway.responses.ResponsesRequest
 import io.github.zvensmoluya.modelgateway.responses.ResponsesRole
+import io.github.zvensmoluya.modelgateway.responses.ResponsesTextConfig
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -70,6 +73,9 @@ class ProtocolClientsTest {
                     maxOutputTokens = 512,
                     previousResponseId = "resp_0",
                     reasoning = ResponsesReasoning(effort = "high", summary = "auto"),
+                    text = ResponsesTextConfig(verbosity = "high"),
+                    temperature = 0.7,
+                    topP = 0.9,
                     store = false,
                 ),
             ).toList()
@@ -89,8 +95,9 @@ class ProtocolClientsTest {
             val body = Json.parseToJsonElement(requireNotNull(request.body).utf8()).jsonObject
             assertEquals("false", body["store"].toString())
             assertEquals("512", body["max_output_tokens"].toString())
-            assertFalse(body.containsKey("temperature"))
-            assertFalse(body.containsKey("top_p"))
+            assertEquals("0.7", body["temperature"].toString())
+            assertEquals("0.9", body["top_p"].toString())
+            assertEquals("\"high\"", body["text"]!!.jsonObject["verbosity"].toString())
         }
     }
 
@@ -116,9 +123,16 @@ class ProtocolClientsTest {
                     model = "chat-model",
                     messages = listOf(
                         ChatMessage(ChatRole.SYSTEM, "system"),
-                        ChatMessage(ChatRole.USER, "hi"),
+                        ChatMessage(ChatRole.USER, "hi", name = "Traveler"),
                     ),
                     maxCompletionTokens = 512,
+                    reasoningEffort = "low",
+                    verbosity = "high",
+                    temperature = 0.6,
+                    topP = 0.8,
+                    frequencyPenalty = 0.2,
+                    presencePenalty = -0.1,
+                    seed = 42,
                     store = false,
                 ),
             ).toList()
@@ -132,6 +146,10 @@ class ProtocolClientsTest {
             assertEquals("true", body["stream"].toString())
             assertTrue(body.containsKey("max_completion_tokens"))
             assertFalse(body.containsKey("max_tokens"))
+            assertEquals("1", body["n"].toString())
+            assertEquals("42", body["seed"].toString())
+            assertEquals("0.2", body["frequency_penalty"].toString())
+            assertEquals("\"Traveler\"", body["messages"]!!.let { it as kotlinx.serialization.json.JsonArray }[1].jsonObject["name"].toString())
         }
     }
 
@@ -168,7 +186,11 @@ class ProtocolClientsTest {
                     system = "system",
                     messages = listOf(AnthropicMessage(AnthropicRole.USER, "hi")),
                     maxTokens = 512,
-                    thinking = AnthropicThinking(128),
+                    thinking = AnthropicThinking(AnthropicThinkingType.ADAPTIVE),
+                    outputConfig = AnthropicOutputConfig("high"),
+                    temperature = 0.8,
+                    topP = 0.9,
+                    topK = 40,
                 ),
             ).toList()
             val result = AnthropicMessagesAccumulator().also { a -> events.forEach(a::accept) }.result()
@@ -181,6 +203,10 @@ class ProtocolClientsTest {
             val request = test.server.takeRequest()
             assertEquals("test-secret", request.headers["x-api-key"])
             assertEquals("2023-06-01", request.headers["anthropic-version"])
+            val body = Json.parseToJsonElement(requireNotNull(request.body).utf8()).jsonObject
+            assertEquals("\"adaptive\"", body["thinking"]!!.jsonObject["type"].toString())
+            assertEquals("\"high\"", body["output_config"]!!.jsonObject["effort"].toString())
+            assertEquals("40", body["top_k"].toString())
         }
     }
 
@@ -220,6 +246,8 @@ class ProtocolClientsTest {
                     ),
                     systemInstruction = "system",
                     maxOutputTokens = 512,
+                    seed = 7,
+                    thinkingLevel = "high",
                     store = false,
                 ),
             ).toList()
@@ -236,6 +264,8 @@ class ProtocolClientsTest {
             val body = Json.parseToJsonElement(requireNotNull(request.body).utf8()).jsonObject
             assertTrue(body.containsKey("generation_config"))
             assertEquals("false", body["store"].toString())
+            assertEquals("7", body["generation_config"]!!.jsonObject["seed"].toString())
+            assertEquals("\"high\"", body["generation_config"]!!.jsonObject["thinking_level"].toString())
         }
     }
 
@@ -265,6 +295,12 @@ class ProtocolClientsTest {
                     contents = listOf(GeminiContent(GeminiContentRole.USER, "hi", "old-sig")),
                     systemInstruction = "system",
                     maxOutputTokens = 512,
+                    temperature = 0.7,
+                    topP = 0.8,
+                    topK = 32,
+                    seed = 9,
+                    frequencyPenalty = 0.1,
+                    presencePenalty = -0.2,
                     thinking = GeminiThinkingConfig(includeThoughts = true),
                 ),
             ).toList()
@@ -278,7 +314,13 @@ class ProtocolClientsTest {
             val request = test.server.takeRequest()
             assertTrue(request.target.startsWith("/v1beta/models/gemini-test:streamGenerateContent?"))
             assertTrue(request.target.contains("key=test-secret"))
-            assertFalse(requireNotNull(request.body).utf8().contains("temperature"))
+            val body = Json.parseToJsonElement(requireNotNull(request.body).utf8()).jsonObject
+            val config = body["generationConfig"]!!.jsonObject
+            assertFalse(body.containsKey("store"))
+            assertEquals("0.7", config["temperature"].toString())
+            assertEquals("32", config["topK"].toString())
+            assertEquals("9", config["seed"].toString())
+            assertEquals("-0.2", config["presencePenalty"].toString())
         }
     }
 }

@@ -26,6 +26,7 @@ data class GeminiInteractionsRequest(
     val input: List<GeminiInteractionInputStep>,
     val systemInstruction: String? = null,
     val maxOutputTokens: Int? = null,
+    val seed: Int? = null,
     val thinkingLevel: String? = null,
     val previousInteractionId: String? = null,
     val store: Boolean? = null,
@@ -171,9 +172,10 @@ private fun GeminiInteractionsRequest.toJson(): JsonObject = buildJsonObject {
         }
     })
     systemInstruction?.let { put("system_instruction", it) }
-    if (maxOutputTokens != null || thinkingLevel != null) {
+    if (maxOutputTokens != null || seed != null || thinkingLevel != null) {
         put("generation_config", buildJsonObject {
             maxOutputTokens?.let { put("max_output_tokens", it) }
+            seed?.let { put("seed", it) }
             thinkingLevel?.let { put("thinking_level", it) }
         })
     }

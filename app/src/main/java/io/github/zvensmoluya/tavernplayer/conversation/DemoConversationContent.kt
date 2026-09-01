@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
+
 object DemoConversationContent {
     val character = CharacterAsset(
         id = "mira",
@@ -31,61 +33,5 @@ object DemoConversationContent {
         name = "旅人",
     )
 
-    val preset = Preset(
-        id = "controlled-demo",
-        name = "受控样本",
-        prompts = listOf(
-            PromptDefinition(
-                identifier = "main",
-                role = MessageRole.SYSTEM,
-                content = "你正在扮演{{char}}，与{{user}}进行沉浸式角色对话。",
-                systemPrompt = true,
-            ),
-            marker("worldInfoBefore"),
-            marker("charDescription"),
-            marker("worldInfoAfter"),
-            marker("charPersonality"),
-            marker("scenario"),
-            marker("dialogueExamples"),
-            marker("chatHistory"),
-            PromptDefinition(
-                identifier = "jailbreak",
-                role = MessageRole.SYSTEM,
-                content = "继续这段对话。",
-                systemPrompt = true,
-            ),
-            PromptDefinition(
-                identifier = "toneReminder",
-                role = MessageRole.SYSTEM,
-                content = "保持克制、自然的叙述。",
-                injectionPosition = InjectionPosition.ABSOLUTE,
-                injectionDepth = 1,
-                injectionOrder = 200,
-            ),
-        ),
-        promptOrder = listOf(
-            PromptOrderEntry("main"),
-            PromptOrderEntry("worldInfoBefore"),
-            PromptOrderEntry("charDescription"),
-            PromptOrderEntry("worldInfoAfter"),
-            PromptOrderEntry("charPersonality"),
-            PromptOrderEntry("scenario"),
-            PromptOrderEntry("toneReminder"),
-            PromptOrderEntry("dialogueExamples"),
-            PromptOrderEntry("chatHistory"),
-            PromptOrderEntry("jailbreak"),
-        ),
-        newChatPrompt = "开始一段新的角色对话。",
-        newExampleChatPrompt = "以下是示例对话。",
-        assistantPrefill = "",
-        maxOutputTokens = 1_024,
-        declaredContextTokens = null,
-    )
-
-    private fun marker(identifier: String) = PromptDefinition(
-        identifier = identifier,
-        role = MessageRole.SYSTEM,
-        marker = true,
-        systemPrompt = true,
-    )
+    val preset = BuiltInPresets.default
 }

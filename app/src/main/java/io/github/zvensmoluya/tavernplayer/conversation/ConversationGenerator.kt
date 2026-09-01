@@ -6,7 +6,10 @@ import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessage
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessagesEvent
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicMessagesRequest
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicOutputConfig
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicRole
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicThinking
+import io.github.zvensmoluya.modelgateway.anthropic.AnthropicThinkingType
 import io.github.zvensmoluya.modelgateway.anthropic.AnthropicUsage
 import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsEvent
 import io.github.zvensmoluya.modelgateway.chat.ChatCompletionsRequest
@@ -24,11 +27,16 @@ import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionsRequest
 import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionsUsage
 import io.github.zvensmoluya.modelgateway.responses.ResponsesEvent
 import io.github.zvensmoluya.modelgateway.responses.ResponsesInputMessage
+import io.github.zvensmoluya.modelgateway.responses.ResponsesReasoning
 import io.github.zvensmoluya.modelgateway.responses.ResponsesRequest
 import io.github.zvensmoluya.modelgateway.responses.ResponsesRole
+import io.github.zvensmoluya.modelgateway.responses.ResponsesTextConfig
 import io.github.zvensmoluya.modelgateway.responses.ResponsesUsage
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
+import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
+import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
 import java.net.URI
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -56,6 +64,13 @@ data class ProviderRequestPreview(
     val store: Boolean,
     val usesHostedState: Boolean,
     val assistantPrefillApplied: Boolean,
+    val appliedPresetControls: List<String> = emptyList(),
+    val omittedPresetControls: List<PresetControlOmission> = emptyList(),
+)
+
+data class PresetControlOmission(
+    val control: String,
+    val reason: String,
 )
 
 data class ProviderTokenValidation(
@@ -121,6 +136,9 @@ class ModelGatewayConversationGenerator(
         repository.ensureReady(connection)
         val prepared = GenerationRequestMapper.map(connection, plan)
         emit(GenerationEvent.RequestPrepared(prepared.preview))
+        prepared.preview.omittedPresetControls.forEach { omission ->
+            emit(GenerationEvent.Diagnostic("Preset ${omission.control} 已省略：${omission.reason}"))
+        }
         val target = connection.target()
         when (prepared) {
             is PreparedGenerationRequest.Responses -> gateway.responses.stream(target, prepared.request).collect { event ->
@@ -318,19 +336,57 @@ private const val CONSERVATIVE_REQUEST_OVERHEAD = 16
 internal object GenerationRequestMapper {
     fun map(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest {
         val protocol = connection.protocol
-        if (plan.assistantPrefill.isNotBlank() && protocol != ModelProtocol.ANTHROPIC_MESSAGES) {
-            throw GatewayException.Configuration("当前 Provider 无法准确表达 assistant prefill")
+        val report = PresetMappingReport().apply {
+            applied("output_limit")
+            recordUniversallyUnmapped(plan.generationSettings)
         }
         return when (protocol) {
-            ModelProtocol.OPENAI_RESPONSES -> responses(connection, plan)
-            ModelProtocol.OPENAI_CHAT_COMPLETIONS -> chat(connection, plan)
-            ModelProtocol.ANTHROPIC_MESSAGES -> anthropic(connection, plan)
-            ModelProtocol.GEMINI_INTERACTIONS -> interactions(connection, plan)
-            ModelProtocol.GEMINI_GENERATE_CONTENT -> generateContent(connection, plan)
+            ModelProtocol.OPENAI_RESPONSES -> responses(connection, plan, report)
+            ModelProtocol.OPENAI_CHAT_COMPLETIONS -> chat(connection, plan, report)
+            ModelProtocol.ANTHROPIC_MESSAGES -> anthropic(connection, plan, report)
+            ModelProtocol.GEMINI_INTERACTIONS -> interactions(connection, plan, report)
+            ModelProtocol.GEMINI_GENERATE_CONTENT -> generateContent(connection, plan, report)
         }
     }
 
-    private fun responses(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest.Responses {
+    private fun responses(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+        report: PresetMappingReport,
+    ): PreparedGenerationRequest.Responses {
+        val settings = plan.generationSettings
+        val temperature = settings.temperature.validRange("temperature", 0.0..2.0, report)
+        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)
+        temperature?.let { report.applied("temperature") }
+        topP?.let { report.applied("top_p") }
+        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Responses API 无对应字段")
+        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Responses API 无对应字段")
+        settings.seed?.let { report.omitted("seed", "Responses API 无对应字段") }
+        if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "Responses API 无法表达 assistant prefill")
+        if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
+            report.omitted("names_behavior", "Responses 文本消息未发送 author name")
+        }
+        val reasoning = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+            if (connection.selectedModel.supportsOpenAiReasoning()) {
+                report.applied("reasoning_effort")
+                ResponsesReasoning(
+                    effort = effort.openAiWireValue(connection.selectedModel, report),
+                    summary = "auto",
+                )
+            } else {
+                report.omitted("reasoning_effort", "模型能力未知或未标记为 OpenAI reasoning model")
+                null
+            }
+        }
+        val text = settings.verbosity.takeUnless { it == PresetVerbosity.AUTO }?.let { verbosity ->
+            if (connection.selectedModel.supportsOpenAiVerbosity()) {
+                report.applied("verbosity")
+                ResponsesTextConfig(verbosity.wireValue.lowercase())
+            } else {
+                report.omitted("verbosity", "模型能力未知或未标记为支持 verbosity")
+                null
+            }
+        }
         val messages = plan.messages.map { message ->
             ResponsesInputMessage(
                 role = when (message.role) {
@@ -348,14 +404,59 @@ internal object GenerationRequestMapper {
                 instructions = null,
                 maxOutputTokens = plan.maxOutputTokens,
                 previousResponseId = null,
+                reasoning = reasoning,
+                text = text,
+                temperature = temperature,
+                topP = topP,
                 store = false,
             ),
-            preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.text }),
+            preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.text }, report = report),
         )
     }
 
-    private fun chat(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest.Chat {
+    private fun chat(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+        report: PresetMappingReport,
+    ): PreparedGenerationRequest.Chat {
+        val settings = plan.generationSettings
+        val temperature = settings.temperature.validRange("temperature", 0.0..2.0, report)
+        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)
+        val frequencyPenalty = settings.frequencyPenalty.validRange("frequency_penalty", -2.0..2.0, report)
+        val presencePenalty = settings.presencePenalty.validRange("presence_penalty", -2.0..2.0, report)
+        temperature?.let { report.applied("temperature") }
+        topP?.let { report.applied("top_p") }
+        frequencyPenalty?.let { report.applied("frequency_penalty") }
+        presencePenalty?.let { report.applied("presence_penalty") }
+        settings.seed?.let { report.applied("seed") }
+        if (plan.assistantPrefill.isNotBlank()) {
+            report.omitted("assistant_prefill", "Chat Completions 无法准确表达 assistant prefill")
+        }
+        val reasoning = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+            if (connection.selectedModel.supportsOpenAiReasoning()) {
+                report.applied("reasoning_effort")
+                effort.openAiWireValue(connection.selectedModel, report)
+            } else {
+                report.omitted("reasoning_effort", "模型能力未知或未标记为 OpenAI reasoning model")
+                null
+            }
+        }
+        val verbosity = settings.verbosity.takeUnless { it == PresetVerbosity.AUTO }?.let { value ->
+            if (connection.selectedModel.supportsOpenAiVerbosity()) {
+                report.applied("verbosity")
+                value.wireValue.lowercase()
+            } else {
+                report.omitted("verbosity", "模型能力未知或未标记为支持 verbosity")
+                null
+            }
+        }
         val messages = plan.messages.map { message ->
+            val name = message.authorName?.toOpenAiMessageName()
+            if (!message.authorName.isNullOrBlank() && name == null) {
+                report.omitted("names_behavior", "author name 不符合 Chat Completions name 字符约束")
+            } else if (name != null) {
+                report.applied("names_behavior")
+            }
             ChatMessage(
                 role = when (message.role) {
                     MessageRole.SYSTEM -> ChatRole.SYSTEM
@@ -363,6 +464,7 @@ internal object GenerationRequestMapper {
                     MessageRole.ASSISTANT -> ChatRole.ASSISTANT
                 },
                 content = message.content,
+                name = name,
             )
         }
         return PreparedGenerationRequest.Chat(
@@ -370,13 +472,74 @@ internal object GenerationRequestMapper {
                 model = connection.selectedModel,
                 messages = messages,
                 maxCompletionTokens = plan.maxOutputTokens,
+                reasoningEffort = reasoning,
+                verbosity = verbosity,
+                temperature = temperature,
+                topP = topP,
+                frequencyPenalty = frequencyPenalty,
+                presencePenalty = presencePenalty,
+                seed = settings.seed,
                 store = false,
             ),
-            preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.content }),
+            preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.content }, report = report),
         )
     }
 
-    private fun anthropic(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest.Anthropic {
+    private fun anthropic(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+        report: PresetMappingReport,
+    ): PreparedGenerationRequest.Anthropic {
+        val settings = plan.generationSettings
+        val capabilities = connection.selectedModel.anthropicCapabilities()
+        val temperature = if (capabilities.samplers) {
+            settings.temperature.validRange("temperature", 0.0..1.0, report)?.also { report.applied("temperature") }
+        } else {
+            report.omitIfNonDefault("temperature", settings.temperature, 1.0, "模型能力未知或该 Claude 版本拒绝采样参数")
+            null
+        }
+        val topP = if (capabilities.samplers) {
+            settings.topP.validRange("top_p", 0.0..1.0, report)?.also { report.applied("top_p") }
+        } else {
+            report.omitIfNonDefault("top_p", settings.topP, 1.0, "模型能力未知或该 Claude 版本拒绝采样参数")
+            null
+        }
+        val topK = if (capabilities.samplers) {
+            settings.topK?.takeIf { it > 0 }?.also { report.applied("top_k") }
+        } else {
+            settings.topK?.takeIf { it > 0 }?.let {
+                report.omitted("top_k", "模型能力未知或该 Claude 版本拒绝采样参数")
+            }
+            null
+        }
+        settings.seed?.let { report.omitted("seed", "Anthropic Messages 无 seed 字段") }
+        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Anthropic Messages 无对应字段")
+        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Anthropic Messages 无对应字段")
+        if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
+            report.omitted("names_behavior", "Anthropic Messages 无 author name 字段")
+        }
+
+        var thinking: AnthropicThinking? = null
+        var outputConfig: AnthropicOutputConfig? = null
+        if (settings.reasoningEffort != PresetReasoningEffort.AUTO) {
+            when {
+                capabilities.adaptiveThinking -> {
+                    thinking = AnthropicThinking(AnthropicThinkingType.ADAPTIVE)
+                    outputConfig = AnthropicOutputConfig(settings.reasoningEffort.anthropicEffort())
+                    report.applied("reasoning_effort")
+                }
+                capabilities.manualThinking -> {
+                    val budget = settings.reasoningEffort.anthropicThinkingBudget(plan.maxOutputTokens)
+                    if (budget == null) {
+                        report.omitted("reasoning_effort", "回复上限不足以容纳 Anthropic 最小 thinking budget")
+                    } else {
+                        thinking = AnthropicThinking(AnthropicThinkingType.ENABLED, budget)
+                        report.applied("reasoning_effort")
+                    }
+                }
+                else -> report.omitted("reasoning_effort", "模型 thinking 能力未知")
+            }
+        }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
         val mapped = plan.messages.drop(leadingSystem.size).map { message ->
@@ -385,12 +548,21 @@ internal object GenerationRequestMapper {
                 text = message.content,
             )
         }.mergeAnthropicRoles().toMutableList()
-        plan.assistantPrefill.takeIf(String::isNotBlank)?.let { prefill ->
+        val prefill = plan.assistantPrefill.takeIf(String::isNotBlank)?.takeIf {
+            if (capabilities.assistantPrefill) {
+                report.applied("assistant_prefill")
+                true
+            } else {
+                report.omitted("assistant_prefill", "模型能力未知或该 Claude 版本不再支持最后一条 assistant prefill")
+                false
+            }
+        }
+        prefill?.let { value ->
             if (mapped.lastOrNull()?.role == AnthropicRole.ASSISTANT) {
                 val last = mapped.removeAt(mapped.lastIndex)
-                mapped += last.copy(text = last.text + "\n\n" + prefill)
+                mapped += last.copy(text = last.text + "\n\n" + value)
             } else {
-                mapped += AnthropicMessage(AnthropicRole.ASSISTANT, prefill)
+                mapped += AnthropicMessage(AnthropicRole.ASSISTANT, value)
             }
         }
         if (mapped.isEmpty()) throw GatewayException.Configuration("Anthropic request requires conversation messages")
@@ -400,18 +572,49 @@ internal object GenerationRequestMapper {
                 messages = mapped,
                 maxTokens = plan.maxOutputTokens,
                 system = system,
+                thinking = thinking,
+                outputConfig = outputConfig,
+                temperature = temperature,
+                topP = topP,
+                topK = topK,
             ),
             preview = preview(
                 connection,
                 plan,
                 system,
                 mapped.map { it.role.wire to it.text },
-                prefillApplied = plan.assistantPrefill.isNotBlank(),
+                prefillApplied = prefill != null,
+                report = report,
             ),
         )
     }
 
-    private fun interactions(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest.Interactions {
+    private fun interactions(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+        report: PresetMappingReport,
+    ): PreparedGenerationRequest.Interactions {
+        val settings = plan.generationSettings
+        settings.seed?.let { report.applied("seed") }
+        report.omitIfNonDefault("temperature", settings.temperature, 1.0, "计划约定 Interactions 仅映射 output、seed 与 thinking level")
+        report.omitIfNonDefault("top_p", settings.topP, 1.0, "计划约定 Interactions 不映射 top_p")
+        settings.topK?.takeIf { it > 0 }?.let { report.omitted("top_k", "Interactions 映射边界不包含 top_k") }
+        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Interactions 映射边界不包含 frequency penalty")
+        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Interactions 映射边界不包含 presence penalty")
+        if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "Interactions 无法表达 assistant prefill")
+        if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
+            report.omitted("names_behavior", "Interactions 无 author name 字段")
+        }
+        val thinkingLevel = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+            val supported = connection.selectedModel.geminiThinkingLevels()
+            if (supported.isEmpty()) {
+                report.omitted("reasoning_effort", "模型 thinking level 能力未知")
+                null
+            } else {
+                report.applied("reasoning_effort")
+                effort.geminiThinkingLevel(supported, report)
+            }
+        }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
         val steps = buildList {
@@ -435,6 +638,8 @@ internal object GenerationRequestMapper {
                 input = steps,
                 systemInstruction = system,
                 maxOutputTokens = plan.maxOutputTokens,
+                seed = settings.seed,
+                thinkingLevel = thinkingLevel,
                 previousInteractionId = null,
                 store = false,
             ),
@@ -449,11 +654,55 @@ internal object GenerationRequestMapper {
                         is GeminiInteractionInputStep.Thought -> "thought" to "[opaque signature]"
                     }
                 },
+                report = report,
             ),
         )
     }
 
-    private fun generateContent(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest.GenerateContent {
+    private fun generateContent(
+        connection: StoredConnection,
+        plan: GenerationPlan,
+        report: PresetMappingReport,
+    ): PreparedGenerationRequest.GenerateContent {
+        val settings = plan.generationSettings
+        val temperature = settings.temperature.validMinimum("temperature", 0.0, report)
+            ?.also { report.applied("temperature") }
+        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)?.also { report.applied("top_p") }
+        val topK = settings.topK?.takeIf { it > 0 }?.also { report.applied("top_k") }
+        val frequencyPenalty = settings.frequencyPenalty.validRange("frequency_penalty", -2.0..2.0, report)
+            ?.also { report.applied("frequency_penalty") }
+        val presencePenalty = settings.presencePenalty.validRange("presence_penalty", -2.0..2.0, report)
+            ?.also { report.applied("presence_penalty") }
+        settings.seed?.let { report.applied("seed") }
+        if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "GenerateContent 无法表达 assistant prefill")
+        if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
+            report.omitted("names_behavior", "GenerateContent 无 author name 字段")
+        }
+        val thinking = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+            when (connection.selectedModel.geminiThinkingMode()) {
+                GeminiThinkingMode.LEVEL -> {
+                    report.applied("reasoning_effort")
+                    io.github.zvensmoluya.modelgateway.gemini.GeminiThinkingConfig(
+                        includeThoughts = true,
+                        thinkingLevel = effort.geminiThinkingLevel(
+                            connection.selectedModel.geminiThinkingLevels(),
+                            report,
+                        ),
+                    )
+                }
+                GeminiThinkingMode.BUDGET -> {
+                    report.applied("reasoning_effort")
+                    io.github.zvensmoluya.modelgateway.gemini.GeminiThinkingConfig(
+                        includeThoughts = true,
+                        thinkingBudget = effort.geminiThinkingBudget(),
+                    )
+                }
+                GeminiThinkingMode.NONE -> {
+                    report.omitted("reasoning_effort", "模型 thinking config 能力未知")
+                    null
+                }
+            }
+        }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
         val raw = plan.messages.drop(leadingSystem.size).map { message ->
@@ -478,7 +727,13 @@ internal object GenerationRequestMapper {
                 contents = contents,
                 systemInstruction = system,
                 maxOutputTokens = plan.maxOutputTokens,
-                store = false,
+                temperature = temperature,
+                topP = topP,
+                topK = topK,
+                seed = settings.seed,
+                frequencyPenalty = frequencyPenalty,
+                presencePenalty = presencePenalty,
+                thinking = thinking,
             ),
             preview = ProviderRequestPreview(
                 protocol = connection.protocol,
@@ -491,6 +746,8 @@ internal object GenerationRequestMapper {
                 store = false,
                 usesHostedState = false,
                 assistantPrefillApplied = false,
+                appliedPresetControls = report.appliedControls(),
+                omittedPresetControls = report.omissions(),
             ),
         )
     }
@@ -501,6 +758,7 @@ internal object GenerationRequestMapper {
         system: String?,
         messages: List<Pair<String, String>>,
         prefillApplied: Boolean = false,
+        report: PresetMappingReport,
     ) = ProviderRequestPreview(
         protocol = connection.protocol,
         model = connection.selectedModel,
@@ -510,7 +768,189 @@ internal object GenerationRequestMapper {
         store = false,
         usesHostedState = false,
         assistantPrefillApplied = prefillApplied,
+        appliedPresetControls = report.appliedControls(),
+        omittedPresetControls = report.omissions(),
     )
+}
+
+private class PresetMappingReport {
+    private val applied = linkedSetOf<String>()
+    private val omitted = linkedMapOf<Pair<String, String>, PresetControlOmission>()
+
+    fun applied(control: String) {
+        applied += control
+    }
+
+    fun omitted(control: String, reason: String) {
+        omitted[control to reason] = PresetControlOmission(control, reason)
+    }
+
+    fun omitIfNonDefault(control: String, value: Double?, default: Double, reason: String) {
+        if (value != null && value != default) omitted(control, reason)
+    }
+
+    fun recordUniversallyUnmapped(settings: PresetGenerationSettings) {
+        omitIfNonDefault("top_a", settings.topA, 0.0, "五种 Provider adapter 均无安全的等价字段")
+        omitIfNonDefault("min_p", settings.minP, 0.0, "五种 Provider adapter 均无安全的等价字段")
+        omitIfNonDefault(
+            "repetition_penalty",
+            settings.repetitionPenalty,
+            1.0,
+            "五种 Provider adapter 均无安全的等价字段",
+        )
+    }
+
+    fun appliedControls(): List<String> = applied.toList()
+
+    fun omissions(): List<PresetControlOmission> = omitted.values.toList()
+}
+
+private fun Double?.validRange(
+    control: String,
+    range: ClosedFloatingPointRange<Double>,
+    report: PresetMappingReport,
+): Double? = when {
+    this == null -> null
+    this in range -> this
+    else -> {
+        report.omitted(control, "值 $this 超出 ${range.start}..${range.endInclusive} 的协议范围")
+        null
+    }
+}
+
+private fun Double?.validMinimum(
+    control: String,
+    minimum: Double,
+    report: PresetMappingReport,
+): Double? = when {
+    this == null -> null
+    this >= minimum -> this
+    else -> {
+        report.omitted(control, "值 $this 低于协议下限 $minimum")
+        null
+    }
+}
+
+private fun PresetReasoningEffort.openAiWireValue(model: String, report: PresetMappingReport): String = when (this) {
+    PresetReasoningEffort.AUTO -> "medium"
+    PresetReasoningEffort.MIN -> if (model.lowercase().startsWith("gpt-5")) {
+        "minimal"
+    } else {
+        report.omitted("reasoning_effort=min", "该 OpenAI reasoning 模型未确认支持 minimal，已降级为 low")
+        "low"
+    }
+    PresetReasoningEffort.LOW -> "low"
+    PresetReasoningEffort.MEDIUM -> "medium"
+    PresetReasoningEffort.HIGH -> "high"
+    PresetReasoningEffort.MAX -> {
+        report.omitted("reasoning_effort=max", "OpenAI 无通用 max 枚举，已安全降级为 high")
+        "high"
+    }
+}
+
+private fun String.supportsOpenAiReasoning(): Boolean {
+    val value = lowercase()
+    return value.startsWith("gpt-5") || Regex("^o(?:1|3|4)(?:-|$)").containsMatchIn(value)
+}
+
+private fun String.supportsOpenAiVerbosity(): Boolean = lowercase().startsWith("gpt-5")
+
+private data class AnthropicModelCapabilities(
+    val samplers: Boolean,
+    val adaptiveThinking: Boolean,
+    val manualThinking: Boolean,
+    val assistantPrefill: Boolean,
+)
+
+private fun String.anthropicCapabilities(): AnthropicModelCapabilities {
+    val value = lowercase()
+    val claude3 = Regex("^claude-3(?:-[0-9]+)?-(?:sonnet|opus|haiku)(?:-|$)").containsMatchIn(value)
+    val version4 = Regex("^claude-(sonnet|opus|haiku)-4-([0-9]+)(?:-|$)").find(value)
+    val family4 = version4?.groupValues?.get(1)
+    val minor4 = version4?.groupValues?.get(2)?.toIntOrNull()
+    val adaptive = (family4 in setOf("sonnet", "opus") && minor4 != null && minor4 >= 6) ||
+        Regex("^claude-(?:fable|mythos)-5(?:-|$)").containsMatchIn(value)
+    val samplers = claude3 || (minor4 != null && minor4 <= 6)
+    val manual = Regex("^claude-3-7-(?:sonnet|opus)(?:-|$)").containsMatchIn(value) ||
+        (family4 in setOf("sonnet", "opus") && minor4 != null && minor4 <= 5)
+    val prefill = claude3 || (minor4 != null && minor4 <= 5)
+    return AnthropicModelCapabilities(
+        samplers = samplers,
+        adaptiveThinking = adaptive,
+        manualThinking = manual,
+        assistantPrefill = prefill,
+    )
+}
+
+private fun PresetReasoningEffort.anthropicEffort(): String = when (this) {
+    PresetReasoningEffort.AUTO, PresetReasoningEffort.MEDIUM -> "medium"
+    PresetReasoningEffort.MIN, PresetReasoningEffort.LOW -> "low"
+    PresetReasoningEffort.HIGH -> "high"
+    PresetReasoningEffort.MAX -> "max"
+}
+
+private fun PresetReasoningEffort.anthropicThinkingBudget(maxOutputTokens: Int): Int? {
+    if (maxOutputTokens <= 1_024) return null
+    val fraction = when (this) {
+        PresetReasoningEffort.AUTO -> return null
+        PresetReasoningEffort.MIN, PresetReasoningEffort.LOW -> 0.25
+        PresetReasoningEffort.MEDIUM -> 0.5
+        PresetReasoningEffort.HIGH -> 0.7
+        PresetReasoningEffort.MAX -> 0.85
+    }
+    return (maxOutputTokens * fraction).toInt().coerceIn(1_024, maxOutputTokens - 1)
+}
+
+private enum class GeminiThinkingMode { NONE, LEVEL, BUDGET }
+
+private fun String.geminiThinkingMode(): GeminiThinkingMode = when {
+    lowercase().contains("gemini-2.5") -> GeminiThinkingMode.BUDGET
+    geminiThinkingLevels().isNotEmpty() -> GeminiThinkingMode.LEVEL
+    else -> GeminiThinkingMode.NONE
+}
+
+private fun String.geminiThinkingLevels(): Set<String> {
+    val value = lowercase().removePrefix("models/")
+    return when {
+        Regex("^gemini-3(?:\\.0)?-pro(?:-|$)").containsMatchIn(value) -> setOf("low", "high")
+        Regex("^gemini-3\\.1-pro(?:-|$)").containsMatchIn(value) -> setOf("low", "medium", "high")
+        value.startsWith("gemini-3") -> setOf("minimal", "low", "medium", "high")
+        else -> emptySet()
+    }
+}
+
+private fun PresetReasoningEffort.geminiThinkingLevel(
+    supported: Set<String>,
+    report: PresetMappingReport,
+): String {
+    val desired = when (this) {
+        PresetReasoningEffort.AUTO, PresetReasoningEffort.MEDIUM -> "medium"
+        PresetReasoningEffort.MIN -> "minimal"
+        PresetReasoningEffort.LOW -> "low"
+        PresetReasoningEffort.HIGH, PresetReasoningEffort.MAX -> "high"
+    }
+    if (desired in supported) return desired
+    val fallback = when {
+        desired == "minimal" && "low" in supported -> "low"
+        desired == "medium" && "high" in supported -> "high"
+        "low" in supported -> "low"
+        else -> supported.first()
+    }
+    report.omitted("reasoning_effort=$desired", "模型不支持该 level，已安全降级为 $fallback")
+    return fallback
+}
+
+private fun PresetReasoningEffort.geminiThinkingBudget(): Int = when (this) {
+    PresetReasoningEffort.AUTO -> 0
+    PresetReasoningEffort.MIN -> 512
+    PresetReasoningEffort.LOW -> 1_024
+    PresetReasoningEffort.MEDIUM -> 4_096
+    PresetReasoningEffort.HIGH -> 8_192
+    PresetReasoningEffort.MAX -> 16_384
+}
+
+private fun String.toOpenAiMessageName(): String? = takeIf { value ->
+    value.isNotBlank() && value.length <= 64 && value.all { it.isLetterOrDigit() && it.code < 128 || it == '_' || it == '-' }
 }
 
 private fun List<AnthropicMessage>.mergeAnthropicRoles(): List<AnthropicMessage> = fold(mutableListOf()) { result, item ->

@@ -41,8 +41,13 @@ data class GeminiGenerateContentRequest(
     val contents: List<GeminiContent>,
     val systemInstruction: String? = null,
     val maxOutputTokens: Int? = null,
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val topK: Int? = null,
+    val seed: Int? = null,
+    val frequencyPenalty: Double? = null,
+    val presencePenalty: Double? = null,
     val thinking: GeminiThinkingConfig? = null,
-    val store: Boolean? = null,
 )
 
 data class GeminiGenerateContentUsage(
@@ -173,6 +178,21 @@ private fun validateRequest(request: GeminiGenerateContentRequest) {
     if (request.maxOutputTokens != null && request.maxOutputTokens <= 0) {
         throw GatewayException.Configuration("maxOutputTokens must be positive")
     }
+    if (request.temperature != null && request.temperature < 0.0) {
+        throw GatewayException.Configuration("temperature must not be negative")
+    }
+    if (request.topP != null && request.topP !in 0.0..1.0) {
+        throw GatewayException.Configuration("topP must be between 0 and 1")
+    }
+    if (request.topK != null && request.topK < 0) {
+        throw GatewayException.Configuration("topK must not be negative")
+    }
+    if (request.frequencyPenalty != null && request.frequencyPenalty !in -2.0..2.0) {
+        throw GatewayException.Configuration("frequencyPenalty must be between -2 and 2")
+    }
+    if (request.presencePenalty != null && request.presencePenalty !in -2.0..2.0) {
+        throw GatewayException.Configuration("presencePenalty must be between -2 and 2")
+    }
 }
 
 private fun GeminiGenerateContentRequest.toJson(): JsonObject = buildJsonObject {
@@ -194,9 +214,18 @@ private fun GeminiGenerateContentRequest.toJson(): JsonObject = buildJsonObject 
             put("parts", buildJsonArray { add(buildJsonObject { put("text", it) }) })
         })
     }
-    if (maxOutputTokens != null || thinking != null) {
+    if (
+        maxOutputTokens != null || temperature != null || topP != null || topK != null || seed != null ||
+        frequencyPenalty != null || presencePenalty != null || thinking != null
+    ) {
         put("generationConfig", buildJsonObject {
             maxOutputTokens?.let { put("maxOutputTokens", it) }
+            temperature?.let { put("temperature", it) }
+            topP?.let { put("topP", it) }
+            topK?.let { put("topK", it) }
+            seed?.let { put("seed", it) }
+            frequencyPenalty?.let { put("frequencyPenalty", it) }
+            presencePenalty?.let { put("presencePenalty", it) }
             thinking?.let { config ->
                 put("thinkingConfig", buildJsonObject {
                     config.includeThoughts?.let { put("includeThoughts", it) }
@@ -206,7 +235,6 @@ private fun GeminiGenerateContentRequest.toJson(): JsonObject = buildJsonObject 
             }
         })
     }
-    store?.let { put("store", it) }
 }
 
 private fun parse(data: String): List<GeminiGenerateContentEvent> {

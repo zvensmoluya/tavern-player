@@ -1,7 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -13,7 +13,7 @@ class RegexAndroidSmokeTest {
     fun macroAndCharacterRegexCompileOnAndroidRuntime() {
         val character = CharacterAsset(id = "card", name = "少女").snapshot()
         val context = MacroContext(character, Persona("persona", "旅人"), conversationId = "android-smoke")
-        val rule = CharacterRegexDefinition(
+        val rule = RegexDefinition(
             id = "unicode",
             name = "Unicode",
             findRegex = "/(少女)/iu",

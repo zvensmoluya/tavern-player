@@ -43,7 +43,7 @@ class WorldBookEngine(
         books: List<WorldBookDefinition>,
         characterText: String,
         projectedHistory: List<ConversationMessage>,
-        regexRules: List<io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition>,
+        regexRules: List<io.github.zvensmoluya.tavernplayer.content.RegexDefinition>,
         macroContext: MacroContext,
         transaction: MacroTransaction,
         previousState: Map<String, WorldBookEntryRuntimeState>,

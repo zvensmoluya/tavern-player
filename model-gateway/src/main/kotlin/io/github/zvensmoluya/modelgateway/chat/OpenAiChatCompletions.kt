@@ -26,6 +26,7 @@ enum class ChatRole(val wire: String) {
 data class ChatMessage(
     val role: ChatRole,
     val content: String,
+    val name: String? = null,
 )
 
 data class ChatCompletionsRequest(
@@ -33,6 +34,12 @@ data class ChatCompletionsRequest(
     val messages: List<ChatMessage>,
     val maxCompletionTokens: Int? = null,
     val reasoningEffort: String? = null,
+    val verbosity: String? = null,
+    val temperature: Double? = null,
+    val topP: Double? = null,
+    val frequencyPenalty: Double? = null,
+    val presencePenalty: Double? = null,
+    val seed: Int? = null,
     val store: Boolean? = null,
 )
 
@@ -121,22 +128,42 @@ private fun validateRequest(request: ChatCompletionsRequest) {
     if (request.maxCompletionTokens != null && request.maxCompletionTokens <= 0) {
         throw GatewayException.Configuration("maxCompletionTokens must be positive")
     }
+    if (request.temperature != null && request.temperature !in 0.0..2.0) {
+        throw GatewayException.Configuration("temperature must be between 0 and 2")
+    }
+    if (request.topP != null && request.topP !in 0.0..1.0) {
+        throw GatewayException.Configuration("topP must be between 0 and 1")
+    }
+    if (request.frequencyPenalty != null && request.frequencyPenalty !in -2.0..2.0) {
+        throw GatewayException.Configuration("frequencyPenalty must be between -2 and 2")
+    }
+    if (request.presencePenalty != null && request.presencePenalty !in -2.0..2.0) {
+        throw GatewayException.Configuration("presencePenalty must be between -2 and 2")
+    }
 }
 
 private fun ChatCompletionsRequest.toJson(): JsonObject = buildJsonObject {
     put("model", model)
     put("stream", true)
+    put("n", 1)
     put("stream_options", buildJsonObject { put("include_usage", true) })
     put("messages", buildJsonArray {
         messages.forEach { message ->
             add(buildJsonObject {
                 put("role", message.role.wire)
                 put("content", message.content)
+                message.name?.let { put("name", it) }
             })
         }
     })
     maxCompletionTokens?.let { put("max_completion_tokens", it) }
     reasoningEffort?.let { put("reasoning_effort", it) }
+    verbosity?.let { put("verbosity", it) }
+    temperature?.let { put("temperature", it) }
+    topP?.let { put("top_p", it) }
+    frequencyPenalty?.let { put("frequency_penalty", it) }
+    presencePenalty?.let { put("presence_penalty", it) }
+    seed?.let { put("seed", it) }
     store?.let { put("store", it) }
 }
 

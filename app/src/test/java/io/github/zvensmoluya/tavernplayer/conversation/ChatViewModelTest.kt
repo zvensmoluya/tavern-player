@@ -10,7 +10,7 @@ import io.github.zvensmoluya.tavernplayer.connections.CredentialStore
 import io.github.zvensmoluya.tavernplayer.connections.GatewayAppState
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import java.io.IOException
 import java.nio.file.Files
@@ -127,17 +127,17 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `reasoning uses separate canonical storage and safe display projections`() = runTest {
+    fun `reasoning preserves raw storage and uses a safe display projection`() = runTest {
         val character = DemoConversationContent.character.copy(
             regexScripts = listOf(
-                CharacterRegexDefinition(
+                RegexDefinition(
                     id = "reasoning-storage",
                     name = "Reasoning storage",
                     findRegex = "secret",
                     replaceString = "stored",
                     placements = setOf(RegexPlacement.REASONING),
                 ),
-                CharacterRegexDefinition(
+                RegexDefinition(
                     id = "reasoning-display",
                     name = "Reasoning display",
                     findRegex = "stored",
@@ -161,7 +161,7 @@ class ChatViewModelTest {
         viewModel.send()
 
         val assistant = viewModel.uiState.value.messages.last()
-        assertEquals("stored", assistant.message.reasoning.single().text)
+        assertEquals("secret", assistant.message.reasoning.single().text)
         assertEquals("opaque", assistant.message.reasoning.single().signature)
         assertEquals(listOf("shown"), assistant.displayReasoning)
     }
@@ -170,7 +170,7 @@ class ChatViewModelTest {
     fun `reasoning-only empty response does not commit assistant output mutations`() = runTest {
         val character = DemoConversationContent.character.copy(
             regexScripts = listOf(
-                CharacterRegexDefinition(
+                RegexDefinition(
                     id = "reasoning-state",
                     name = "Reasoning state",
                     findRegex = "thought",

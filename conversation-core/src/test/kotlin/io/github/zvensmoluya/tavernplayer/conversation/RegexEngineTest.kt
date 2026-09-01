@@ -1,6 +1,6 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexSubstitutionMode
 import org.junit.Assert.assertEquals
@@ -8,7 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RegexEngineTest {
-    private val engine = CharacterRegexEngine()
+    private val engine = CharacterRegexEngine(executionStrategy = ImmediateRegexExecutionStrategy)
 
     @Test
     fun `preset then character order capture trim and macro replacement are preserved`() {
@@ -131,14 +131,20 @@ class RegexEngineTest {
 
     @Test
     fun `catastrophic rule times out and opens the conversation circuit`() {
+        val timeoutEngine = CharacterRegexEngine(
+            executionStrategy = object : RegexExecutionStrategy {
+                override fun <T> execute(timeoutMillis: Long, block: () -> T): RegexExecutionResult<T> =
+                    RegexExecutionResult.TimedOut
+            },
+        )
         val catastrophic = rule("slow", "^(a+)+$", "matched")
         val input = "a".repeat(20_000) + "!"
 
-        val first = engine.apply(
+        val first = timeoutEngine.apply(
             input, listOf(catastrophic), RegexPlacement.AI_OUTPUT, RegexProjection.STORAGE,
             context = context(), transaction = MacroTransaction(), scopeId = "slow-chat",
         )
-        val second = engine.apply(
+        val second = timeoutEngine.apply(
             "a", listOf(catastrophic), RegexPlacement.AI_OUTPUT, RegexProjection.STORAGE,
             context = context(), transaction = MacroTransaction(), scopeId = "slow-chat",
         )
@@ -155,7 +161,7 @@ class RegexEngineTest {
         trim: List<String> = emptyList(),
         promptOnly: Boolean = false,
         markdownOnly: Boolean = false,
-    ) = CharacterRegexDefinition(
+    ) = RegexDefinition(
         id = id,
         name = id,
         findRegex = find,

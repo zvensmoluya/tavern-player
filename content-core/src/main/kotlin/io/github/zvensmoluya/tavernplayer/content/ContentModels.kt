@@ -265,11 +265,6 @@ enum class CharacterImportStatus {
     REJECTED,
 }
 
-@Deprecated(
-    message = "Regex definitions are shared by Character and Preset assets; use RegexDefinition",
-    replaceWith = ReplaceWith("RegexDefinition"),
-)
-typealias CharacterRegexDefinition = RegexDefinition
 
 sealed interface CharacterImportResult {
     val status: CharacterImportStatus

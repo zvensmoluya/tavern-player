@@ -34,6 +34,10 @@ data class ResponsesReasoning(
     val summary: String? = null,
 )
 
+data class ResponsesTextConfig(
+    val verbosity: String? = null,
+)
+
 data class ResponsesRequest(
     val model: String,
     val input: List<ResponsesInputMessage>,
@@ -41,6 +45,9 @@ data class ResponsesRequest(
     val maxOutputTokens: Int? = null,
     val previousResponseId: String? = null,
     val reasoning: ResponsesReasoning? = null,
+    val text: ResponsesTextConfig? = null,
+    val temperature: Double? = null,
+    val topP: Double? = null,
     val store: Boolean? = null,
 )
 
@@ -137,6 +144,12 @@ private fun validateRequest(request: ResponsesRequest) {
     if (request.maxOutputTokens != null && request.maxOutputTokens <= 0) {
         throw GatewayException.Configuration("maxOutputTokens must be positive")
     }
+    if (request.temperature != null && request.temperature !in 0.0..2.0) {
+        throw GatewayException.Configuration("temperature must be between 0 and 2")
+    }
+    if (request.topP != null && request.topP !in 0.0..1.0) {
+        throw GatewayException.Configuration("topP must be between 0 and 1")
+    }
 }
 
 private fun ResponsesRequest.toJson(): JsonObject = buildJsonObject {
@@ -159,6 +172,13 @@ private fun ResponsesRequest.toJson(): JsonObject = buildJsonObject {
             value.summary?.let { put("summary", it) }
         })
     }
+    text?.let { value ->
+        put("text", buildJsonObject {
+            value.verbosity?.let { put("verbosity", it) }
+        })
+    }
+    temperature?.let { put("temperature", it) }
+    topP?.let { put("top_p", it) }
     store?.let { put("store", it) }
 }
 

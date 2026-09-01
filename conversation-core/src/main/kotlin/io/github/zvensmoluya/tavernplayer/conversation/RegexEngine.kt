@@ -1,10 +1,9 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexSubstitutionMode
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Future
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
@@ -29,12 +28,14 @@ data class RegexApplicationResult(
 
 class CharacterRegexEngine(
     private val macroEngine: MacroEngine = MacroEngine(),
+    private val executionStrategy: RegexExecutionStrategy = FutureRegexExecutionStrategy,
+    private val ruleTimeoutMillis: Long = DEFAULT_RULE_TIMEOUT_MILLIS,
 ) {
     private val disabledByScope = ConcurrentHashMap<String, MutableSet<String>>()
 
     fun apply(
         text: String,
-        rules: List<CharacterRegexDefinition>,
+        rules: List<RegexDefinition>,
         placement: RegexPlacement,
         projection: RegexProjection,
         depth: Int? = null,
@@ -68,16 +69,11 @@ class CharacterRegexEngine(
                 return@forEach
             }
             val ruleTransaction = transaction.fork()
-            val future: Future<RuleResult> = try {
-                EXECUTOR.submit<RuleResult> {
-                    runRule(current, rule, context, ruleTransaction)
-                }
-            } catch (_: Exception) {
-                diagnostics += warning("REGEX_EXECUTOR_SATURATED", "Regex 执行器繁忙，已跳过“${rule.name}”", rule.id)
-                return@forEach
-            }
-            try {
-                val result = future.get(RULE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            when (val execution = executionStrategy.execute(ruleTimeoutMillis) {
+                runRule(current, rule, context, ruleTransaction)
+            }) {
+                is RegexExecutionResult.Success -> {
+                    val result = execution.value
                 diagnostics += result.diagnostics
                 if (result.valid) {
                     current = result.text
@@ -86,13 +82,22 @@ class CharacterRegexEngine(
                 } else {
                     disabled += runtimeKey
                 }
-            } catch (_: TimeoutException) {
-                future.cancel(true)
-                disabled += runtimeKey
-                diagnostics += warning("REGEX_TIMEOUT", "Regex“${rule.name}”超过 ${RULE_TIMEOUT_MILLIS}ms，已在当前会话熔断", rule.id)
-            } catch (error: Exception) {
-                disabled += runtimeKey
-                diagnostics += warning("REGEX_EXECUTION_FAILED", "Regex“${rule.name}”执行失败：${error.cause?.message ?: error.message}", rule.id)
+                }
+                RegexExecutionResult.TimedOut -> {
+                    disabled += runtimeKey
+                    diagnostics += warning("REGEX_TIMEOUT", "Regex“${rule.name}”超过 ${ruleTimeoutMillis}ms，已在当前会话熔断", rule.id)
+                }
+                RegexExecutionResult.Rejected -> {
+                    diagnostics += warning("REGEX_EXECUTOR_SATURATED", "Regex 执行器繁忙，已跳过“${rule.name}”", rule.id)
+                }
+                is RegexExecutionResult.Failed -> {
+                    disabled += runtimeKey
+                    diagnostics += warning(
+                        "REGEX_EXECUTION_FAILED",
+                        "Regex“${rule.name}”执行失败：${execution.error.cause?.message ?: execution.error.message}",
+                        rule.id,
+                    )
+                }
             }
         }
         return RegexApplicationResult(current, diagnostics.distinctBy { it.code to it.sourceId }, applied)
@@ -100,7 +105,7 @@ class CharacterRegexEngine(
 
     private fun runRule(
         input: String,
-        rule: CharacterRegexDefinition,
+        rule: RegexDefinition,
         context: MacroContext,
         transaction: MacroTransaction,
     ): RuleResult {
@@ -139,7 +144,7 @@ class CharacterRegexEngine(
     }
 
     private fun buildReplacement(
-        rule: CharacterRegexDefinition,
+        rule: RegexDefinition,
         matcher: Matcher,
         context: MacroContext,
         transaction: MacroTransaction,
@@ -198,7 +203,7 @@ class CharacterRegexEngine(
         return CompiledRegex(Pattern.compile(pattern, flags), global = 'g' in flagsText)
     }
 
-    private fun CharacterRegexDefinition.applies(
+    private fun RegexDefinition.applies(
         placement: RegexPlacement,
         projection: RegexProjection,
         depth: Int?,
@@ -219,7 +224,7 @@ class CharacterRegexEngine(
         }
     }
 
-    private fun CharacterRegexDefinition.runtimeKey(): String = buildString {
+    private fun RegexDefinition.runtimeKey(): String = buildString {
         append(id)
         append('\u0000')
         append(findRegex)
@@ -247,23 +252,63 @@ class CharacterRegexEngine(
     companion object {
         private const val MAX_INPUT_CHARS = 1024 * 1024
         private const val MAX_PATTERN_CHARS = 64 * 1024
-        private const val RULE_TIMEOUT_MILLIS = 250L
-        private val THREAD_COUNTER = AtomicInteger()
-        private val EXECUTOR = ThreadPoolExecutor(
-            0,
-            4,
-            30,
-            TimeUnit.SECONDS,
-            SynchronousQueue(),
-            ThreadFactory { runnable ->
-                Thread(runnable, "tavern-regex-${THREAD_COUNTER.incrementAndGet()}").apply { isDaemon = true }
-            },
-            ThreadPoolExecutor.AbortPolicy(),
-        )
+        const val DEFAULT_RULE_TIMEOUT_MILLIS: Long = 250L
         // Android's ICU regex parser requires literal closing braces to be escaped.
         private val MACRO_PATTERN = Regex("\\{\\{([^{}]+)\\}\\}")
         private val MATCH_MACRO = Regex("\\{\\{match\\}\\}", RegexOption.IGNORE_CASE)
         private val CAPTURE_REFERENCE = Regex("\\$(\\d+)|\\$<([^>]+)>")
+    }
+}
+
+sealed interface RegexExecutionResult<out T> {
+    data class Success<T>(val value: T) : RegexExecutionResult<T>
+    data object TimedOut : RegexExecutionResult<Nothing>
+    data object Rejected : RegexExecutionResult<Nothing>
+    data class Failed(val error: Throwable) : RegexExecutionResult<Nothing>
+}
+
+interface RegexExecutionStrategy {
+    fun <T> execute(timeoutMillis: Long, block: () -> T): RegexExecutionResult<T>
+}
+
+/** Deterministic strategy for unit tests that do not exercise timeout behavior. */
+object ImmediateRegexExecutionStrategy : RegexExecutionStrategy {
+    override fun <T> execute(timeoutMillis: Long, block: () -> T): RegexExecutionResult<T> = try {
+        RegexExecutionResult.Success(block())
+    } catch (error: Throwable) {
+        RegexExecutionResult.Failed(error)
+    }
+}
+
+/** Production strategy: bounded shared workers and a 250 ms per-rule fuse by default. */
+object FutureRegexExecutionStrategy : RegexExecutionStrategy {
+    private val threadCounter = AtomicInteger()
+    private val executor = ThreadPoolExecutor(
+        0,
+        4,
+        30,
+        TimeUnit.SECONDS,
+        SynchronousQueue(),
+        ThreadFactory { runnable ->
+            Thread(runnable, "tavern-regex-${threadCounter.incrementAndGet()}").apply { isDaemon = true }
+        },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+
+    override fun <T> execute(timeoutMillis: Long, block: () -> T): RegexExecutionResult<T> {
+        val future = try {
+            executor.submit<T>(block)
+        } catch (_: Exception) {
+            return RegexExecutionResult.Rejected
+        }
+        return try {
+            RegexExecutionResult.Success(future.get(timeoutMillis, TimeUnit.MILLISECONDS))
+        } catch (_: TimeoutException) {
+            future.cancel(true)
+            RegexExecutionResult.TimedOut
+        } catch (error: Exception) {
+            RegexExecutionResult.Failed(error)
+        }
     }
 }
 

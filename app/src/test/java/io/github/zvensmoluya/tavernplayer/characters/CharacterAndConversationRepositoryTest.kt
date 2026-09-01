@@ -2,7 +2,10 @@ package io.github.zvensmoluya.tavernplayer.characters
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
@@ -16,7 +19,6 @@ import io.github.zvensmoluya.tavernplayer.conversation.MessageRole
 import io.github.zvensmoluya.tavernplayer.conversation.MessageVariant
 import io.github.zvensmoluya.tavernplayer.conversation.PersistedMessageStatus
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
-import io.github.zvensmoluya.tavernplayer.conversation.Preset
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
 import io.github.zvensmoluya.tavernplayer.conversation.PromptDefinition
 import io.github.zvensmoluya.tavernplayer.conversation.PromptOrderEntry
@@ -82,7 +84,7 @@ class CharacterAndConversationRepositoryTest {
                 WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", content = "lore"))),
             ),
             regexScripts = listOf(
-                CharacterRegexDefinition(
+                RegexDefinition(
                     id = "regex",
                     name = "Regex",
                     findRegex = "x",
@@ -134,19 +136,21 @@ class CharacterAndConversationRepositoryTest {
         {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"$name","description":"$description"}}
     """.trimIndent().encodeToByteArray()
 
-    private fun preset() = Preset(
+    private fun preset() = PresetAsset(
         id = "preset",
+        sourceSha256 = "preset",
+        contentSha256 = "preset-content",
         name = "Preset",
         prompts = listOf(
-            PromptDefinition("main", MessageRole.SYSTEM, "System"),
+            PromptDefinition("main", role = ContentRole.SYSTEM, content = "System"),
             PromptDefinition(
-                "chatHistory",
-                MessageRole.SYSTEM,
+                identifier = "chatHistory",
+                role = ContentRole.SYSTEM,
                 marker = true,
                 injectionPosition = InjectionPosition.RELATIVE,
             ),
         ),
         promptOrder = listOf(PromptOrderEntry("main"), PromptOrderEntry("chatHistory")),
-        maxOutputTokens = 100,
+        generationSettings = PresetGenerationSettings(maxOutputTokens = 100),
     )
 }

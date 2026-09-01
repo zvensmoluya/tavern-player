@@ -43,7 +43,6 @@ class ProbeRequestMapperTest {
         assertEquals(512, generateContent.maxOutputTokens)
         assertEquals("system", generateContent.systemInstruction)
         assertNull(generateContent.thinking)
-        assertNull(generateContent.store)
         assertFalse(generateContent.contents.isEmpty())
     }
 

@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -101,13 +103,17 @@ class TokenAccountingTest {
         character = CharacterAsset(id = "card", name = "Ash").snapshot(),
         persona = Persona("persona", "Traveler"),
         history = emptyList(),
-        preset = Preset(
+        preset = PresetAsset(
             id = "preset",
+            sourceSha256 = "preset",
+            contentSha256 = "preset-content",
             name = "Preset",
             prompts = emptyList(),
             promptOrder = emptyList(),
-            maxOutputTokens = output,
-            declaredContextTokens = context,
+            generationSettings = PresetGenerationSettings(
+                maxOutputTokens = output,
+                maxContextTokens = context,
+            ),
         ),
         modelId = "custom",
         modelContextTokens = context,

@@ -1,6 +1,9 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
+import io.github.zvensmoluya.tavernplayer.content.PresetNamesBehavior
 import io.github.zvensmoluya.tavernplayer.content.WorldBookPosition
 import java.time.Instant
 import java.time.ZoneId
@@ -134,22 +137,49 @@ class PromptCompiler(
         depth: Int = 0,
         evaluationInstant: Instant = Instant.now(),
         evaluationZoneId: ZoneId = ZoneId.systemDefault(),
-    ): TextExpansionResult = projectConversationText(
-        text = text,
-        placement = RegexPlacement.REASONING,
-        projection = projection,
-        character = character,
-        persona = persona,
-        preset = preset,
-        runtimeState = runtimeState,
-        history = history,
-        conversationId = conversationId,
-        generationId = generationId,
-        modelId = modelId,
-        depth = depth,
-        evaluationInstant = evaluationInstant,
-        evaluationZoneId = evaluationZoneId,
-    )
+    ): TextExpansionResult {
+        if (projection == RegexProjection.DISPLAY && !preset.controlSettings.showThoughts) {
+            return TextExpansionResult.Success("", runtimeState)
+        }
+        val source = if (projection == RegexProjection.DISPLAY) {
+            projectConversationText(
+                text = text,
+                placement = RegexPlacement.REASONING,
+                projection = RegexProjection.STORAGE,
+                character = character,
+                persona = persona,
+                preset = preset,
+                runtimeState = runtimeState,
+                history = history,
+                conversationId = conversationId,
+                generationId = generationId,
+                modelId = modelId,
+                depth = depth,
+                evaluationInstant = evaluationInstant,
+                evaluationZoneId = evaluationZoneId,
+            )
+        } else null
+        val sourceProjection = source as? TextExpansionResult.Success
+        val displayed = projectConversationText(
+            text = sourceProjection?.text ?: text,
+            placement = RegexPlacement.REASONING,
+            projection = projection,
+            character = character,
+            persona = persona,
+            preset = preset,
+            runtimeState = sourceProjection?.runtimeState ?: runtimeState,
+            history = history,
+            conversationId = conversationId,
+            generationId = generationId,
+            modelId = modelId,
+            depth = depth,
+            evaluationInstant = evaluationInstant,
+            evaluationZoneId = evaluationZoneId,
+        )
+        return if (sourceProjection != null && displayed is TextExpansionResult.Success) {
+            displayed.copy(diagnostics = sourceProjection.diagnostics + displayed.diagnostics)
+        } else displayed
+    }
 
     fun projectAssistantOutput(
         rawText: String,
@@ -179,20 +209,9 @@ class PromptCompiler(
         )
         val storageTransaction = MacroTransaction(runtimeState.localVariables, generationId)
         val storageDiagnostics = mutableListOf<CompilationDiagnostic>()
-        val storageReasoning = rawReasoning.map { text ->
-            applyProjection(
-                text,
-                RegexPlacement.REASONING,
-                RegexProjection.STORAGE,
-                character,
-                preset,
-                baseContext,
-                storageTransaction,
-                conversationId,
-                depth,
-                storageDiagnostics,
-            )
-        }
+        // Provider reasoning and signatures are diagnostic source data. Persist the text verbatim;
+        // display/prompt projections are derived later from the current Preset without destroying it.
+        val storageReasoning = rawReasoning.toList()
         val storageText = applyProjection(
             rawText,
             RegexPlacement.AI_OUTPUT,
@@ -208,9 +227,21 @@ class PromptCompiler(
         val committedRuntime = runtimeState.copy(localVariables = storageTransaction.snapshot())
         val displayTransaction = MacroTransaction(committedRuntime.localVariables, generationId)
         val displayDiagnostics = mutableListOf<CompilationDiagnostic>()
-        val displayReasoning = storageReasoning.map { text ->
-            applyProjection(
+        val displayReasoning = if (preset.controlSettings.showThoughts) rawReasoning.map { text ->
+            val displaySource = applyProjection(
                 text,
+                RegexPlacement.REASONING,
+                RegexProjection.STORAGE,
+                character,
+                preset,
+                baseContext,
+                displayTransaction,
+                conversationId,
+                depth,
+                displayDiagnostics,
+            )
+            applyProjection(
+                displaySource,
                 RegexPlacement.REASONING,
                 RegexProjection.DISPLAY,
                 character,
@@ -221,7 +252,7 @@ class PromptCompiler(
                 depth,
                 displayDiagnostics,
             )
-        }
+        } else emptyList()
         val displayText = applyProjection(
             storageText,
             RegexPlacement.AI_OUTPUT,
@@ -281,7 +312,13 @@ class PromptCompiler(
         val definitions = validatePreset(input.preset, diagnostics)
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
-        val ordered = orderPrompts(input.preset, definitions, diagnostics, trace)
+        val ordered = orderPrompts(
+            input.preset,
+            definitions,
+            input.runtimeState.lastGenerationType,
+            diagnostics,
+            trace,
+        )
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
         val contextLimit = contextBudgeter.contextLimit(input)
@@ -353,8 +390,8 @@ class PromptCompiler(
 
         val resolved = mutableListOf<ResolvedPrompt>()
         val enabledIds = input.preset.promptOrder.asSequence()
-            .filter(PromptOrderEntry::enabled)
-            .map(PromptOrderEntry::identifier)
+            .filter { it.enabled }
+            .map { it.identifier }
             .toSet()
         ordered.forEach { prompt ->
             when (prompt.identifier) {
@@ -384,7 +421,7 @@ class PromptCompiler(
             resolved += ResolvedPrompt(
                 definition = PromptDefinition(
                     identifier = CHARACTER_DEPTH_SOURCE,
-                    role = depthPrompt.role.toMessageRole(),
+                    role = depthPrompt.role,
                     content = depthPrompt.content,
                     injectionPosition = InjectionPosition.ABSOLUTE,
                     injectionDepth = depthPrompt.depth,
@@ -397,7 +434,7 @@ class PromptCompiler(
             resolved += ResolvedPrompt(
                 definition = PromptDefinition(
                     identifier = "world-depth-${injection.entryIds.joinToString("-")}",
-                    role = injection.role,
+                    role = injection.role.toContentRole(),
                     injectionPosition = InjectionPosition.ABSOLUTE,
                     injectionDepth = injection.depth,
                     injectionOrder = when (injection.position) {
@@ -416,7 +453,7 @@ class PromptCompiler(
         val absolute = resolved.filter { it.definition.injectionPosition == InjectionPosition.ABSOLUTE }
         val injectedHistory = injectAbsolute(projectedHistory, absolute, trace)
         val historyCollection = buildList {
-            expand(input.preset.newChatPrompt, NEW_CHAT_SOURCE, macroContext, transaction, diagnostics)
+            expand(input.preset.controlSettings.newChatPrompt, NEW_CHAT_SOURCE, macroContext, transaction, diagnostics)
                 .takeIf(String::isNotBlank)
                 ?.let { content -> add(PreparedMessage(MessageRole.SYSTEM, content, PromptOrigin("control", listOf(NEW_CHAT_SOURCE)))) }
             addAll(injectedHistory)
@@ -433,10 +470,20 @@ class PromptCompiler(
                 }
             }
         }
-        val prefill = expand(input.preset.assistantPrefill, ASSISTANT_PREFILL_SOURCE, macroContext, transaction, diagnostics)
+        val preparedForTransport = applyNamesBehavior(compiled, input.preset.controlSettings.namesBehavior, trace)
+            .let { messages ->
+                if (input.preset.controlSettings.squashSystemMessages) squashSystemMessages(messages, trace) else messages
+            }
+        val prefill = expand(
+            input.preset.controlSettings.assistantPrefill,
+            ASSISTANT_PREFILL_SOURCE,
+            macroContext,
+            transaction,
+            diagnostics,
+        )
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
-        val budget = contextBudgeter.budget(compiled, input)
+        val budget = contextBudgeter.budget(preparedForTransport, input)
         diagnostics += budget.diagnostics
         trace += budget.trace
         val firstIncludedMessageId = input.history.indexOfFirst { historyMessage ->
@@ -494,6 +541,8 @@ class PromptCompiler(
                 assistantPrefill = prefill,
                 presetId = input.preset.id,
                 presetName = input.preset.name,
+                presetContentSha256 = input.preset.contentSha256,
+                generationSettings = input.preset.generationSettings.copy(),
                 diagnostics = diagnostics.distinctBy { Triple(it.code, it.sourceId, it.message) },
                 trace = trace,
                 runtimeState = nextRuntime,
@@ -599,7 +648,11 @@ class PromptCompiler(
                 diagnostics += error("INVALID_INJECTION_DEPTH", "Absolute prompt depth 不能为负数", prompt.identifier)
             }
             if (prompt.marker && prompt.identifier !in SUPPORTED_MARKERS) {
-                diagnostics += error("UNSUPPORTED_MARKER", "不支持的 Prompt marker：${prompt.identifier}", prompt.identifier)
+                diagnostics += warning(
+                    "UNSUPPORTED_MARKER_SKIPPED",
+                    "不支持的 Prompt marker“${prompt.identifier}”已保留但跳过",
+                    prompt.identifier,
+                )
             }
         }
         return definitions
@@ -608,16 +661,29 @@ class PromptCompiler(
     private fun orderPrompts(
         preset: Preset,
         definitions: Map<String, PromptDefinition>,
+        lastGenerationType: String,
         diagnostics: MutableList<CompilationDiagnostic>,
         trace: MutableList<CompilationTraceEntry>,
     ): List<PromptDefinition> = buildList {
         preset.promptOrder.forEach { entry ->
             val prompt = definitions[entry.identifier]
             if (prompt == null) {
-                diagnostics += error("MISSING_PROMPT_DEFINITION", "Prompt order 引用缺失定义：${entry.identifier}", entry.identifier)
+                diagnostics += warning(
+                    "MISSING_PROMPT_DEFINITION_SKIPPED",
+                    "Prompt order 引用缺失定义“${entry.identifier}”；已按 ST 行为跳过",
+                    entry.identifier,
+                )
                 return@forEach
             }
-            val triggered = prompt.injectionTriggers.isEmpty() || NORMAL_TRIGGER in prompt.injectionTriggers
+            if (prompt.marker && prompt.identifier !in SUPPORTED_MARKERS) {
+                trace += trace("prompt-order", prompt.identifier, "unsupported marker skipped")
+                return@forEach
+            }
+            val trigger = when (lastGenerationType.lowercase()) {
+                PresetGenerationTrigger.REGENERATE.wireValue -> PresetGenerationTrigger.REGENERATE
+                else -> PresetGenerationTrigger.NORMAL
+            }
+            val triggered = trigger in prompt.triggers
             if (entry.enabled && triggered) {
                 add(prompt)
                 trace += trace("prompt-order", prompt.identifier, "included")
@@ -641,12 +707,26 @@ class PromptCompiler(
         trace: MutableList<CompilationTraceEntry>,
     ): ResolvedPrompt? {
         val dynamic = when (prompt.identifier) {
-            WORLD_INFO_BEFORE_MARKER -> world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER }.joinToString("\n") { it.content }
-            WORLD_INFO_AFTER_MARKER -> world.filter { it.position == WorldBookPosition.AFTER_CHARACTER }.joinToString("\n") { it.content }
+            WORLD_INFO_BEFORE_MARKER -> formatWorldInfo(
+                input.preset.controlSettings.worldInfoFormat,
+                world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER }.joinToString("\n") { it.content },
+            )
+            WORLD_INFO_AFTER_MARKER -> formatWorldInfo(
+                input.preset.controlSettings.worldInfoFormat,
+                world.filter { it.position == WorldBookPosition.AFTER_CHARACTER }.joinToString("\n") { it.content },
+            )
             PERSONA_DESCRIPTION_MARKER -> ""
             CHAR_DESCRIPTION_MARKER -> input.character.description
-            CHAR_PERSONALITY_MARKER -> input.character.personality
-            SCENARIO_MARKER -> input.character.scenario
+            CHAR_PERSONALITY_MARKER -> formatTemplate(
+                input.preset.controlSettings.personalityFormat,
+                "{{personality}}",
+                input.character.personality,
+            )
+            SCENARIO_MARKER -> formatTemplate(
+                input.preset.controlSettings.scenarioFormat,
+                "{{scenario}}",
+                input.character.scenario,
+            )
             else -> prompt.content
         }
         var candidate = dynamic
@@ -679,7 +759,7 @@ class PromptCompiler(
 
     private fun projectHistory(
         input: NormalGenerationInput,
-        rules: List<io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition>,
+        rules: List<RegexDefinition>,
         context: MacroContext,
         transaction: MacroTransaction,
         diagnostics: MutableList<CompilationDiagnostic>,
@@ -744,13 +824,30 @@ class PromptCompiler(
         }
         val raw = expand(input.character.rawMessageExamples, "character-examples", context, transaction, diagnostics)
         parseDialogueExamples(raw, input.character.promptName, input.persona.name).forEachIndexed { exampleIndex, example ->
-            expand(input.preset.newExampleChatPrompt, "$NEW_EXAMPLE_SOURCE-$exampleIndex", context, transaction, diagnostics)
+            expand(
+                input.preset.controlSettings.newExampleChatPrompt,
+                "$NEW_EXAMPLE_SOURCE-$exampleIndex",
+                context,
+                transaction,
+                diagnostics,
+            )
                 .takeIf(String::isNotBlank)
                 ?.let { add(PreparedMessage(MessageRole.SYSTEM, it, PromptOrigin("dialogue-example", listOf("$NEW_EXAMPLE_SOURCE-$exampleIndex")))) }
             example.messages.forEachIndexed { messageIndex, message ->
                 val sourceId = "example-$exampleIndex-$messageIndex"
                 val expanded = expand(message.content, sourceId, context, transaction, diagnostics)
-                add(PreparedMessage(message.role, expanded, PromptOrigin("dialogue-example", listOf(sourceId))))
+                add(
+                    PreparedMessage(
+                        role = message.role,
+                        content = expanded,
+                        origin = PromptOrigin("dialogue-example", listOf(sourceId)),
+                        authorName = if (message.role == MessageRole.ASSISTANT) {
+                            input.character.promptName
+                        } else {
+                            input.persona.name
+                        },
+                    ),
+                )
                 trace += trace("dialogue-example", sourceId, "projected", message.role, expanded)
             }
         }
@@ -758,6 +855,59 @@ class PromptCompiler(
             add(PreparedMessage(injection.role, injection.content, PromptOrigin("world-book", injection.entryIds)))
         }
     }
+
+    private fun applyNamesBehavior(
+        messages: List<PreparedMessage>,
+        behavior: PresetNamesBehavior,
+        trace: MutableList<CompilationTraceEntry>,
+    ): List<PreparedMessage> = messages.map { message ->
+        val author = message.authorName?.trim().orEmpty()
+        when {
+            message.role == MessageRole.SYSTEM || author.isEmpty() -> message.copy(authorName = null)
+            behavior == PresetNamesBehavior.CONTENT -> {
+                trace += CompilationTraceEntry(
+                    stage = "names-behavior",
+                    sourceIds = message.origin.sourceIds,
+                    decision = "author name prefixed into content",
+                    role = message.role,
+                )
+                message.copy(content = "$author: ${message.content}", authorName = null)
+            }
+            behavior == PresetNamesBehavior.COMPLETION -> message
+            else -> message.copy(authorName = null)
+        }
+    }
+
+    private fun squashSystemMessages(
+        messages: List<PreparedMessage>,
+        trace: MutableList<CompilationTraceEntry>,
+    ): List<PreparedMessage> = messages.fold(mutableListOf()) { result, message ->
+        val previous = result.lastOrNull()
+        if (previous?.role == MessageRole.SYSTEM && message.role == MessageRole.SYSTEM) {
+            result[result.lastIndex] = previous.copy(
+                content = listOf(previous.content, message.content).filter(String::isNotBlank).joinToString("\n\n"),
+                origin = PromptOrigin(
+                    stage = "system-squash",
+                    sourceIds = previous.origin.sourceIds + message.origin.sourceIds,
+                ),
+            )
+            trace += CompilationTraceEntry(
+                stage = "system-squash",
+                sourceIds = message.origin.sourceIds,
+                decision = "merged with preceding system message",
+                role = MessageRole.SYSTEM,
+            )
+        } else {
+            result += message
+        }
+        result
+    }
+
+    private fun formatWorldInfo(template: String, content: String): String =
+        content.takeIf(String::isNotBlank)?.let { template.replace("{0}", it) }.orEmpty()
+
+    private fun formatTemplate(template: String, placeholder: String, content: String): String =
+        content.takeIf(String::isNotBlank)?.let { template.replace(placeholder, it, ignoreCase = true) }.orEmpty()
 
     private fun injectAbsolute(
         chronologicalHistory: List<PreparedMessage>,
@@ -773,7 +923,7 @@ class PromptCompiler(
             val messages = mutableListOf<PreparedMessage>()
             atDepth.groupBy { it.definition.injectionOrder }.toSortedMap(compareByDescending { it }).forEach { (order, values) ->
                 MessageRole.entries.forEach { role ->
-                    val matches = values.filter { it.definition.role == role }
+                    val matches = values.filter { it.definition.role.toMessageRole() == role }
                     val content = matches.mapNotNull { it.content?.trim() }.filter(String::isNotEmpty).joinToString("\n")
                     if (content.isNotEmpty()) {
                         val worldIds = matches.flatMap { it.worldBookEntryIds }
@@ -814,7 +964,7 @@ class PromptCompiler(
     }
 
     private fun ResolvedPrompt.toPreparedMessage(content: String) = PreparedMessage(
-        role = definition.role,
+        role = definition.role.toMessageRole(),
         content = content,
         origin = PromptOrigin(
             if (worldBookEntryIds.isEmpty()) "prompt" else "world-book",
@@ -824,6 +974,13 @@ class PromptCompiler(
 
     private fun error(code: String, message: String, sourceId: String? = null) = CompilationDiagnostic(
         DiagnosticSeverity.ERROR,
+        code,
+        message,
+        sourceId,
+    )
+
+    private fun warning(code: String, message: String, sourceId: String? = null) = CompilationDiagnostic(
+        DiagnosticSeverity.WARNING,
         code,
         message,
         sourceId,
@@ -845,7 +1002,6 @@ class PromptCompiler(
     )
 
     companion object {
-        private const val NORMAL_TRIGGER = "normal"
         private const val MAIN_MARKER = "main"
         private const val WORLD_INFO_BEFORE_MARKER = "worldInfoBefore"
         private const val WORLD_INFO_AFTER_MARKER = "worldInfoAfter"
@@ -901,9 +1057,12 @@ private fun NormalGenerationInput.usesFirstIncludedMessageIdMacro(): Boolean = s
         yield(message.content)
         for (reasoning in message.reasoning) yield(reasoning.text)
     }
-    yield(preset.newChatPrompt)
-    yield(preset.newExampleChatPrompt)
-    yield(preset.assistantPrefill)
+    yield(preset.controlSettings.newChatPrompt)
+    yield(preset.controlSettings.newExampleChatPrompt)
+    yield(preset.controlSettings.assistantPrefill)
+    yield(preset.controlSettings.worldInfoFormat)
+    yield(preset.controlSettings.scenarioFormat)
+    yield(preset.controlSettings.personalityFormat)
 }.any { it.contains("{{firstIncludedMessageId", ignoreCase = true) }
 
 private fun List<CompilationDiagnostic>.hasErrors(): Boolean = any { it.severity == DiagnosticSeverity.ERROR }

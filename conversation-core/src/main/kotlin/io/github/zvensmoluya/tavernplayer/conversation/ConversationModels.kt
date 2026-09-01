@@ -1,8 +1,12 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.CharacterDepthPrompt
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
+import io.github.zvensmoluya.tavernplayer.content.PresetInjectionPosition
+import io.github.zvensmoluya.tavernplayer.content.PresetPromptDefinition
+import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.serialization.Serializable
@@ -13,8 +17,10 @@ typealias CharacterSnapshot = io.github.zvensmoluya.tavernplayer.content.Charact
 @Serializable
 enum class MessageRole { SYSTEM, USER, ASSISTANT }
 
-@Serializable
-enum class InjectionPosition { RELATIVE, ABSOLUTE }
+typealias InjectionPosition = PresetInjectionPosition
+typealias PromptDefinition = PresetPromptDefinition
+typealias PromptOrderEntry = PresetPromptOrderEntry
+typealias Preset = PresetAsset
 
 @Serializable
 data class ExampleMessage(val role: MessageRole, val content: String)
@@ -76,37 +82,6 @@ data class ConversationMessage(
     val reasoning: List<ReasoningBlock> = emptyList(),
     val adapterId: String? = null,
     val createdAtEpochMillis: Long = 0,
-)
-
-@Serializable
-data class PromptDefinition(
-    val identifier: String,
-    val role: MessageRole,
-    val content: String = "",
-    val marker: Boolean = false,
-    val systemPrompt: Boolean = false,
-    val forbidOverrides: Boolean = false,
-    val injectionPosition: InjectionPosition = InjectionPosition.RELATIVE,
-    val injectionDepth: Int = 4,
-    val injectionOrder: Int = 100,
-    val injectionTriggers: Set<String> = emptySet(),
-)
-
-@Serializable
-data class PromptOrderEntry(val identifier: String, val enabled: Boolean = true)
-
-@Serializable
-data class Preset(
-    val id: String,
-    val name: String,
-    val prompts: List<PromptDefinition>,
-    val promptOrder: List<PromptOrderEntry>,
-    val newChatPrompt: String = "",
-    val newExampleChatPrompt: String = "",
-    val assistantPrefill: String = "",
-    val maxOutputTokens: Int,
-    val declaredContextTokens: Int? = null,
-    val regexScripts: List<CharacterRegexDefinition> = emptyList(),
 )
 
 @Serializable
@@ -205,6 +180,11 @@ data class GenerationPlan(
     val assistantPrefill: String,
     val presetId: String,
     val presetName: String,
+    val presetContentSha256: String = "",
+    val generationSettings: PresetGenerationSettings = PresetGenerationSettings(
+        maxContextTokens = declaredContextTokens,
+        maxOutputTokens = maxOutputTokens,
+    ),
     val diagnostics: List<CompilationDiagnostic>,
     val trace: List<CompilationTraceEntry>,
     val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
@@ -238,6 +218,8 @@ data class MessageVariant(
     val message: ConversationMessage,
     val status: PersistedMessageStatus = PersistedMessageStatus.COMPLETE,
     val presetId: String? = null,
+    val presetName: String? = null,
+    val presetContentSha256: String? = null,
     val adapterId: String? = null,
     val model: String? = null,
     val finishReason: String? = null,

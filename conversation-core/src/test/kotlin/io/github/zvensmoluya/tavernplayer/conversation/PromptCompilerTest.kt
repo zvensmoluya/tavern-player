@@ -1,6 +1,12 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.CharacterRegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetControlSettings
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
+import io.github.zvensmoluya.tavernplayer.content.PresetNamesBehavior
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
@@ -10,7 +16,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PromptCompilerTest {
-    private val compiler = PromptCompiler()
+    private val macroEngine = MacroEngine()
+    private val regexEngine = CharacterRegexEngine(macroEngine, ImmediateRegexExecutionStrategy)
+    private val compiler = PromptCompiler(
+        macroEngine = macroEngine,
+        regexEngine = regexEngine,
+        worldBookEngine = WorldBookEngine(macroEngine, regexEngine),
+    )
 
     @Test
     fun `normal turn compiles markers overrides examples history and ST depth order`() {
@@ -61,7 +73,7 @@ class PromptCompilerTest {
             modelContextTokens = null,
             character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book"))),
             preset = original.preset.copy(
-                declaredContextTokens = null,
+                generationSettings = original.preset.generationSettings.copy(maxContextTokens = null),
                 prompts = original.preset.prompts.map { prompt ->
                     if (prompt.identifier == "main") prompt.copy(content = "{{maxContext}}") else prompt
                 },
@@ -84,12 +96,12 @@ class PromptCompilerTest {
             ConversationMessage("m2", MessageRole.ASSISTANT, "c".repeat(40), "Ash"),
             ConversationMessage("m3", MessageRole.USER, "new", "Traveler"),
         )
-        val preset = Preset(
+        val preset = testPreset(
             id = "range",
             name = "Range",
             prompts = listOf(
-                PromptDefinition("main", MessageRole.SYSTEM, "first={{firstIncludedMessageId}}"),
-                PromptDefinition("chatHistory", MessageRole.SYSTEM, marker = true),
+                PromptDefinition("main", role = ContentRole.SYSTEM, content = "first={{firstIncludedMessageId}}"),
+                PromptDefinition("chatHistory", role = ContentRole.SYSTEM, marker = true),
             ),
             promptOrder = listOf(PromptOrderEntry("main"), PromptOrderEntry("chatHistory")),
             maxOutputTokens = 10,
@@ -106,8 +118,8 @@ class PromptCompilerTest {
             ),
         ) as CompilationResult.Success
 
-        assertEquals("first=2", result.plan.messages.first().content)
-        assertTrue(result.plan.trace.any { it.stage == "chat-range" && it.decision == "firstIncludedMessageId=2" })
+        assertEquals("first=3", result.plan.messages.first().content)
+        assertTrue(result.plan.trace.any { it.stage == "chat-range" && it.decision == "firstIncludedMessageId=3" })
     }
 
     @Test
@@ -129,7 +141,7 @@ class PromptCompilerTest {
     }
 
     @Test
-    fun `unknown macros remain visible while missing prompt references block generation`() {
+    fun `unknown macros and missing prompt references downgrade without blocking generation`() {
         val macroInput = baseInput().let { value ->
             value.copy(character = value.character.copy(description = "{{third_party_macro::mood}}"))
         }
@@ -144,8 +156,8 @@ class PromptCompilerTest {
                 ),
             )
         }
-        val referenceFailure = compiler.compile(referenceInput) as CompilationResult.Failure
-        assertTrue(referenceFailure.diagnostics.any { it.code == "MISSING_PROMPT_DEFINITION" })
+        val referenceResult = compiler.compile(referenceInput) as CompilationResult.Success
+        assertTrue(referenceResult.plan.diagnostics.any { it.code == "MISSING_PROMPT_DEFINITION_SKIPPED" })
     }
 
     @Test
@@ -160,7 +172,7 @@ class PromptCompilerTest {
                 WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", keys = keys))),
             ),
             regexScripts = listOf(
-                CharacterRegexDefinition(
+                RegexDefinition(
                     id = "regex",
                     name = "regex",
                     findRegex = "rain",
@@ -196,7 +208,7 @@ class PromptCompilerTest {
     }
 
     @Test
-    fun `cumulative assistant output replays reasoning and text in one transaction`() {
+    fun `assistant projection preserves raw reasoning without committing display macro effects`() {
         val input = baseInput()
         val first = compiler.projectAssistantOutput(
             rawText = "count={{getvar::count}}",
@@ -223,9 +235,9 @@ class PromptCompilerTest {
             modelId = "custom",
         )
 
-        assertEquals(listOf("1"), first.storageReasoning)
-        assertEquals("count=1", first.storageText)
-        assertEquals("1", first.runtimeState.localVariables["count"]?.text)
+        assertEquals(listOf("{{incvar::count}}"), first.storageReasoning)
+        assertEquals("count=", first.storageText)
+        assertEquals(null, first.runtimeState.localVariables["count"])
         assertEquals(first, replay)
     }
 
@@ -235,7 +247,7 @@ class PromptCompilerTest {
             original.copy(
                 character = original.character.copy(
                     regexScripts = listOf(
-                        CharacterRegexDefinition(
+                        RegexDefinition(
                             id = "reasoning-prompt",
                             name = "Reasoning prompt",
                             findRegex = "private",
@@ -256,6 +268,144 @@ class PromptCompilerTest {
 
         assertEquals("projected", opening.reasoning.single().text)
         assertEquals("signature", opening.reasoning.single().signature)
+    }
+
+    @Test
+    fun `world personality and scenario control formats are applied before macro expansion`() {
+        val original = baseInput()
+        val formatted = original.copy(
+            character = original.character.copy(
+                worldBooks = listOf(
+                    WorldBookDefinition(
+                        id = "book",
+                        entries = listOf(
+                            WorldBookEntryDefinition(
+                                id = "rain",
+                                content = "{{char}} knows the rain.",
+                                constant = true,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            preset = original.preset.copy(
+                prompts = original.preset.prompts + PromptDefinition(
+                    identifier = "worldInfoBefore",
+                    role = ContentRole.SYSTEM,
+                    marker = true,
+                ),
+                promptOrder = listOf(PromptOrderEntry("worldInfoBefore")) + original.preset.promptOrder,
+                controlSettings = original.preset.controlSettings.copy(
+                    worldInfoFormat = "<world>{0}</world>",
+                    personalityFormat = "<personality>{{personality}}</personality>",
+                    scenarioFormat = "<scenario>{{scenario}}</scenario>",
+                ),
+            ),
+        )
+
+        val plan = (compiler.compile(formatted) as CompilationResult.Success).plan
+
+        assertTrue(plan.messages.any { it.content == "<world>米拉 knows the rain.</world>" })
+        assertTrue(plan.messages.any { it.content == "<personality>沉着、敏锐、友善。</personality>" })
+        assertTrue(plan.messages.any { it.content == "<scenario>暴雨夜，旅人推门进入米拉的旅店。</scenario>" })
+    }
+
+    @Test
+    fun `normal and regenerate prompt triggers select the current transaction type`() {
+        val original = baseInput()
+        val preset = original.preset.copy(
+            prompts = original.preset.prompts + listOf(
+                PromptDefinition(
+                    identifier = "normal-only",
+                    role = ContentRole.SYSTEM,
+                    content = "normal branch",
+                    triggers = setOf(PresetGenerationTrigger.NORMAL),
+                ),
+                PromptDefinition(
+                    identifier = "regenerate-only",
+                    role = ContentRole.SYSTEM,
+                    content = "regenerate branch",
+                    triggers = setOf(PresetGenerationTrigger.REGENERATE),
+                ),
+            ),
+            promptOrder = listOf(PromptOrderEntry("normal-only"), PromptOrderEntry("regenerate-only")) +
+                original.preset.promptOrder,
+        )
+
+        val normal = (compiler.compile(original.copy(preset = preset)) as CompilationResult.Success).plan
+        val regenerate = (
+            compiler.compile(
+                original.copy(
+                    preset = preset,
+                    runtimeState = original.runtimeState.copy(lastGenerationType = "regenerate"),
+                ),
+            ) as CompilationResult.Success
+            ).plan
+
+        assertTrue(normal.messages.any { it.content == "normal branch" })
+        assertFalse(normal.messages.any { it.content == "regenerate branch" })
+        assertTrue(regenerate.messages.any { it.content == "regenerate branch" })
+        assertFalse(regenerate.messages.any { it.content == "normal branch" })
+    }
+
+    @Test
+    fun `names behavior and consecutive system squash are deterministic`() {
+        val original = baseInput()
+        val completion = (compiler.compile(
+            original.copy(
+                preset = original.preset.copy(
+                    controlSettings = original.preset.controlSettings.copy(
+                        namesBehavior = PresetNamesBehavior.COMPLETION,
+                    ),
+                ),
+            ),
+        ) as CompilationResult.Success).plan
+        assertEquals("米拉", completion.messages.first { it.origin.sourceIds == listOf("opening") }.authorName)
+        assertEquals("旅人", completion.messages.first { it.origin.sourceIds == listOf("user-1") }.authorName)
+
+        val content = (compiler.compile(
+            original.copy(
+                preset = original.preset.copy(
+                    controlSettings = original.preset.controlSettings.copy(
+                        namesBehavior = PresetNamesBehavior.CONTENT,
+                        squashSystemMessages = true,
+                    ),
+                ),
+            ),
+        ) as CompilationResult.Success).plan
+        assertTrue(content.messages.any { it.content.startsWith("米拉: 门铃轻响") })
+        assertTrue(content.messages.any { it.content.startsWith("旅人: 我想住一晚") })
+        assertFalse(content.messages.zipWithNext().any { (left, right) ->
+            left.role == MessageRole.SYSTEM && right.role == MessageRole.SYSTEM
+        })
+        assertTrue(content.trace.any { it.stage == "system-squash" })
+    }
+
+    @Test
+    fun `show thoughts changes display only and generation plan captures settings and fingerprint`() {
+        val original = baseInput()
+        val hidden = original.preset.copy(
+            controlSettings = original.preset.controlSettings.copy(showThoughts = false),
+        )
+        val projection = compiler.projectAssistantOutput(
+            rawText = "answer",
+            rawReasoning = listOf("private reasoning"),
+            character = original.character,
+            persona = original.persona,
+            preset = hidden,
+            runtimeState = original.runtimeState,
+            history = original.history,
+            conversationId = "chat",
+            generationId = "generation",
+            modelId = "model",
+        )
+        val plan = (compiler.compile(original.copy(preset = hidden)) as CompilationResult.Success).plan
+
+        assertEquals(listOf("private reasoning"), projection.storageReasoning)
+        assertTrue(projection.displayReasoning.isEmpty())
+        assertEquals(hidden.contentSha256, plan.presetContentSha256)
+        assertEquals(plan.maxOutputTokens, plan.generationSettings.maxOutputTokens)
+        assertEquals(plan.declaredContextTokens, plan.generationSettings.maxContextTokens)
     }
 
     private fun baseInput(): NormalGenerationInput {
@@ -303,27 +453,27 @@ class PromptCompilerTest {
     )
 
     private fun basePreset(): Preset {
-        fun marker(id: String) = PromptDefinition(id, MessageRole.SYSTEM, marker = true)
-        return Preset(
+        fun marker(id: String) = PromptDefinition(id, role = ContentRole.SYSTEM, marker = true)
+        return testPreset(
             id = "demo",
             name = "受控样本",
             prompts = listOf(
-                PromptDefinition("main", MessageRole.SYSTEM, "基础规则：{{char}}与{{user}}。", systemPrompt = true),
+                PromptDefinition("main", role = ContentRole.SYSTEM, content = "基础规则：{{char}}与{{user}}。", systemPrompt = true),
                 marker("charDescription"),
                 marker("charPersonality"),
                 marker("scenario"),
                 marker("dialogueExamples"),
                 marker("chatHistory"),
-                PromptDefinition("jailbreak", MessageRole.SYSTEM, "默认后置规则。", systemPrompt = true),
+                PromptDefinition("jailbreak", role = ContentRole.SYSTEM, content = "默认后置规则。", systemPrompt = true),
                 PromptDefinition(
                     identifier = "tone",
-                    role = MessageRole.SYSTEM,
+                    role = ContentRole.SYSTEM,
                     content = "保持克制、自然的叙述。",
                     injectionPosition = InjectionPosition.ABSOLUTE,
                     injectionDepth = 1,
                     injectionOrder = 200,
                 ),
-                PromptDefinition("unused", MessageRole.SYSTEM, "unused prompt"),
+                PromptDefinition("unused", role = ContentRole.SYSTEM, content = "unused prompt"),
             ),
             promptOrder = listOf(
                 PromptOrderEntry("main"),
@@ -335,10 +485,34 @@ class PromptCompilerTest {
                 PromptOrderEntry("chatHistory"),
                 PromptOrderEntry("jailbreak"),
             ),
-            newChatPrompt = "开始一段新的角色对话。",
-            newExampleChatPrompt = "以下是示例对话。",
+            controlSettings = PresetControlSettings(
+                newChatPrompt = "开始一段新的角色对话。",
+                newExampleChatPrompt = "以下是示例对话。",
+            ),
             maxOutputTokens = 512,
-            declaredContextTokens = 8_192,
+            contextTokens = 8_192,
         )
     }
+
+    private fun testPreset(
+        id: String,
+        name: String,
+        prompts: List<PromptDefinition>,
+        promptOrder: List<PromptOrderEntry>,
+        maxOutputTokens: Int,
+        contextTokens: Int? = null,
+        controlSettings: PresetControlSettings = PresetControlSettings(),
+    ) = PresetAsset(
+        id = id,
+        sourceSha256 = id,
+        contentSha256 = "$id-content",
+        name = name,
+        prompts = prompts,
+        promptOrder = promptOrder,
+        generationSettings = PresetGenerationSettings(
+            maxContextTokens = contextTokens,
+            maxOutputTokens = maxOutputTokens,
+        ),
+        controlSettings = controlSettings,
+    )
 }
