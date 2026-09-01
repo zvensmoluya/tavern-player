@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
             graph.promptCompiler,
             graph.conversationGenerator,
             graph.conversationRepository,
-            graph.preset,
+            graph.presetRepository,
         )
     }
     private val characterLibraryViewModel by viewModels<CharacterLibraryViewModel> {
@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
             graph.characterRepository,
             graph.conversationRepository,
             graph.defaultPersona,
+            graph.presetRepository,
         )
     }
 

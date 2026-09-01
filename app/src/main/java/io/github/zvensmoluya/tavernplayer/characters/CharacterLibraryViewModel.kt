@@ -8,6 +8,7 @@ import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
+import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,7 @@ class CharacterLibraryViewModel(
     private val characterRepository: CharacterRepository,
     private val conversationRepository: ConversationRepository,
     private val defaultPersona: Persona,
+    private val presetSource: ActivePresetSource,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
@@ -95,8 +97,9 @@ class CharacterLibraryViewModel(
 
     fun createConversation(characterId: String) {
         val character = characterRepository.get(characterId) ?: return
+        val preset = presetSource.captureActive()
         viewModelScope.launch {
-            runCatching { conversationRepository.create(character, defaultPersona) }
+            runCatching { conversationRepository.create(character, defaultPersona, preset) }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "无法创建对话") } }
         }
@@ -118,9 +121,10 @@ class CharacterLibraryViewModel(
         private val characterRepository: CharacterRepository,
         private val conversationRepository: ConversationRepository,
         private val defaultPersona: Persona,
+        private val presetSource: ActivePresetSource,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            CharacterLibraryViewModel(characterRepository, conversationRepository, defaultPersona) as T
+            CharacterLibraryViewModel(characterRepository, conversationRepository, defaultPersona, presetSource) as T
     }
 }

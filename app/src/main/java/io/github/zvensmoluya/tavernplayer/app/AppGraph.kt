@@ -12,6 +12,7 @@ import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.DemoConversationContent
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 
 private val Context.gatewayDataStore by preferencesDataStore(name = "model_gateway_connections")
 
@@ -26,13 +27,12 @@ class AppGraph(context: Context) {
     )
     val probeService = ProbeService(gateway, connectionRepository)
     val promptCompiler = PromptCompiler()
-    val preset = DemoConversationContent.preset
     val defaultPersona = DemoConversationContent.persona
     val characterRepository = CharacterRepository(appContext.filesDir)
+    val presetRepository = PresetRepository(appContext.filesDir)
     val conversationRepository = ConversationRepository(
         filesDir = appContext.filesDir,
         compiler = promptCompiler,
-        preset = preset,
     )
     val conversationGenerator = ModelGatewayConversationGenerator(gateway, connectionRepository)
 }

@@ -18,7 +18,6 @@ import kotlinx.serialization.json.Json
 class ConversationRepository(
     filesDir: File,
     private val compiler: PromptCompiler,
-    private val preset: Preset,
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val now: () -> Long = System::currentTimeMillis,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -43,10 +42,15 @@ class ConversationRepository(
         _conversations.value = loaded.sortedByDescending(ConversationRecord::updatedAtEpochMillis)
     }
 
-    suspend fun create(character: CharacterAsset, persona: Persona): ConversationRecord = withContext(ioDispatcher) {
+    suspend fun create(
+        character: CharacterAsset,
+        persona: Persona,
+        preset: Preset,
+    ): ConversationRecord = withContext(ioDispatcher) {
         mutex.withLock {
             val timestamp = now()
             val conversationId = idFactory()
+            val capturedPreset = preset.snapshot()
             val snapshot = character.snapshot()
             val greetings = listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages
             var committedRuntime = ConversationRuntimeState()
@@ -57,7 +61,7 @@ class ConversationRepository(
                     projection = RegexProjection.STORAGE,
                     character = snapshot,
                     persona = persona,
-                    preset = preset,
+                    preset = capturedPreset,
                     runtimeState = ConversationRuntimeState(),
                     history = emptyList(),
                     conversationId = conversationId,
@@ -76,6 +80,9 @@ class ConversationRepository(
                 MessageVariant(
                     id = idFactory(),
                     message = message,
+                    presetId = capturedPreset.id,
+                    presetName = capturedPreset.name,
+                    presetContentSha256 = capturedPreset.contentSha256,
                     runtimeStateBefore = ConversationRuntimeState(),
                     runtimeStateAfter = projected.runtimeState,
                 )

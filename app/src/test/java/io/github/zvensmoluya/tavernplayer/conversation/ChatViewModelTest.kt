@@ -12,8 +12,11 @@ import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.io.IOException
 import java.nio.file.Files
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -213,20 +216,20 @@ class ChatViewModelTest {
             val conversations = ConversationRepository(
                 directory,
                 compiler,
-                DemoConversationContent.preset,
                 idFactory = { "repository-${repositoryId++}" },
                 ioDispatcher = mainDispatcherRule.dispatcher,
             )
             val character = DemoConversationContent.character.copy(
                 description = "{{setvar::planned::yes}}${DemoConversationContent.character.description}",
             )
-            val created = conversations.create(character, DemoConversationContent.persona)
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             var messageId = 0
             val viewModel = ChatViewModel(
                 repository = repository(),
                 compiler = compiler,
                 generator = FakeGenerator { _, _ -> flow { throw IOException("before request") } },
                 conversationRepository = conversations,
+                presetSource = FixedPresetSource(),
                 characterAsset = character,
                 idGenerator = { "runtime-${messageId++}" },
                 projectionDispatcher = mainDispatcherRule.dispatcher,
@@ -318,6 +321,77 @@ class ChatViewModelTest {
         assertEquals(1, generator.calls)
     }
 
+    @Test
+    fun `generation captures one preset while active changes affect display and the next request`() = runTest {
+        val presetA = DemoConversationContent.preset.copy(
+            id = "preset-a",
+            name = "Preset A",
+            contentSha256 = "fingerprint-a",
+            builtIn = false,
+            generationSettings = DemoConversationContent.preset.generationSettings.copy(maxOutputTokens = 111),
+        )
+        val presetB = presetA.copy(
+            id = "preset-b",
+            name = "Preset B",
+            contentSha256 = "fingerprint-b",
+            generationSettings = presetA.generationSettings.copy(maxOutputTokens = 222),
+            regexScripts = listOf(
+                RegexDefinition(
+                    id = "display-b",
+                    name = "Display B",
+                    findRegex = "alpha",
+                    replaceString = "beta",
+                    placements = setOf(RegexPlacement.AI_OUTPUT),
+                    markdownOnly = true,
+                ),
+            ),
+        )
+        val presetSource = FixedPresetSource(presetA)
+        val releaseFirst = CompletableDeferred<Unit>()
+        val plans = mutableListOf<GenerationPlan>()
+        val generator = FakeGenerator { _, plan ->
+            plans += plan
+            flow {
+                if (plans.size == 1) releaseFirst.await()
+                emit(GenerationEvent.TextDelta("alpha"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        var id = 0
+        val viewModel = ChatViewModel(
+            repository = repository(),
+            compiler = PromptCompiler(),
+            generator = generator,
+            presetSource = presetSource,
+            idGenerator = { "capture-${id++}" },
+            projectionDispatcher = mainDispatcherRule.dispatcher,
+        )
+
+        viewModel.updateInput("first")
+        viewModel.send()
+        assertTrue(viewModel.uiState.value.running)
+        assertEquals("preset-a", plans.single().presetId)
+        assertEquals(111, plans.single().maxOutputTokens)
+
+        presetSource.set(presetB)
+        assertEquals("preset-b", viewModel.uiState.value.activePresetId)
+        assertEquals("preset-a", plans.single().presetId)
+        releaseFirst.complete(Unit)
+
+        val firstAssistant = viewModel.uiState.value.messages.last()
+        assertEquals("alpha", firstAssistant.message.content)
+        assertEquals("beta", firstAssistant.displayContent)
+        assertEquals("preset-a", firstAssistant.metadata?.presetId)
+        assertEquals("fingerprint-a", firstAssistant.metadata?.presetContentSha256)
+
+        viewModel.updateInput("second")
+        viewModel.send()
+        assertEquals(2, plans.size)
+        assertEquals("preset-b", plans.last().presetId)
+        assertEquals(222, plans.last().maxOutputTokens)
+        assertEquals("preset-b", viewModel.uiState.value.messages.last().metadata?.presetId)
+    }
+
     private fun viewModel(
         generator: FakeGenerator,
         character: CharacterAsset = DemoConversationContent.character,
@@ -327,10 +401,20 @@ class ChatViewModelTest {
             repository = repository(),
             compiler = PromptCompiler(),
             generator = generator,
+            presetSource = FixedPresetSource(),
             characterAsset = character,
             idGenerator = { "message-${id++}" },
             projectionDispatcher = mainDispatcherRule.dispatcher,
         )
+    }
+
+    private class FixedPresetSource(initial: PresetAsset = DemoConversationContent.preset) : ActivePresetSource {
+        private val state = MutableStateFlow(initial)
+        override val activePreset = state
+
+        fun set(preset: PresetAsset) {
+            state.value = preset
+        }
     }
 
     private fun repository(): ConnectionRepository {

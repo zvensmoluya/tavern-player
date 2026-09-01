@@ -69,7 +69,6 @@ class CharacterAndConversationRepositoryTest {
         val repository = ConversationRepository(
             filesDir = root,
             compiler = PromptCompiler(),
-            preset = preset(),
             idFactory = { "id-${id++}" },
             now = { 100L + id },
         )
@@ -93,7 +92,7 @@ class CharacterAndConversationRepositoryTest {
                 ),
             ),
         )
-        var record = repository.create(original, Persona("persona", "Traveler"))
+        var record = repository.create(original, Persona("persona", "Traveler"), preset())
 
         assertEquals("original", record.character.description)
         assertEquals("Prompt Name", record.character.promptName)
@@ -103,6 +102,9 @@ class CharacterAndConversationRepositoryTest {
         assertEquals("main", record.runtimeState.localVariables["route"]?.text)
         assertEquals("main", record.turns.single().variants.first().runtimeStateAfter?.localVariables?.get("route")?.text)
         assertEquals("alternate", record.turns.single().variants.last().runtimeStateAfter?.localVariables?.get("route")?.text)
+        assertEquals("preset", record.turns.single().variants.first().presetId)
+        assertEquals("Preset", record.turns.single().variants.first().presetName)
+        assertEquals("preset-content", record.turns.single().variants.first().presetContentSha256)
         assertNotEquals(original.copy(description = "changed").description, record.character.description)
 
         val streaming = MessageVariant(
@@ -123,7 +125,7 @@ class CharacterAndConversationRepositoryTest {
         assertTrue(persistedFiles, persistedText.contains("STREAMING"))
         assertTrue(persistedText, persistedText.contains("partial"))
 
-        val restored = ConversationRepository(root, PromptCompiler(), preset())
+        val restored = ConversationRepository(root, PromptCompiler())
         val loaded = restored.get(record.id)!!
         assertEquals(2, loaded.turns.size)
         assertEquals(PersistedMessageStatus.INTERRUPTED, loaded.turns.last().selected.status)

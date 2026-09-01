@@ -50,10 +50,9 @@ class CommunityCardCompatibilityTest {
         val conversations = ConversationRepository(
             root,
             compiler,
-            DemoConversationContent.preset,
             idFactory = { "community-${id++}" },
         )
-        var record = conversations.create(character, DemoConversationContent.persona)
+        var record = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
         val user = ConversationMessage(
             id = "user",
             role = MessageRole.USER,
@@ -93,7 +92,7 @@ class CommunityCardCompatibilityTest {
                 runtimeState = plan.runtimeState,
             ),
         )
-        val restored = ConversationRepository(root, compiler, DemoConversationContent.preset).get(record.id)!!
+        val restored = ConversationRepository(root, compiler).get(record.id)!!
         assertEquals("欢迎来到故事。", restored.turns.last().selected.message.content)
         assertEquals(plan.runtimeState, restored.runtimeState)
         assertEquals(character.sourceSha256, restored.character.sourceSha256)
