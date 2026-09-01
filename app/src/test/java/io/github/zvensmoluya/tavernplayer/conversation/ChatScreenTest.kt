@@ -15,6 +15,7 @@ import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,6 +75,7 @@ class ChatScreenTest {
         }
 
         compose.onNodeWithTag("chooseModel").assertIsNotEnabled()
+        compose.onNodeWithTag("choosePreset").assertIsNotEnabled()
         compose.onNodeWithText("查看思考").performClick()
         compose.onNodeWithText("先判断来客的意图").assertIsDisplayed()
         compose.onNodeWithTag("cancelGeneration").performClick()
@@ -165,6 +167,34 @@ class ChatScreenTest {
     }
 
     @Test
+    fun `preset picker switches an asset and opens preset management`() {
+        var selected: String? = null
+        var manageCalled = false
+        val first = BuiltInPresets.default
+        val second = first.copy(id = "second-preset", name = "Focused", builtIn = false)
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state().copy(activePresetId = first.id, activePresetName = first.name),
+                    presets = listOf(first, second),
+                    actions = actions(
+                        selectPreset = { selected = it },
+                        openPresets = { manageCalled = true },
+                    ),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("choosePreset").performClick()
+        compose.onNodeWithTag("quick-preset-second-preset").performClick()
+        assertEquals("second-preset", selected)
+
+        compose.onNodeWithTag("choosePreset").performClick()
+        compose.onNodeWithText("管理预设").performClick()
+        assertTrue(manageCalled)
+    }
+
+    @Test
     fun `opening swipe controls do not offer regenerate`() {
         var previous = false
         var next = false
@@ -251,6 +281,8 @@ class ChatScreenTest {
         openModels: () -> Unit = {},
         previousVariant: () -> Unit = {},
         nextVariant: () -> Unit = {},
+        selectPreset: (String) -> Unit = {},
+        openPresets: () -> Unit = {},
     ) = ChatScreenActions(
         updateInput = updateInput,
         send = send,
@@ -261,5 +293,7 @@ class ChatScreenTest {
         openModels = openModels,
         previousVariant = previousVariant,
         nextVariant = nextVariant,
+        selectPreset = selectPreset,
+        openPresets = openPresets,
     )
 }

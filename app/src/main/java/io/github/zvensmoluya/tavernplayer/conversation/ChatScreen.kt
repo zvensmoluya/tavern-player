@@ -38,16 +38,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
 @Composable
 fun ChatRoute(
     viewModel: ChatViewModel,
+    presetViewModel: PresetViewModel,
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
+    onOpenPresets: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val presetState by presetViewModel.uiState.collectAsState()
     ChatScreen(
         state = state,
+        presets = presetState.presets,
         actions = ChatScreenActions(
             updateInput = viewModel::updateInput,
             send = { if (state.selectedConnection == null) onOpenModels() else viewModel.send() },
@@ -60,6 +66,8 @@ fun ChatRoute(
             reset = viewModel::resetConversation,
             back = onBack,
             openModels = onOpenModels,
+            selectPreset = presetViewModel::activate,
+            openPresets = onOpenPresets,
         ),
     )
 }
@@ -76,6 +84,8 @@ data class ChatScreenActions(
     val previousVariant: () -> Unit = {},
     val nextVariant: () -> Unit = {},
     val back: () -> Unit = {},
+    val selectPreset: (String) -> Unit = {},
+    val openPresets: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,8 +93,10 @@ data class ChatScreenActions(
 fun ChatScreen(
     state: ChatUiState,
     actions: ChatScreenActions,
+    presets: List<PresetAsset> = emptyList(),
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
+    var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
@@ -111,6 +123,11 @@ fun ChatScreen(
                     ) { Text("返回") }
                 },
                 actions = {
+                    TextButton(
+                        modifier = Modifier.testTag("choosePreset"),
+                        enabled = !state.running,
+                        onClick = { presetPickerVisible = true },
+                    ) { Text(state.activePresetName.ifBlank { "预设" }, maxLines = 1) }
                     if (state.lastTrace != null) {
                         TextButton(
                             modifier = Modifier.testTag("openTrace"),
@@ -204,6 +221,22 @@ fun ChatScreen(
                 actions.openModels()
             },
             onDismiss = { modelPickerVisible = false },
+        )
+    }
+    if (presetPickerVisible) {
+        PresetPicker(
+            presets = presets,
+            selectedId = state.activePresetId,
+            enabled = !state.running,
+            onSelect = {
+                actions.selectPreset(it)
+                presetPickerVisible = false
+            },
+            onManage = {
+                presetPickerVisible = false
+                actions.openPresets()
+            },
+            onDismiss = { presetPickerVisible = false },
         )
     }
     if (traceVisible) {
@@ -349,6 +382,47 @@ private fun ModelPicker(
             }
             HorizontalDivider()
             TextButton(onClick = onManage) { Text("管理模型连接") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetPicker(
+    presets: List<PresetAsset>,
+    selectedId: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit,
+    onManage: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("选择预设", style = MaterialTheme.typography.titleLarge)
+            presets.forEach { preset ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("quick-preset-${preset.id}"),
+                    enabled = enabled,
+                    onClick = { onSelect(preset.id) },
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(
+                            preset.name,
+                            fontWeight = if (preset.id == selectedId) FontWeight.Bold else FontWeight.Normal,
+                        )
+                        Text(
+                            "${preset.prompts.size} Prompt · ${preset.regexScripts.size} Regex · 回复 ${preset.generationSettings.maxOutputTokens}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider()
+            TextButton(enabled = enabled, onClick = onManage) { Text("管理预设") }
         }
     }
 }

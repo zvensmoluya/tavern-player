@@ -69,6 +69,7 @@ fun CharacterLibraryRoute(
     viewModel: CharacterLibraryViewModel,
     onSelectCharacter: (String) -> Unit,
     onOpenModels: () -> Unit,
+    onOpenPresets: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -92,6 +93,7 @@ fun CharacterLibraryRoute(
         },
         onSelectCharacter = onSelectCharacter,
         onOpenModels = onOpenModels,
+        onOpenPresets = onOpenPresets,
     )
 }
 
@@ -103,12 +105,16 @@ fun CharacterLibraryScreen(
     onImport: () -> Unit,
     onSelectCharacter: (String) -> Unit,
     onOpenModels: () -> Unit,
+    onOpenPresets: () -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("角色") },
                 actions = {
+                    TextButton(onClick = onOpenPresets, modifier = Modifier.testTag("openPresetsFromLibrary")) {
+                        Text("预设")
+                    }
                     TextButton(onClick = onOpenModels, modifier = Modifier.testTag("openModelsFromLibrary")) {
                         Text("模型")
                     }

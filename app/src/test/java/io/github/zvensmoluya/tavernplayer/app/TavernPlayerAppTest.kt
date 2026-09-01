@@ -38,5 +38,9 @@ class TavernPlayerAppTest {
             AppSurface.MODEL_CONFIGURATION,
             selectAppSurface(AppSurface.MODEL_CONFIGURATION, hasSelectedCharacter = true),
         )
+        assertEquals(
+            AppSurface.PRESET_CENTER,
+            selectAppSurface(AppSurface.PRESET_CENTER, hasSelectedCharacter = true),
+        )
     }
 }

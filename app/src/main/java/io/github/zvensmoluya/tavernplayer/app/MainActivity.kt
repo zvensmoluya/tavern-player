@@ -7,6 +7,7 @@ import androidx.activity.viewModels
 import io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryViewModel
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
+import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,12 +32,15 @@ class MainActivity : ComponentActivity() {
             graph.presetRepository,
         )
     }
+    private val presetViewModel by viewModels<PresetViewModel> {
+        PresetViewModel.Factory(graph.presetRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             TavernPlayerTheme {
-                TavernPlayerApp(chatViewModel, modelConnectionsViewModel, characterLibraryViewModel)
+                TavernPlayerApp(chatViewModel, modelConnectionsViewModel, characterLibraryViewModel, presetViewModel)
             }
         }
     }
