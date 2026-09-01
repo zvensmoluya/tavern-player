@@ -51,7 +51,7 @@ API Key 只存在于被 Git 忽略的 `.env` 和模拟器 Android Keystore。本
 - `character_id=100001` 的全局 order 59 项，其中 30 项启用；
 - 兼容 bucket `character_id=100000` 另有 11 项，其中 10 项启用；运行时采用 `100001`；
 - Preset Regex 9 条，其中原文件 8 条启用；
-- 导入诊断 6 条，全部为 warning，没有 error。
+- 基线导入诊断 6 条，全部为 warning，没有 error；其中一条是后来修正的空 Tavern Helper 容器误报，当前同结构导入不再产生该告警。
 
 四个 role 为 `model` 的 Prompt 被安全降级为 `system` 并报告 `INVALID_PROMPT_ROLE`。它们全部处于关闭状态，也不在当前全局 order 中，所以没有影响本轮请求。
 
@@ -83,7 +83,7 @@ API Key 只存在于被 Git 忽略的 `.env` 和模拟器 Android Keystore。本
 - `ToolBindings` 与 `MessageInjections` 为空；
 - `RegexBinding` 引用了 9 条 Regex。
 
-所以 `THIRD_PARTY_SCRIPT_PRESERVED` 是保守的扩展存在告警；其“检测到第三方脚本”的文案对这个样本并不精确。Tavern Player 仍按安全边界保留未知载荷，但不执行第三方脚本。
+基线导入中的 `THIRD_PARTY_SCRIPT_PRESERVED` 是按扩展对象是否存在作出的保守告警，其“检测到第三方脚本”文案对这个样本并不精确。当前导入器会深查 Tavern Helper 容器：`scripts=[]` 且 `variables={}` 时继续保留载荷，但不再声称存在第三方运行时依赖；存在真实脚本、变量状态或其他非空载荷时仍会告警且绝不执行。
 
 ## 实验一：保持原始参数（改进前基线）
 

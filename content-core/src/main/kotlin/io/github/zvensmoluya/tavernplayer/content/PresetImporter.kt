@@ -468,9 +468,10 @@ class PresetImporter(
     ) {
         val extensions = raw["extensions"] as? JsonObject
         val scriptKeys = buildList {
-            if (raw["tavern_helper"].hasMeaningfulValue()) add("tavern_helper")
+            if (raw["tavern_helper"].hasDeepMeaningfulValue()) add("tavern_helper")
             extensions?.forEach { (key, value) ->
-                if (key != "regex_scripts" && (key.contains("script", ignoreCase = true) || key == "tavern_helper") && value.hasMeaningfulValue()) {
+                val meaningful = if (key == "tavern_helper") value.hasDeepMeaningfulValue() else value.hasMeaningfulValue()
+                if (key != "regex_scripts" && (key.contains("script", ignoreCase = true) || key == "tavern_helper") && meaningful) {
                     add("extensions.$key")
                 }
             }
@@ -478,7 +479,7 @@ class PresetImporter(
         if (scriptKeys.isNotEmpty()) {
             diagnostics.warning(
                 "THIRD_PARTY_SCRIPT_PRESERVED",
-                "检测到第三方脚本扩展（${scriptKeys.joinToString()}）；导出时保留，但绝不会执行或联网加载",
+                "检测到第三方脚本或运行时状态（${scriptKeys.joinToString()}）；导出时保留，但绝不会执行或联网加载",
             )
         }
         if (raw["tools"].hasMeaningfulValue() || raw["tool_choice"].hasMeaningfulValue()) {
@@ -709,5 +710,12 @@ private fun JsonElement?.hasMeaningfulValue(): Boolean = when (this) {
     null, JsonNull -> false
     is JsonArray -> isNotEmpty()
     is JsonObject -> isNotEmpty()
+    is JsonPrimitive -> contentOrNull?.isNotBlank() == true
+}
+
+private fun JsonElement?.hasDeepMeaningfulValue(): Boolean = when (this) {
+    null, JsonNull -> false
+    is JsonArray -> any { it.hasDeepMeaningfulValue() }
+    is JsonObject -> values.any { it.hasDeepMeaningfulValue() }
     is JsonPrimitive -> contentOrNull?.isNotBlank() == true
 }

@@ -133,6 +133,22 @@ class PresetImporterTest {
     }
 
     @Test
+    fun emptyTavernHelperContainersDoNotClaimThirdPartyRuntimeDependency() {
+        val source = """
+            {
+              "prompts":[{"identifier":"main","content":"safe","role":"system"}],
+              "prompt_order":[{"character_id":100001,"order":[{"identifier":"main","enabled":true}]}],
+              "extensions":{"tavern_helper":{"scripts":[],"variables":{}}}
+            }
+        """.trimIndent().encodeToByteArray()
+
+        val result = importer.import(source) as PresetImportResult.Ready
+
+        assertTrue(result.preset.sanitizedSource["extensions"]!!.jsonObject.containsKey("tavern_helper"))
+        assertFalse(result.diagnostics.any { it.code == "THIRD_PARTY_SCRIPT_PRESERVED" })
+    }
+
+    @Test
     fun exporterMergesEditsAndCanBeImportedAgainWithoutLosingExtensions() {
         val imported = importer.import(complexPreset(), "Round Trip.json") as PresetImportResult.Ready
         val edited = imported.preset.copy(
