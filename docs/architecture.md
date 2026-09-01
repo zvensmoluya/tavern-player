@@ -68,14 +68,14 @@ World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 ke
 
 - 已映射的 OpenAI 模型使用 JTokkit 的 r50k / p50k / cl100k / o200k 编码与消息 framing；
 - 未知或自定义 endpoint 使用带消息开销的保守 UTF-8 估算；
-- context limit 依次取当前模型的用户覆盖、模型目录、已验证模型表和 32K fallback，再受 Preset 上限约束；
-- 模型目录未提供 output limit 时，回复预留采用“不超过有效 context 一半、最高 16384”的安全 fallback，并且只在 Preset 请求更高值时收敛；模型目录提供的 output limit 仍然优先。
+- 当前模型的用户覆盖和模型目录是已验证能力：存在时会约束 Preset 声明的 context / output 预算；
+- 已验证能力缺失时，context / output 直接采用 Preset 声明并标记为未验证，不再按模型名称猜测能力；Preset 也没有声明 context 时才采用 128K 产品默认预算。output 始终不能超过本轮有效 context。
 
 最终协议请求构造后，Anthropic 与 Gemini 使用官方 count-tokens endpoint 验证；OpenAI 已映射模型使用本地精确计数；其余请求保持 `ESTIMATED`。超限时最多按同一优先级重新裁剪三次。
 
 `ModelGateway` 保留五个协议原生客户端：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent。不同协议拥有各自的强类型请求与流式事件，不通过伪通用 OpenAI 请求模型抹平差异，也不依赖 Provider hosted state。
 
-app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter 边界做能力映射：Responses 使用 output / temperature / top-p / reasoning / verbosity；Chat Completions 另含 penalties、seed 和 name；Anthropic 映射 sampler、manual / adaptive thinking 与可用 prefill；Gemini Interactions 只映射 output、seed 和 thinking level；GenerateContent 映射 sampler、seed、penalties 与 thinking config。Anthropic 的 `max_tokens` 是协议必填，Preset 关闭 output limit 时使用播放器已经预留的安全预算并记录诊断。模型能力未知时保守省略，省略项进入 `ProviderRequestPreview` 和流式诊断。所有请求强制流式、单候选和无 hosted continuation state。
+app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter 边界做能力映射：Responses 使用 output / temperature / top-p / reasoning / verbosity；Chat Completions 另含 penalties、seed 和 name；Anthropic 映射 sampler、manual / adaptive thinking 与可用 prefill；Gemini Interactions 只映射 output、seed 和 thinking level；GenerateContent 映射 sampler、seed、penalties 与 thinking config。Anthropic 的 `max_tokens` 是协议必填，Preset 关闭 output limit 时使用播放器已经预留的安全预算并记录诊断。OpenAI-compatible 协议可以原生表达的显式 reasoning / verbosity 会乐观转发，不再依赖模型名称白名单；“已应用”表示已经编码进请求，最终是否接受由 Provider 响应确认。协议本身无法表达或明确需要模型特定形态的参数仍会省略并进入 `ProviderRequestPreview` 和流式诊断。所有请求强制流式、单候选和无 hosted continuation state。
 
 ## Android 仓库与界面
 

@@ -114,14 +114,21 @@ class ContextBudgeter(
     private val accounting: TokenAccounting = DefaultTokenAccounting(),
 ) {
     fun contextLimit(input: NormalGenerationInput): Int {
-        val modelLimit = input.modelContextTokens ?: knownContextLimit(input.modelId) ?: DEFAULT_CONTEXT_LIMIT
-        return input.preset.generationSettings.maxContextTokens?.let { minOf(it, modelLimit) } ?: modelLimit
+        val declaredBudget = input.preset.generationSettings.maxContextTokens
+        val verifiedLimit = input.modelContextTokens
+        return when {
+            verifiedLimit != null && declaredBudget != null -> minOf(verifiedLimit, declaredBudget)
+            verifiedLimit != null -> verifiedLimit
+            declaredBudget != null -> declaredBudget
+            else -> DEFAULT_UNVERIFIED_CONTEXT_BUDGET
+        }
     }
 
     fun outputLimit(input: NormalGenerationInput): Int {
         val contextLimit = contextLimit(input)
-        val modelLimit = input.modelOutputTokens ?: unknownModelOutputLimit(contextLimit)
-        return minOf(input.preset.generationSettings.maxOutputTokens, modelLimit)
+        val requestedOutput = input.preset.generationSettings.maxOutputTokens
+        val verifiedLimit = input.modelOutputTokens
+        return minOf(requestedOutput, verifiedLimit ?: Int.MAX_VALUE, contextLimit)
     }
 
     fun budget(
@@ -137,24 +144,40 @@ class ContextBudgeter(
         val working = messages.toMutableList()
         val trace = mutableListOf<CompilationTraceEntry>()
         val diagnostics = mutableListOf<CompilationDiagnostic>()
-        if (input.modelContextTokens == null && knownContextLimit(input.modelId) == null) {
+        if (input.modelContextTokens == null) {
+            val declaredContext = input.preset.generationSettings.maxContextTokens
             diagnostics += CompilationDiagnostic(
                 severity = DiagnosticSeverity.WARNING,
-                code = "MODEL_CONTEXT_LIMIT_FALLBACK",
-                message = "模型目录未提供 context 上限，且模型名称未命中已知表；本轮使用 $contextLimit tokens 的安全上限",
+                code = if (declaredContext == null) {
+                    "MODEL_CONTEXT_BUDGET_DEFAULTED"
+                } else {
+                    "MODEL_CONTEXT_BUDGET_UNVERIFIED"
+                },
+                message = if (declaredContext == null) {
+                    "模型目录与 Preset 均未提供 context；本轮使用产品默认预算 $contextLimit tokens，未经 Provider 验证"
+                } else {
+                    "模型目录未提供 context 上限；本轮按 Preset 声明分配 $contextLimit tokens，未经 Provider 验证"
+                },
             )
         }
         val requestedOutputTokens = input.preset.generationSettings.maxOutputTokens
-        if (outputTokens < requestedOutputTokens) {
+        if (input.modelOutputTokens == null) {
             diagnostics += CompilationDiagnostic(
                 severity = DiagnosticSeverity.WARNING,
-                code = if (input.modelOutputTokens == null) {
-                    "MODEL_OUTPUT_LIMIT_FALLBACK"
+                code = "MODEL_OUTPUT_BUDGET_UNVERIFIED",
+                message = if (outputTokens < requestedOutputTokens) {
+                    "模型目录未提供回复上限；Preset 请求 $requestedOutputTokens tokens，已受本轮 context 预算约束为 $outputTokens tokens，未经 Provider 验证"
                 } else {
-                    "MODEL_OUTPUT_LIMIT_CLAMPED"
+                    "模型目录未提供回复上限；本轮按 Preset 请求预留 $outputTokens tokens，未经 Provider 验证"
                 },
-                message = if (input.modelOutputTokens == null) {
-                    "模型目录未提供回复上限；Preset 请求 $requestedOutputTokens tokens，本轮安全预留 $outputTokens tokens"
+            )
+        } else if (outputTokens < requestedOutputTokens) {
+            val clampedByContext = contextLimit < minOf(requestedOutputTokens, input.modelOutputTokens)
+            diagnostics += CompilationDiagnostic(
+                severity = DiagnosticSeverity.WARNING,
+                code = if (clampedByContext) "OUTPUT_BUDGET_CONTEXT_CLAMPED" else "MODEL_OUTPUT_LIMIT_CLAMPED",
+                message = if (clampedByContext) {
+                    "Preset 请求 $requestedOutputTokens tokens，模型回复上限为 ${input.modelOutputTokens}，已受本轮 context 预算约束为 $outputTokens tokens"
                 } else {
                     "Preset 请求 $requestedOutputTokens tokens，已按模型回复上限收敛为 $outputTokens tokens"
                 },
@@ -211,24 +234,7 @@ class ContextBudgeter(
     private fun PreparedMessage.isLastUserMessage(messages: List<PreparedMessage>): Boolean =
         role == MessageRole.USER && this === messages.lastOrNull { it.origin.stage == "chat-history" && it.role == MessageRole.USER }
 
-    private fun knownContextLimit(modelId: String): Int? {
-        val id = modelId.lowercase()
-        return when {
-            id.startsWith("gpt-5") || id.startsWith("gpt-4.1") || id.startsWith("gpt-4o") -> 128_000
-            id.startsWith("gpt-4-turbo") -> 128_000
-            id.startsWith("gpt-4") -> 8_192
-            id.startsWith("gpt-3.5-turbo") -> 16_385
-            id.startsWith("claude-") -> 200_000
-            id.startsWith("gemini-") -> 1_000_000
-            else -> null
-        }
-    }
-
-    private fun unknownModelOutputLimit(contextLimit: Int): Int =
-        minOf(DEFAULT_UNKNOWN_MODEL_OUTPUT_LIMIT, (contextLimit / 2).coerceAtLeast(1))
-
     companion object {
-        private const val DEFAULT_CONTEXT_LIMIT = 32_768
-        private const val DEFAULT_UNKNOWN_MODEL_OUTPUT_LIMIT = 16_384
+        private const val DEFAULT_UNVERIFIED_CONTEXT_BUDGET = 128_000
     }
 }

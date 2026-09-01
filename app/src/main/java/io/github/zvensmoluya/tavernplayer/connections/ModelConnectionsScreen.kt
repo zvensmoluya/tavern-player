@@ -394,7 +394,7 @@ private fun ConnectionEditor(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
-                                    "留空时使用模型目录或安全 fallback；这里的值只覆盖当前模型，不修改 Preset。",
+                                    "留空时优先使用模型目录；目录未知则按 Preset 预算运行并标记未验证。这里的值作为当前模型的明确上限，不修改 Preset。",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

@@ -83,7 +83,7 @@
 
 - Context 管理是必须能力。保留 ST 的内容取舍语义，包括回复 token 预留、必选 Prompt、历史由近到远进入、examples 与 history 的预算关系、World Book 独立预算，以及 depth injection 等内容的既定优先关系。
 - Tokenizer、模型 context window 和实际请求 token 计算由 Tavern Player 自己正确实现。兼容目标是 ST 的 context semantics，不是 ST 当前的 token accounting implementation。
-- 模型目录和已知模型表都无法给出能力时，context 使用 32K 安全 fallback；output 未知且 Preset 请求过高时，安全预留不超过有效 context 的一半和 16384 tokens。该收敛必须进入诊断，不能静默改写 Preset 资产。
+- 模型连接覆盖和模型目录给出的 context / output limits 是已验证能力，存在时会约束 Preset 声明的预算。两者都缺失时，播放器按 Preset 声明分配预算并明确标记“未经 Provider 验证”，不再维护模型名称能力表；Preset 也没有声明 context 时才使用 128K 产品默认预算。任何运行时约束都不能静默改写 Preset 资产。
 - 模型连接允许按模型 ID 手动覆盖 context / output token 上限，用于目录不声明能力的自定义模型。覆盖值属于连接侧模型能力，逐字段优先于目录元数据，不绑定或改写 Preset。
 
 ## 5. Provider 与回复能力
@@ -97,7 +97,7 @@
 - 不支持 Provider 原生多候选 `n`；swipe 通过再次生成新候选实现。
 - V1 不支持 Multimodal，包括用户图片、附件、模型图片生成和图片内联。
 - V1 不支持 JSON Schema / structured output、Provider web search、logprobs 等特殊生成模式。
-- OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 分别映射已开启且各自能表达的 Preset 参数。用户关闭的字段先于能力判断被拔除；未知模型能力采用保守省略，协议要求但 Preset 已关闭的必填字段使用播放器安全值。能力省略或降级进入请求预览与上下文诊断，不阻止普通生成。
+- OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 分别映射已开启且各自能表达的 Preset 参数。用户关闭的字段先于能力判断被拔除；协议原生可表达的显式参数采用乐观转发，不以模型名称白名单决定是否发送。协议要求但 Preset 已关闭的必填字段使用播放器预算；明确无法表达、需要模型特定结构或被 Provider 拒绝的能力才降级，并进入请求预览与上下文诊断。
 - `top_a`、`min_p`、`repetition_penalty` 以及协议无法表达的 assistant prefill 只保留、导出并告警。Tavern Player 强制 `stream=true`、单候选和无 Provider hosted state。
 
 ## 6. Tools、扩展与外部系统

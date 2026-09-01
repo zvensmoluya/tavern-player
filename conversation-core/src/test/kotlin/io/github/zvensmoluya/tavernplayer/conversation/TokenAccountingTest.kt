@@ -93,7 +93,7 @@ class TokenAccountingTest {
     }
 
     @Test
-    fun `unknown model safely caps oversized preset output without consuming the entire fallback context`() {
+    fun `unknown model uses explicit preset budgets without inventing model limits`() {
         val accounting = object : TokenAccounting {
             override fun count(messages: List<PreparedMessage>, modelId: String) =
                 TokenCount(11_268, TokenCountQuality.ESTIMATED, "fixture")
@@ -107,15 +107,15 @@ class TokenAccountingTest {
             ),
         )
 
-        assertEquals(32_768, result.report.contextLimit)
-        assertEquals(16_384, result.report.reservedOutputTokens)
+        assertEquals(2_000_000, result.report.contextLimit)
+        assertEquals(65_535, result.report.reservedOutputTokens)
         assertEquals(null, result.failure)
-        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_LIMIT_FALLBACK" })
-        assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_LIMIT_FALLBACK" })
+        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_BUDGET_UNVERIFIED" })
+        assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_BUDGET_UNVERIFIED" })
     }
 
     @Test
-    fun `unknown model preserves a conservative preset output request`() {
+    fun `unknown model marks a conservative preset output request as unverified`() {
         val result = ContextBudgeter().budget(
             listOf(prepared("required", "main")),
             input(context = 2_000_000, output = 1_024).copy(
@@ -126,7 +126,27 @@ class TokenAccountingTest {
         )
 
         assertEquals(1_024, result.report.reservedOutputTokens)
-        assertTrue(result.diagnostics.none { it.code == "MODEL_OUTPUT_LIMIT_FALLBACK" })
+        assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_BUDGET_UNVERIFIED" })
+    }
+
+    @Test
+    fun `missing model and preset context uses a modern product default without claiming capability`() {
+        val base = input(context = 2_000_000, output = 1_024)
+        val result = ContextBudgeter().budget(
+            listOf(prepared("required", "main")),
+            base.copy(
+                preset = base.preset.copy(
+                    generationSettings = base.preset.generationSettings.copy(maxContextTokens = null),
+                ),
+                modelId = "custom-model",
+                modelContextTokens = null,
+                modelOutputTokens = null,
+            ),
+        )
+
+        assertEquals(128_000, result.report.contextLimit)
+        assertEquals(1_024, result.report.reservedOutputTokens)
+        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_BUDGET_DEFAULTED" })
     }
 
     @Test
@@ -143,7 +163,23 @@ class TokenAccountingTest {
         assertEquals(128_000, result.report.contextLimit)
         assertEquals(32_000, result.report.reservedOutputTokens)
         assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_LIMIT_CLAMPED" })
-        assertTrue(result.diagnostics.none { it.code == "MODEL_CONTEXT_LIMIT_FALLBACK" })
+        assertTrue(result.diagnostics.none { it.code == "MODEL_CONTEXT_BUDGET_UNVERIFIED" })
+        assertTrue(result.diagnostics.none { it.code == "MODEL_OUTPUT_BUDGET_UNVERIFIED" })
+    }
+
+    @Test
+    fun `output budget never exceeds effective context even when model output limit is larger`() {
+        val result = ContextBudgeter().budget(
+            listOf(prepared("required", "main")),
+            input(context = 16_000, output = 65_535).copy(
+                modelContextTokens = null,
+                modelOutputTokens = 128_000,
+            ),
+        )
+
+        assertEquals(16_000, result.report.contextLimit)
+        assertEquals(16_000, result.report.reservedOutputTokens)
+        assertTrue(result.diagnostics.any { it.code == "OUTPUT_BUDGET_CONTEXT_CLAMPED" })
     }
 
     private fun prepared(

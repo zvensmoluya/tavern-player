@@ -8,7 +8,7 @@
 
 **该社区 Preset 已经能在不修改资产参数、不依赖第三方扩展、也不填写模型 Token 覆盖的情况下完成一轮可见回复。**
 
-最初基线中，原始配置在请求前被 context 检查拒绝；临时降低回复上限后，输出预算又全部消耗在 reasoning。加入未知模型 output 安全协商、按模型 ID 的手动 Token 覆盖入口，以及开头正向 lookbehind 的等价改写后，全新安装复测保持 Preset 原始 65535 回复上限，仅靠自动 fallback 即完成生成。
+最初基线中，原始配置在请求前被 context 检查拒绝；临时降低回复上限后，输出预算又全部消耗在 reasoning。第一轮修复曾用 32K / 16K 自动 fallback 让原参数完成生成，但它同时忽略了 Preset 声明的更大预算和显式 `reasoning_effort`。随后架构纠正为：未知模型直接采用 Preset 声明的未验证预算，协议原生参数乐观转发，只有模型目录或用户覆盖提供的已验证 limits 才进行收敛。
 
 因此当前状态不是“格式只能保存但不能运行”，也不是“已经完整兼容社区玩法”，而是：
 
@@ -16,7 +16,7 @@
 核心 OpenAI Preset 语义       已接通
 这份样本的主要基础 Macro      已接通
 真实 Provider 请求与流式事件  已接通
-极端 context / reasoning 假设 已安全协商
+极端 context / reasoning 假设 显式转发并标记未验证
 本样本 Preset Regex           已通过
 第三方扩展宿主                明确不执行
 原参数端到端可见回复           已通过
@@ -122,9 +122,9 @@ ERROR: MANDATORY_CONTEXT_OVERFLOW
 
 这不是缺少 Prompt 导入能力。它暴露的是模型能力信息与社区 Preset 参数之间没有可信交集：播放器不能把 Preset 声明的 200 万 context 当成 Provider 保证，同时 65535 回复预留又大于安全 fallback。
 
-### 当前预算选择规则
+### 当时的预算选择规则
 
-Preset 不根据模型名称选择预算。当前由播放器按以下优先级确定模型能力：
+Preset 不根据模型名称选择预算。实验一至三使用的版本由播放器按以下优先级确定模型能力：
 
 1. 使用当前连接按模型 ID 保存的手动 Token 覆盖；
 2. 使用 Provider 模型目录返回的 `inputTokenLimit` / `outputTokenLimit`；
@@ -138,7 +138,7 @@ effective context = min(model context limit, preset max context)
 effective output  = min(model output limit 或安全 fallback, preset max output)
 ```
 
-基线版本在模型 limits 未知时完整预留了 Preset 的 65535 output，因而失败。当前版本会保留 Preset 资产原值，但把本轮有效 output 安全收敛为 16384，并明确写入诊断；用户也可以在模型连接中按模型 ID 提供可信 limits。
+基线版本在模型 limits 未知时完整预留了 Preset 的 65535 output，因而失败。第一轮修复保留 Preset 资产原值，但把本轮有效 output 收敛为 16384 并写入诊断；实验三验证了这条临时路径。该规则随后被下文的架构纠正取代。
 
 ## 实验二：临时把回复上限改为 1024（改进前深链路验证）
 
@@ -198,6 +198,44 @@ visible text               = yes
 
 这证明自动 fallback 已足以让本样本通过。模型级手动覆盖是目录元数据缺失时的精确控制入口，不是本轮成功的必要条件。
 
+## 架构纠正：未知能力不再伪装成低能力
+
+实验三之后重新检查发现，32K / 16K fallback 和模型名称能力表把“Provider 没有提供元数据”误当成了“模型只能支持保守额度”，同时让 OpenAI-compatible adapter 在模型名称未命中时丢弃协议原生的 `reasoning_effort` / `verbosity`。这两种判断都没有可靠证据。
+
+当前规则改为：
+
+1. 模型连接覆盖和模型目录 limits 是已验证能力；存在时约束 Preset 预算；
+2. 已验证能力缺失时，按 Preset 的 context / output 声明分配，并产生 `MODEL_CONTEXT_BUDGET_UNVERIFIED` / `MODEL_OUTPUT_BUDGET_UNVERIFIED`；
+3. Preset 也未声明 context 时，使用 128K 产品默认预算并产生 `MODEL_CONTEXT_BUDGET_DEFAULTED`；
+4. output 始终受有效 context 约束；
+5. OpenAI Responses / Chat Completions 能原生表达的显式 reasoning / verbosity 直接进入请求，不再查询模型名称白名单；请求预览中的“已应用”表示已编码，Provider 响应才是接受与否的最终证据。
+
+因此本样本在当前代码中的有效预算是 2000000 context / 65535 output，并会发送 `reasoning.effort=high`。这些值来自 Preset，属于未验证运行分配，不会被错误描述为 Provider 已证明的模型上限；用户填写或目录返回的真实 limits 仍然会安全收敛它们。
+
+## 实验四：按 Preset 未验证预算和显式 reasoning 实测
+
+覆盖安装纠正后的 Debug APK，保留同一模拟器中的小型 Character Card、活跃 Preset 和模型连接；连接仍未填写 Token 覆盖。发送一条要求简短回复的新消息后，请求没有在本地预算阶段被拒绝，OpenAI Responses 流正常建立并完成。
+
+本地编排与 Provider 结果：
+
+```text
+declared / effective context = 2000000
+local estimated input        = 17009
+final request estimated      = 17226
+effective output reserve     = 65535
+reasoning.effort             = high
+provider reported input      = 3875
+provider reported output     = 10107
+provider cached              = 1152
+provider reasoning           = 9234
+provider total               = 13982
+finish reason                = completed
+visible text                 = yes
+assistant variant            = COMPLETE
+```
+
+本轮产生 `MODEL_CONTEXT_BUDGET_UNVERIFIED` 与 `MODEL_OUTPUT_BUDGET_UNVERIFIED`，没有 32K / 16K fallback 诊断。Mapper 把 `reasoning.effort=high` 编码进请求，Provider 没有返回参数错误并完成流；这同时验证了“乐观转发”和“由 Provider 响应确认接受”的边界。输出中 9234 tokens 用于 reasoning，也说明此前静默压到 16384 会实质改变这类 Preset 的运行空间。
+
 ## Regex 结果
 
 改进前基线出现：
@@ -230,17 +268,17 @@ Regex“样本语气处理规则”已在当前会话熔断
 | 未知扩展保留 | 通过 | `SPreset` / Tavern Helper 载荷保留但不执行 |
 | 第三方脚本运行 | 不支持（设计边界） | 本样本实际 scripts 为空，不是本轮阻塞点 |
 | generation settings | 部分通过 | 通用字段保留；`top_a` 等无安全映射字段被省略 |
-| context 预算 | 安全降级通过 | 32K context fallback 下把 65535 请求收敛为 16384 有效回复预留 |
-| Responses 请求构造 | 通过 | 原始 Preset 参数经运行时协商后真实请求成功发送 |
-| SSE / usage / reasoning | 通过 | usage、reasoning=11226、`completed` 被解析 |
+| context 预算 | 通过 | 实验三用 32K / 16K 临时 fallback 完成；当前改为采用 Preset 2M / 65535 并标记未验证 |
+| Responses 请求构造 | 通过 | 当前原始 Preset 预算和 `reasoning.effort=high` 已真实发送并获 Provider 接受 |
+| SSE / usage / reasoning | 通过 | 实验四解析 reasoning=9234、output=10107、`completed` |
 | 可见 assistant 回复 | 通过 | 全新安装、无手动 limits、未编辑 Preset 时完成并保存正文 |
 
 ## 当前缺少什么
 
 ### 确实缺少或仍不完整
 
-1. **自定义模型的自动可信能力信息。** 模型目录不提供 limits 时仍需 fallback 或用户按模型 ID 手动填写；播放器不会把 Preset 声明的 200 万 context 当成 Provider 保证。
-2. **未知模型的 reasoning 参数表达。** 本轮 Provider 自行产生 reasoning，但 `reasoning_effort` 因模型能力未知而被省略，不能证明社区作者指定的 `high` 被精确执行。
+1. **自定义模型的自动可信能力信息。** 模型目录不提供 limits 时，Preset 声明只能作为未验证运行预算；播放器不会把 200 万 context 误写成 Provider 保证。用户仍可按模型 ID 填写已验证 limits。
+2. **Provider 对乐观参数的真实接受范围。** 未知模型的 `reasoning_effort` / `verbosity` 已能进入 OpenAI-compatible 请求，但不同兼容网关仍可能拒绝某个值；失败必须保留 Provider 原始错误并允许用户调整，而不是继续维护模型名称白名单。
 3. **更广的 JavaScript Regex 兼容面。** 本样本的开头正向 lookbehind 已通过；其他无法安全改写的 JS 语义仍会跳过或受熔断保护。
 4. **部分 sampler 的 Provider 表达。** `top_a`、`min_p`、`repetition_penalty` 会保留、导出并告警，但不会伪造映射。
 5. **第三方扩展宿主。** `SPreset`、Tavern Helper 脚本、动态 Macro 和事件生命周期不会执行；这是当前明确边界，不是本轮回归。
@@ -259,13 +297,13 @@ Regex“样本语气处理规则”已在当前会话熔断
 
 如果“兼容”指精确复现社区作者在特定模型能力表、sampler 和扩展环境中的所有行为，答案仍然是：**不能由这一个样本证明。**
 
-这次先行改进解决了该样本最先撞到的 token 预算和 lookbehind 性能差异，也证明失败与 Tavern Helper 无关。剩余差异已经收敛到未知模型能力声明、Provider sampler / reasoning 表达和本样本没有启用的第三方宿主，而不是核心 Preset 管线。
+这次先行改进解决了该样本最先撞到的 token 预算和 lookbehind 性能差异，也证明失败与 Tavern Helper 无关。后续架构纠正又移除了模型名称能力表对现代 OpenAI-compatible 参数和 Preset 预算的错误拦截。剩余差异已经收敛到 Provider 实际接受范围、尚无协议映射的 sampler，以及本样本没有启用的第三方宿主，而不是核心 Preset 管线。
 
 ## 实验后状态
 
 - 模拟器中旧复杂卡已清除，只保留本轮小型 Character Card 样本；
 - 社区 Preset 样本 B 保持为活跃 Preset，原始回复上限仍为 65535；
-- 模型连接未填写手动 Token 覆盖，最近一次成功使用 32K / 16K 自动 fallback；
+- 模型连接未填写手动 Token 覆盖；最近一次成功使用 Preset 声明的 2M / 65535 未验证预算；
 - `maxOutputTokens` 已恢复为原始 65535；
-- 全新安装复测 Conversation、上下文诊断、usage 与可见正文保留；
+- 覆盖安装复测 Conversation、上下文诊断、usage 与可见正文保留；
 - 为 SAF 导入复制到公共存储的临时文件已删除。

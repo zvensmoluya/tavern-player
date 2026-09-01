@@ -388,28 +388,15 @@ internal object GenerationRequestMapper {
         val reasoning = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
             ?.takeUnless { it == PresetReasoningEffort.AUTO }
             ?.let { effort ->
-            if (connection.selectedModel.supportsOpenAiReasoning()) {
                 report.applied("reasoning_effort")
-                ResponsesReasoning(
-                    effort = effort.openAiWireValue(connection.selectedModel, report),
-                    summary = "auto",
-                )
-            } else {
-                report.omitted("reasoning_effort", "模型能力未知或未标记为 OpenAI reasoning model")
-                null
+                ResponsesReasoning(effort = effort.openAiWireValue())
             }
-        }
         val text = settings.enabledValue(PresetGenerationParameter.VERBOSITY, settings.verbosity)
             ?.takeUnless { it == PresetVerbosity.AUTO }
             ?.let { verbosity ->
-            if (connection.selectedModel.supportsOpenAiVerbosity()) {
                 report.applied("verbosity")
                 ResponsesTextConfig(verbosity.wireValue.lowercase())
-            } else {
-                report.omitted("verbosity", "模型能力未知或未标记为支持 verbosity")
-                null
             }
-        }
         val messages = plan.messages.map { message ->
             ResponsesInputMessage(
                 role = when (message.role) {
@@ -470,25 +457,15 @@ internal object GenerationRequestMapper {
         val reasoning = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
             ?.takeUnless { it == PresetReasoningEffort.AUTO }
             ?.let { effort ->
-            if (connection.selectedModel.supportsOpenAiReasoning()) {
                 report.applied("reasoning_effort")
-                effort.openAiWireValue(connection.selectedModel, report)
-            } else {
-                report.omitted("reasoning_effort", "模型能力未知或未标记为 OpenAI reasoning model")
-                null
+                effort.openAiWireValue()
             }
-        }
         val verbosity = settings.enabledValue(PresetGenerationParameter.VERBOSITY, settings.verbosity)
             ?.takeUnless { it == PresetVerbosity.AUTO }
             ?.let { value ->
-            if (connection.selectedModel.supportsOpenAiVerbosity()) {
                 report.applied("verbosity")
                 value.wireValue.lowercase()
-            } else {
-                report.omitted("verbosity", "模型能力未知或未标记为支持 verbosity")
-                null
             }
-        }
         val messages = plan.messages.map { message ->
             val name = message.authorName?.toOpenAiMessageName()
             if (!message.authorName.isNullOrBlank() && name == null) {
@@ -988,29 +965,14 @@ private fun Double?.validMinimum(
     }
 }
 
-private fun PresetReasoningEffort.openAiWireValue(model: String, report: PresetMappingReport): String = when (this) {
+private fun PresetReasoningEffort.openAiWireValue(): String = when (this) {
     PresetReasoningEffort.AUTO -> "medium"
-    PresetReasoningEffort.MIN -> if (model.lowercase().startsWith("gpt-5")) {
-        "minimal"
-    } else {
-        report.omitted("reasoning_effort=min", "该 OpenAI reasoning 模型未确认支持 minimal，已降级为 low")
-        "low"
-    }
+    PresetReasoningEffort.MIN -> "minimal"
     PresetReasoningEffort.LOW -> "low"
     PresetReasoningEffort.MEDIUM -> "medium"
     PresetReasoningEffort.HIGH -> "high"
-    PresetReasoningEffort.MAX -> {
-        report.omitted("reasoning_effort=max", "OpenAI 无通用 max 枚举，已安全降级为 high")
-        "high"
-    }
+    PresetReasoningEffort.MAX -> "max"
 }
-
-private fun String.supportsOpenAiReasoning(): Boolean {
-    val value = lowercase()
-    return value.startsWith("gpt-5") || Regex("^o(?:1|3|4)(?:-|$)").containsMatchIn(value)
-}
-
-private fun String.supportsOpenAiVerbosity(): Boolean = lowercase().startsWith("gpt-5")
 
 private data class AnthropicModelCapabilities(
     val samplers: Boolean,

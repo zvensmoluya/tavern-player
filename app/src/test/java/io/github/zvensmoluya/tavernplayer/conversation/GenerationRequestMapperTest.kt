@@ -166,7 +166,7 @@ class GenerationRequestMapperTest {
     }
 
     @Test
-    fun `unknown model capability conservatively omits reasoning and verbosity`() {
+    fun `OpenAI compatible adapters forward explicit protocol-native controls without a model allowlist`() {
         val tuned = plan().copy(
             generationSettings = plan().generationSettings.copy(
                 reasoningEffort = PresetReasoningEffort.MAX,
@@ -174,15 +174,28 @@ class GenerationRequestMapperTest {
             ),
         )
 
-        val prepared = GenerationRequestMapper.map(
+        val chat = GenerationRequestMapper.map(
             connection(ModelProtocol.OPENAI_CHAT_COMPLETIONS, "custom-model"),
             tuned,
         ) as PreparedGenerationRequest.Chat
 
-        assertNull(prepared.request.reasoningEffort)
-        assertNull(prepared.request.verbosity)
-        assertTrue(prepared.preview.omittedPresetControls.any { it.control == "reasoning_effort" })
-        assertTrue(prepared.preview.omittedPresetControls.any { it.control == "verbosity" })
+        assertEquals("max", chat.request.reasoningEffort)
+        assertEquals("low", chat.request.verbosity)
+        assertTrue(chat.preview.appliedPresetControls.contains("reasoning_effort"))
+        assertTrue(chat.preview.appliedPresetControls.contains("verbosity"))
+
+        val responses = GenerationRequestMapper.map(
+            connection(ModelProtocol.OPENAI_RESPONSES, "custom-model"),
+            tuned.copy(
+                generationSettings = tuned.generationSettings.copy(reasoningEffort = PresetReasoningEffort.MIN),
+            ),
+        ) as PreparedGenerationRequest.Responses
+
+        assertEquals("minimal", responses.request.reasoning?.effort)
+        assertNull(responses.request.reasoning?.summary)
+        assertEquals("low", responses.request.text?.verbosity)
+        assertTrue(responses.preview.appliedPresetControls.contains("reasoning_effort"))
+        assertTrue(responses.preview.appliedPresetControls.contains("verbosity"))
     }
 
     @Test
