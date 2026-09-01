@@ -76,6 +76,7 @@
 - 只保留 Character-scoped 和 Preset-scoped Regex，删除 application-global Regex。
 - Regex 是 Character / Preset 的附属运行能力，不建立独立 Regex 资产或全局管理层。
 - 已保留规则的 placement、顺序、深度、Prompt / storage / display 投影和 Macro replacement 等行为，以 ST 的可观察语义为基线，并受 Macro 产品边界约束。
+- 对开头的正向后向断言允许进行保持匹配、编号捕获和替换结果的前向等价改写，用于规避 Android 可变长度 lookbehind 的性能差异；无法安全改写的规则继续受熔断保护。
 - Regex 的生产单规则熔断为 250 ms；执行策略可在测试中注入，超时或工作队列拒绝只禁用当前 Conversation 中的坏规则并产生诊断。
 
 ### Token / Context

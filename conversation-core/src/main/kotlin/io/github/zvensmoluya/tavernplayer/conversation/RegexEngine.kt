@@ -131,7 +131,7 @@ class CharacterRegexEngine(
         val matcher = compiled.pattern.matcher(InterruptibleCharSequence(input))
         val output = StringBuffer(input.length)
         while (matcher.find()) {
-            val replacement = buildReplacement(rule, matcher, context, transaction, diagnostics)
+            val replacement = buildReplacement(rule, compiled, matcher, context, transaction, diagnostics)
             matcher.appendReplacement(output, Matcher.quoteReplacement(replacement))
             if (output.length > MAX_INPUT_CHARS) {
                 diagnostics += warning("REGEX_OUTPUT_LIMIT", "Regex“${rule.name}”输出超过 1 MiB，已跳过该规则", rule.id)
@@ -145,6 +145,7 @@ class CharacterRegexEngine(
 
     private fun buildReplacement(
         rule: RegexDefinition,
+        compiled: CompiledRegex,
         matcher: Matcher,
         context: MacroContext,
         transaction: MacroTransaction,
@@ -154,7 +155,16 @@ class CharacterRegexEngine(
         val withGroups = CAPTURE_REFERENCE.replace(template) { reference ->
             val value = try {
                 val number = reference.groupValues[1]
-                if (number.isNotEmpty()) matcher.group(number.toInt()) else matcher.group(reference.groupValues[2])
+                if (number.isNotEmpty()) {
+                    val originalGroup = number.toInt()
+                    if (originalGroup == 0) {
+                        compiled.originalMatch(matcher)
+                    } else {
+                        matcher.group(originalGroup + compiled.captureGroupOffset)
+                    }
+                } else {
+                    matcher.group(reference.groupValues[2])
+                }
             } catch (_: Exception) {
                 null
             }.orEmpty()
@@ -166,7 +176,7 @@ class CharacterRegexEngine(
         }
         val expanded = macroEngine.evaluate(withGroups, context, transaction)
         diagnostics += expanded.diagnostics
-        return expanded.text
+        return compiled.preservedPrefix(matcher) + expanded.text
     }
 
     private fun compileJavascriptPattern(
@@ -200,7 +210,21 @@ class CharacterRegexEngine(
         if ('s' in flagsText) flags = flags or Pattern.DOTALL
         // Java Pattern is already code-point aware for the supported constructs. JS /u does not
         // make \w or \d Unicode-wide, so UNICODE_CHARACTER_CLASS would be an incompatible widening.
-        return CompiledRegex(Pattern.compile(pattern, flags), global = 'g' in flagsText)
+        val lookbehindRewrite = rewriteLeadingPositiveLookbehind(pattern)
+        if (lookbehindRewrite != null) {
+            pattern = lookbehindRewrite.pattern
+            diagnostics += warning(
+                "REGEX_LOOKBEHIND_REWRITTEN",
+                "已将开头的正向后向断言改写为等价前向匹配，避免 Android 可变长度 lookbehind 性能问题",
+                sourceId,
+            )
+        }
+        return CompiledRegex(
+            pattern = Pattern.compile(pattern, flags),
+            global = 'g' in flagsText,
+            captureGroupOffset = lookbehindRewrite?.captureGroupOffset ?: 0,
+            preservedPrefixGroup = lookbehindRewrite?.preservedPrefixGroup,
+        )
     }
 
     private fun RegexDefinition.applies(
@@ -247,7 +271,20 @@ class CharacterRegexEngine(
         val valid: Boolean,
     )
 
-    private data class CompiledRegex(val pattern: Pattern, val global: Boolean)
+    private data class CompiledRegex(
+        val pattern: Pattern,
+        val global: Boolean,
+        val captureGroupOffset: Int = 0,
+        val preservedPrefixGroup: Int? = null,
+    ) {
+        fun preservedPrefix(matcher: Matcher): String = preservedPrefixGroup?.let(matcher::group).orEmpty()
+
+        fun originalMatch(matcher: Matcher): String {
+            val match = matcher.group()
+            val prefix = preservedPrefix(matcher)
+            return if (prefix.isEmpty()) match else match.substring(prefix.length)
+        }
+    }
 
     companion object {
         private const val MAX_INPUT_CHARS = 1024 * 1024
@@ -258,6 +295,58 @@ class CharacterRegexEngine(
         private val MATCH_MACRO = Regex("\\{\\{match\\}\\}", RegexOption.IGNORE_CASE)
         private val CAPTURE_REFERENCE = Regex("\\$(\\d+)|\\$<([^>]+)>")
     }
+}
+
+private data class LookbehindRewrite(
+    val pattern: String,
+    val captureGroupOffset: Int,
+    val preservedPrefixGroup: Int,
+)
+
+private fun rewriteLeadingPositiveLookbehind(pattern: String): LookbehindRewrite? {
+    if (!pattern.startsWith("(?<=")) return null
+    if (pattern.hasNumericBackReference()) return null
+    val closing = pattern.leadingGroupClosingIndex() ?: return null
+    val lookbehind = pattern.substring(4, closing)
+    if (lookbehind.isEmpty()) return null
+    return LookbehindRewrite(
+        pattern = "($lookbehind)${pattern.substring(closing + 1)}",
+        captureGroupOffset = 1,
+        preservedPrefixGroup = 1,
+    )
+}
+
+private fun String.leadingGroupClosingIndex(): Int? {
+    var depth = 0
+    var inCharacterClass = false
+    var index = 0
+    while (index < length) {
+        when (this[index]) {
+            '\\' -> index++
+            '[' -> if (!inCharacterClass) inCharacterClass = true
+            ']' -> if (inCharacterClass) inCharacterClass = false
+            '(' -> if (!inCharacterClass) depth++
+            ')' -> if (!inCharacterClass) {
+                depth--
+                if (depth == 0) return index
+            }
+        }
+        index++
+    }
+    return null
+}
+
+private fun String.hasNumericBackReference(): Boolean {
+    var index = 0
+    while (index < length - 1) {
+        if (this[index] == '\\') {
+            if (this[index + 1] in '1'..'9') return true
+            index += 2
+        } else {
+            index++
+        }
+    }
+    return false
 }
 
 sealed interface RegexExecutionResult<out T> {

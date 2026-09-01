@@ -154,6 +154,43 @@ class RegexEngineTest {
         assertTrue(second.diagnostics.any { it.code == "REGEX_RULE_CIRCUIT_OPEN" })
     }
 
+    @Test
+    fun `leading positive lookbehind is rewritten without changing replacement captures`() {
+        val result = engine.apply(
+            "tonesof:word",
+            listOf(rule("lookbehind", "/(?<=(tone)(sof+))(:)(word)/g", "\$1-\$2-\$3-\$4-{{match}}")),
+            RegexPlacement.AI_OUTPUT,
+            RegexProjection.STORAGE,
+            context = context(),
+            transaction = MacroTransaction(),
+        )
+
+        assertEquals("tonesoftone-sof-:-word-:word", result.text)
+        assertTrue(result.diagnostics.any { it.code == "REGEX_LOOKBEHIND_REWRITTEN" })
+        assertEquals(listOf("lookbehind"), result.appliedRuleIds)
+    }
+
+    @Test
+    fun `community style variable lookbehind completes as a forward deletion`() {
+        val result = engine.apply(
+            "她的语气轻柔，像春风一样，令人安心。",
+            listOf(
+                rule(
+                    "community-lookbehind",
+                    "/(?<=(语气|语调|声音)([\\u4e00-\\u9fa5]+?))([,，]?)(得?)(如同|像|仿佛).*?(?=[。，,])/g",
+                    "",
+                ),
+            ),
+            RegexPlacement.AI_OUTPUT,
+            RegexProjection.STORAGE,
+            context = context(),
+            transaction = MacroTransaction(),
+        )
+
+        assertEquals("她的语气轻柔，令人安心。", result.text)
+        assertTrue(result.diagnostics.none { it.code == "REGEX_TIMEOUT" })
+    }
+
     private fun rule(
         id: String,
         find: String,
