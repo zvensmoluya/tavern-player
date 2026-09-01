@@ -2,7 +2,9 @@
 
 > 状态：样本调查记录，不是 Tavern Player 内核规范。当前有效状态见 [`current-discussion-status.md`](current-discussion-status.md)。
 >
-> 样本：`source/梦鲸思客V4-0818-和谐版.json`。本轮只调查“这个文件导入 ST 时借用了什么宿主能力”，不评价其中 prompt、Regex 或脚本各自想完成的职责。
+> 样本：本机未入库的社区大型 Preset 样本 A。素材名称和内容标识已匿名化；本轮只调查“这个文件导入 ST 时借用了什么宿主能力”，不评价其中 prompt、Regex 或脚本各自想完成的职责。
+>
+> 真实 Android / Provider 链路结果见 [`community-preset-live-test.md`](community-preset-live-test.md)。
 
 ## 样本的字面结构
 

@@ -52,6 +52,7 @@ SillyTavern 建立了这个生态。
 - [当前实现架构](docs/architecture.md)
 - [SillyTavern 单轮生成源码研究](docs/st-research.md)
 - [社区 Preset 样本调查](docs/preset-import-capabilities.md)
+- [社区 Preset 真实链路验收](docs/community-preset-live-test.md)
 
 ## 验证
 
