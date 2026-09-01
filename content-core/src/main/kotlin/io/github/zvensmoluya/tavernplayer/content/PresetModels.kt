@@ -42,6 +42,28 @@ enum class PresetVerbosity(val wireValue: String) {
 }
 
 /**
+ * Request controls owned by a Preset. A disabled control keeps its last edited value locally but
+ * is omitted from compatible Provider requests and from ST export. This is deliberately separate
+ * from Provider capability checks: disabling is a user choice, while capability omission is an
+ * adapter decision made for the selected model.
+ */
+@Serializable
+enum class PresetGenerationParameter(val sourceKey: String) {
+    OUTPUT_LIMIT("openai_max_tokens"),
+    TEMPERATURE("temperature"),
+    TOP_P("top_p"),
+    TOP_K("top_k"),
+    TOP_A("top_a"),
+    MIN_P("min_p"),
+    REPETITION_PENALTY("repetition_penalty"),
+    FREQUENCY_PENALTY("frequency_penalty"),
+    PRESENCE_PENALTY("presence_penalty"),
+    SEED("seed"),
+    REASONING_EFFORT("reasoning_effort"),
+    VERBOSITY("verbosity"),
+}
+
+/**
  * A prompt definition is deliberately separate from [PresetPromptOrderEntry]. SillyTavern presets
  * keep a definition pool and may leave definitions outside the active order; those unused entries
  * must survive an import/edit/export cycle.
@@ -85,7 +107,14 @@ data class PresetGenerationSettings(
     val seed: Int? = null,
     val reasoningEffort: PresetReasoningEffort = PresetReasoningEffort.AUTO,
     val verbosity: PresetVerbosity = PresetVerbosity.AUTO,
-)
+    val disabledParameters: Set<PresetGenerationParameter> = emptySet(),
+) {
+    fun isEnabled(parameter: PresetGenerationParameter): Boolean = parameter !in disabledParameters
+
+    fun withEnabled(parameter: PresetGenerationParameter, enabled: Boolean): PresetGenerationSettings = copy(
+        disabledParameters = if (enabled) disabledParameters - parameter else disabledParameters + parameter,
+    )
+}
 
 @Serializable
 data class PresetControlSettings(
@@ -127,7 +156,9 @@ data class PresetAsset(
         promptOrder = promptOrder.map { entry ->
             entry.copy(raw = JsonObject(entry.raw.toMap()))
         },
-        generationSettings = generationSettings.copy(),
+        generationSettings = generationSettings.copy(
+            disabledParameters = generationSettings.disabledParameters.toSet(),
+        ),
         controlSettings = controlSettings.copy(),
         regexScripts = regexScripts.map { regex ->
             regex.copy(

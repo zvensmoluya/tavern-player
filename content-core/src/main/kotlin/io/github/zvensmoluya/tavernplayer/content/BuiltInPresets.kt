@@ -25,6 +25,8 @@ object BuiltInPresets {
                 frequencyPenalty = 0.0,
                 presencePenalty = 0.0,
                 seed = null,
+                disabledParameters = PresetGenerationParameter.entries
+                    .filterNotTo(mutableSetOf()) { it == PresetGenerationParameter.OUTPUT_LIMIT },
             ),
             controlSettings = PresetControlSettings(),
             sanitizedSource = JsonObject(emptyMap()),

@@ -10,18 +10,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -43,15 +45,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.zvensmoluya.tavernplayer.content.ContentRole
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
-import io.github.zvensmoluya.tavernplayer.content.PresetInjectionPosition
-import io.github.zvensmoluya.tavernplayer.content.PresetNamesBehavior
 import io.github.zvensmoluya.tavernplayer.content.PresetPromptDefinition
-import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
-import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +66,7 @@ data class PresetScreenActions(
     val setPromptEnabled: (String, Boolean) -> Unit = { _, _ -> },
     val movePrompt: (String, Int) -> Unit = { _, _ -> },
     val updateRegexEnabled: (String, Boolean) -> Unit = { _, _ -> },
+    val setGenerationParameterEnabled: (PresetGenerationParameter, Boolean) -> Unit = { _, _ -> },
     val save: () -> Unit = {},
     val activate: (String) -> Unit = {},
     val copy: (String) -> Unit = {},
@@ -127,6 +126,7 @@ fun PresetRoute(
             setPromptEnabled = viewModel::setPromptEnabled,
             movePrompt = viewModel::movePrompt,
             updateRegexEnabled = { id, enabled -> viewModel.updateRegex(id) { it.copy(disabled = !enabled) } },
+            setGenerationParameterEnabled = viewModel::setGenerationParameterEnabled,
             save = viewModel::save,
             activate = viewModel::activate,
             copy = viewModel::copy,
@@ -229,7 +229,8 @@ private fun PresetCard(
                 )
             }
             Text(
-                "${preset.prompts.size} Prompt · ${preset.regexScripts.size} Regex · 回复 ${preset.generationSettings.maxOutputTokens}",
+                "${preset.quickPromptDefinitions().size} 个快速项 · ${preset.regexScripts.size} Regex · " +
+                    preset.generationSettings.outputLimitSummary(),
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
@@ -256,7 +257,15 @@ private fun PresetEditor(
     actions: PresetScreenActions,
 ) {
     var deleteConfirmation by remember(preset.id) { mutableStateOf(false) }
+    var requestParametersVisible by remember(preset.id) { mutableStateOf(false) }
+    var advancedVisible by remember(preset.id) { mutableStateOf(false) }
+    var promptDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
+    var regexDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
     val editable = !preset.builtIn && !state.busy
+    val quickPrompts = preset.quickPromptDefinitions()
+    val enabledRequestParameters = PresetGenerationParameter.entries.count(
+        preset.generationSettings::isEnabled,
+    )
     Scaffold(
         topBar = {
             TopAppBar(
@@ -291,96 +300,66 @@ private fun PresetEditor(
         ) {
             state.message?.let { item("message") { StatusText(it) } }
             item("identity") {
-                EditorSection("基本信息") {
-                    OutlinedTextField(
-                        value = preset.name,
-                        onValueChange = { value -> actions.updateDraft { it.copy(name = value) } },
-                        modifier = Modifier.fillMaxWidth().testTag("presetName"),
-                        label = { Text("名称") },
-                        enabled = editable,
-                        singleLine = true,
-                    )
-                    Text("内容指纹 ${preset.contentSha256.take(12)}", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            item("generation") { GenerationEditor(preset, editable, actions) }
-            item("controls") { ControlEditor(preset, editable, actions) }
-            item("order-title") {
-                Text("Prompt 顺序", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            items(preset.promptOrder, key = { "order-${it.identifier}" }) { entry ->
-                val definition = preset.prompts.firstOrNull { it.identifier == entry.identifier }
-                Card(Modifier.fillMaxWidth().testTag("order-${entry.identifier}")) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Switch(
-                            modifier = Modifier.testTag("order-enabled-${entry.identifier}"),
-                            checked = entry.enabled,
-                            enabled = editable,
-                            onCheckedChange = { actions.setPromptEnabled(entry.identifier, it) },
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("快速设置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "开关决定哪些普通 Prompt 和 Regex 参与生成。内容编辑收在每一项的详情里。",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
                         )
-                        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                            Text(definition?.name ?: entry.identifier)
-                            Text(entry.identifier, style = MaterialTheme.typography.labelSmall)
-                        }
-                        TextButton(
-                            modifier = Modifier.testTag("order-up-${entry.identifier}"),
-                            enabled = editable,
-                            onClick = { actions.movePrompt(entry.identifier, -1) },
-                        ) { Text("↑") }
-                        TextButton(
-                            modifier = Modifier.testTag("order-down-${entry.identifier}"),
-                            enabled = editable,
-                            onClick = { actions.movePrompt(entry.identifier, 1) },
-                        ) { Text("↓") }
-                        TextButton(enabled = editable, onClick = { actions.togglePromptInOrder(entry.identifier) }) { Text("移出") }
-                    }
-                }
-            }
-            val unused = preset.prompts.filter { definition ->
-                preset.promptOrder.none { it.identifier == definition.identifier }
-            }
-            if (unused.isNotEmpty()) {
-                item("unused-title") { Text("未使用定义", style = MaterialTheme.typography.titleMedium) }
-                items(unused, key = { "unused-${it.identifier}" }) { definition ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(definition.name, Modifier.weight(1f))
-                        TextButton(
-                            enabled = editable,
-                            onClick = { actions.togglePromptInOrder(definition.identifier) },
-                        ) { Text("移入顺序") }
-                    }
-                }
-            }
-            item("prompts-title") {
-                Text("Prompt 定义", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            items(preset.prompts, key = { "prompt-${it.identifier}" }) { prompt ->
-                PromptEditor(prompt, preset, editable, actions)
-            }
-            item("regex-title") {
-                Text("Preset Regex", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            if (preset.regexScripts.isEmpty()) item("regex-empty") { StatusText("没有 Preset Regex") }
-            items(preset.regexScripts, key = { "regex-${it.id}" }) { regex ->
-                Card(Modifier.fillMaxWidth().testTag("regex-${regex.id}")) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(regex.name, fontWeight = FontWeight.Medium)
-                                Text(regex.findRegex, style = MaterialTheme.typography.bodySmall)
-                                Text("→ ${regex.replaceString}", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Switch(
-                                modifier = Modifier.testTag("regex-enabled-${regex.id}"),
-                                checked = !regex.disabled,
-                                enabled = editable,
-                                onCheckedChange = { actions.updateRegexEnabled(regex.id, it) },
+                        if (preset.builtIn) {
+                            Text(
+                                "内置默认只可查看；复制后才能调整。",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
+                }
+            }
+            item("quick-prompt-title") {
+                Text("Prompt 开关", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            if (quickPrompts.isEmpty()) {
+                item("quick-prompt-empty") { StatusText("这个 Preset 没有可供玩家调整的普通 Prompt。") }
+            }
+            items(quickPrompts, key = { "quick-${it.identifier}" }) { prompt ->
+                val enabled = preset.promptOrder.firstOrNull { it.identifier == prompt.identifier }?.enabled == true
+                PromptQuickSetting(
+                    prompt = prompt,
+                    enabled = enabled,
+                    editable = editable,
+                    onEnabledChange = { actions.setPromptEnabled(prompt.identifier, it) },
+                    onOpenDetails = { promptDetailId = prompt.identifier },
+                )
+            }
+            item("regex-title") {
+                Text("文本处理开关", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            if (preset.regexScripts.isEmpty()) item("regex-empty") { StatusText("没有 Preset Regex") }
+            items(preset.regexScripts, key = { "regex-${it.id}" }) { regex ->
+                RegexQuickSetting(
+                    name = regex.name,
+                    id = regex.id,
+                    enabled = !regex.disabled,
+                    editable = editable,
+                    onEnabledChange = { actions.updateRegexEnabled(regex.id, it) },
+                    onOpenDetails = { regexDetailId = regex.id },
+                )
+            }
+            item("secondary-settings") {
+                EditorSection("较少使用") {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth().testTag("openRequestParameters"),
+                        onClick = { requestParametersVisible = true },
+                    ) {
+                        Text("请求参数 · $enabledRequestParameters 项开启")
+                    }
+                    TextButton(
+                        modifier = Modifier.fillMaxWidth().testTag("openPresetAdvanced"),
+                        onClick = { advancedVisible = true },
+                    ) { Text("名称、格式与结构") }
                 }
             }
             item("actions") {
@@ -397,6 +376,44 @@ private fun PresetEditor(
                 }
             }
         }
+    }
+
+    promptDetailId?.let { identifier ->
+        preset.prompts.firstOrNull { it.identifier == identifier }?.let { prompt ->
+            PromptDetailSheet(
+                prompt = prompt,
+                preset = preset,
+                editable = editable,
+                actions = actions,
+                onDismiss = { promptDetailId = null },
+            )
+        }
+    }
+    regexDetailId?.let { id ->
+        preset.regexScripts.firstOrNull { it.id == id }?.let { regex ->
+            RegexDetailSheet(
+                name = regex.name,
+                findRegex = regex.findRegex,
+                replaceString = regex.replaceString,
+                onDismiss = { regexDetailId = null },
+            )
+        }
+    }
+    if (requestParametersVisible) {
+        GenerationParameterSheet(
+            preset = preset,
+            editable = editable,
+            actions = actions,
+            onDismiss = { requestParametersVisible = false },
+        )
+    }
+    if (advancedVisible) {
+        AdvancedPresetSheet(
+            preset = preset,
+            editable = editable,
+            actions = actions,
+            onDismiss = { advancedVisible = false },
+        )
     }
     if (deleteConfirmation) {
         AlertDialog(
@@ -418,47 +435,542 @@ private fun PresetEditor(
 }
 
 @Composable
-private fun GenerationEditor(preset: PresetAsset, editable: Boolean, actions: PresetScreenActions) {
+private fun PromptQuickSetting(
+    prompt: PresetPromptDefinition,
+    enabled: Boolean,
+    editable: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onOpenDetails: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth().testTag("quick-prompt-${prompt.identifier}")) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Switch(
+                modifier = Modifier.testTag("prompt-enabled-${prompt.identifier}"),
+                checked = enabled,
+                enabled = editable,
+                onCheckedChange = onEnabledChange,
+            )
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(prompt.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    prompt.content.quickSummary(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            TextButton(
+                modifier = Modifier.testTag("prompt-details-${prompt.identifier}"),
+                onClick = onOpenDetails,
+            ) { Text("详情") }
+        }
+    }
+}
+
+@Composable
+private fun RegexQuickSetting(
+    name: String,
+    id: String,
+    enabled: Boolean,
+    editable: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onOpenDetails: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth().testTag("regex-$id")) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Switch(
+                modifier = Modifier.testTag("regex-enabled-$id"),
+                checked = enabled,
+                enabled = editable,
+                onCheckedChange = onEnabledChange,
+            )
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Preset Regex", style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onOpenDetails) { Text("查看") }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PromptDetailSheet(
+    prompt: PresetPromptDefinition,
+    preset: PresetAsset,
+    editable: Boolean,
+    actions: PresetScreenActions,
+    onDismiss: () -> Unit,
+) {
+    var advanced by remember(prompt.identifier) { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().testTag("promptDetail-${prompt.identifier}"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item("title") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Prompt 详情", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(prompt.identifier, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            item("name") {
+                OutlinedTextField(
+                    value = prompt.name,
+                    onValueChange = { value -> actions.updatePrompt(prompt.identifier) { it.copy(name = value) } },
+                    modifier = Modifier.fillMaxWidth().testTag("promptName-${prompt.identifier}"),
+                    label = { Text("名称") },
+                    enabled = editable,
+                    singleLine = true,
+                )
+            }
+            item("content") {
+                TextArea("内容", prompt.content, editable) { value ->
+                    actions.updatePrompt(prompt.identifier) { it.copy(content = value) }
+                }
+            }
+            item("advanced-toggle") {
+                TextButton(
+                    modifier = Modifier.testTag("showPromptAdvanced"),
+                    onClick = { advanced = !advanced },
+                ) { Text(if (advanced) "收起高级设置" else "高级设置") }
+            }
+            if (advanced) {
+                item("advanced") {
+                    EditorSection("兼容字段") {
+                        EnumCycler("Role", prompt.role, editable) { value ->
+                            actions.updatePrompt(prompt.identifier) { it.copy(role = value) }
+                        }
+                        EnumCycler("Placement", prompt.injectionPosition, editable) { value ->
+                            actions.updatePrompt(prompt.identifier) { it.copy(injectionPosition = value) }
+                        }
+                        RequiredIntField("Depth", prompt.injectionDepth, editable) { value ->
+                            actions.updatePrompt(prompt.identifier) { it.copy(injectionDepth = value.coerceAtLeast(0)) }
+                        }
+                        RequiredIntField("Order", prompt.injectionOrder, editable) { value ->
+                            actions.updatePrompt(prompt.identifier) { it.copy(injectionOrder = value) }
+                        }
+                        BooleanControl("允许角色 override", !prompt.forbidOverrides, editable) { allowed ->
+                            actions.updatePrompt(prompt.identifier) { it.copy(forbidOverrides = !allowed) }
+                        }
+                        Text("Generation trigger", style = MaterialTheme.typography.labelLarge)
+                        PresetGenerationTrigger.entries.forEach { trigger ->
+                            val checked = trigger in prompt.triggers
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = checked,
+                                    enabled = editable,
+                                    onCheckedChange = { enabled ->
+                                        actions.updatePrompt(prompt.identifier) { definition ->
+                                            definition.copy(
+                                                triggers = if (enabled) {
+                                                    definition.triggers + trigger
+                                                } else {
+                                                    definition.triggers - trigger
+                                                },
+                                            )
+                                        }
+                                    },
+                                )
+                                Text(trigger.wireValue)
+                            }
+                        }
+                        val inOrder = preset.promptOrder.any { it.identifier == prompt.identifier }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                modifier = Modifier.testTag("order-up-${prompt.identifier}"),
+                                enabled = editable && inOrder,
+                                onClick = { actions.movePrompt(prompt.identifier, -1) },
+                            ) { Text("上移") }
+                            TextButton(
+                                modifier = Modifier.testTag("order-down-${prompt.identifier}"),
+                                enabled = editable && inOrder,
+                                onClick = { actions.movePrompt(prompt.identifier, 1) },
+                            ) { Text("下移") }
+                            TextButton(
+                                enabled = editable,
+                                onClick = { actions.togglePromptInOrder(prompt.identifier) },
+                            ) { Text(if (inOrder) "移出顺序" else "移入顺序") }
+                        }
+                    }
+                }
+            }
+            item("done") {
+                TextButton(
+                    modifier = Modifier.fillMaxWidth().testTag("closePromptDetail"),
+                    onClick = onDismiss,
+                ) { Text("完成") }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RegexDetailSheet(
+    name: String,
+    findRegex: String,
+    replaceString: String,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            StatusText("Regex 内容只读；开关位于快速设置。")
+            Text("匹配", style = MaterialTheme.typography.labelLarge)
+            Text(findRegex, style = MaterialTheme.typography.bodySmall)
+            Text("替换", style = MaterialTheme.typography.labelLarge)
+            Text(replaceString, style = MaterialTheme.typography.bodySmall)
+            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onDismiss) { Text("完成") }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GenerationParameterSheet(
+    preset: PresetAsset,
+    editable: Boolean,
+    actions: PresetScreenActions,
+    onDismiss: () -> Unit,
+) {
     val settings = preset.generationSettings
-    EditorSection("生成参数") {
-        NullableIntField("Context 上限（空为模型上限）", settings.maxContextTokens, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(maxContextTokens = value) } }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().testTag("requestParameterSheet"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item("title") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("请求参数", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        "开启表示允许 Preset 向兼容 Provider 携带该字段；不支持的模型会在请求边界安全省略。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item("output") {
+                GenerationParameterControl(
+                    parameter = PresetGenerationParameter.OUTPUT_LIMIT,
+                    label = "回复上限",
+                    value = settings.maxOutputTokens.toString(),
+                    settings = settings,
+                    editable = editable,
+                    actions = actions,
+                ) {
+                    RequiredIntField("Token", settings.maxOutputTokens, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(maxOutputTokens = value.coerceAtLeast(1)) } }
+                    }
+                }
+            }
+            item("temperature") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.TEMPERATURE,
+                    "Temperature",
+                    settings.temperature?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.temperature, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(temperature = value) } }
+                    }
+                }
+            }
+            item("top-p") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.TOP_P,
+                    "Top P",
+                    settings.topP?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.topP, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(topP = value) } }
+                    }
+                }
+            }
+            item("top-k") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.TOP_K,
+                    "Top K",
+                    settings.topK?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableIntField("值", settings.topK, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(topK = value) } }
+                    }
+                }
+            }
+            item("top-a") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.TOP_A,
+                    "Top A · 仅保留/导出",
+                    settings.topA?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.topA, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(topA = value) } }
+                    }
+                }
+            }
+            item("min-p") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.MIN_P,
+                    "Min P · 仅保留/导出",
+                    settings.minP?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.minP, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(minP = value) } }
+                    }
+                }
+            }
+            item("repetition") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.REPETITION_PENALTY,
+                    "Repetition penalty · 仅保留/导出",
+                    settings.repetitionPenalty?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.repetitionPenalty, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(repetitionPenalty = value) } }
+                    }
+                }
+            }
+            item("frequency") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.FREQUENCY_PENALTY,
+                    "Frequency penalty",
+                    settings.frequencyPenalty?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.frequencyPenalty, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(frequencyPenalty = value) } }
+                    }
+                }
+            }
+            item("presence") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.PRESENCE_PENALTY,
+                    "Presence penalty",
+                    settings.presencePenalty?.toString().orEmpty(),
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableDoubleField("值", settings.presencePenalty, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(presencePenalty = value) } }
+                    }
+                }
+            }
+            item("seed") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.SEED,
+                    "Seed",
+                    settings.seed?.toString() ?: "随机",
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    NullableIntField("值", settings.seed, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(seed = value) } }
+                    }
+                }
+            }
+            item("reasoning") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.REASONING_EFFORT,
+                    "Reasoning effort",
+                    settings.reasoningEffort.wireValue,
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    EnumCycler("值", settings.reasoningEffort, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(reasoningEffort = value) } }
+                    }
+                }
+            }
+            item("verbosity") {
+                GenerationParameterControl(
+                    PresetGenerationParameter.VERBOSITY,
+                    "Verbosity",
+                    settings.verbosity.wireValue,
+                    settings,
+                    editable,
+                    actions,
+                ) {
+                    EnumCycler("值", settings.verbosity, editable) { value ->
+                        actions.updateDraft { it.withGeneration { copy(verbosity = value) } }
+                    }
+                }
+            }
+            item("context") {
+                EditorSection("本地上下文预算") {
+                    BooleanControl(
+                        "限制 Context",
+                        settings.maxContextTokens != null,
+                        editable,
+                    ) { enabled ->
+                        actions.updateDraft {
+                            it.withGeneration { copy(maxContextTokens = if (enabled) maxContextTokens ?: 32_768 else null) }
+                        }
+                    }
+                    settings.maxContextTokens?.let { limit ->
+                        RequiredIntField("Context 上限", limit, editable) { value ->
+                            actions.updateDraft { it.withGeneration { copy(maxContextTokens = value.coerceAtLeast(1)) } }
+                        }
+                    }
+                    StatusText("这是播放器的本地裁剪预算，不会作为模型请求字段发送。")
+                }
+            }
+            item("done") {
+                TextButton(
+                    modifier = Modifier.fillMaxWidth().testTag("closeRequestParameters"),
+                    onClick = onDismiss,
+                ) { Text("完成") }
+                Spacer(Modifier.height(12.dp))
+            }
         }
-        RequiredIntField("回复上限", settings.maxOutputTokens, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(maxOutputTokens = value.coerceAtLeast(1)) } }
+    }
+}
+
+@Composable
+private fun GenerationParameterControl(
+    parameter: PresetGenerationParameter,
+    label: String,
+    value: String,
+    settings: PresetGenerationSettings,
+    editable: Boolean,
+    actions: PresetScreenActions,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val enabled = settings.isEnabled(parameter)
+    Card(Modifier.fillMaxWidth().testTag("parameter-${parameter.name.lowercase()}")) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, fontWeight = FontWeight.Medium)
+                    Text(
+                        if (enabled) value.ifBlank { "已开启" } else "已关闭 · 保留值 ${value.ifBlank { "—" }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    modifier = Modifier.testTag("parameter-enabled-${parameter.name.lowercase()}"),
+                    checked = enabled,
+                    enabled = editable,
+                    onCheckedChange = { actions.setGenerationParameterEnabled(parameter, it) },
+                )
+            }
+            if (enabled) {
+                HorizontalDivider()
+                content()
+            }
         }
-        NullableDoubleField("Temperature", settings.temperature, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(temperature = value) } }
-        }
-        NullableDoubleField("Top P", settings.topP, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(topP = value) } }
-        }
-        NullableIntField("Top K", settings.topK, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(topK = value) } }
-        }
-        NullableDoubleField("Top A（仅保留/导出）", settings.topA, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(topA = value) } }
-        }
-        NullableDoubleField("Min P（仅保留/导出）", settings.minP, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(minP = value) } }
-        }
-        NullableDoubleField("Repetition penalty（仅保留/导出）", settings.repetitionPenalty, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(repetitionPenalty = value) } }
-        }
-        NullableDoubleField("Frequency penalty", settings.frequencyPenalty, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(frequencyPenalty = value) } }
-        }
-        NullableDoubleField("Presence penalty", settings.presencePenalty, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(presencePenalty = value) } }
-        }
-        NullableIntField("Seed（空为随机）", settings.seed, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(seed = value) } }
-        }
-        EnumCycler("Reasoning effort", settings.reasoningEffort, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(reasoningEffort = value) } }
-        }
-        EnumCycler("Verbosity", settings.verbosity, editable) { value ->
-            actions.updateDraft { it.withGeneration { copy(verbosity = value) } }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AdvancedPresetSheet(
+    preset: PresetAsset,
+    editable: Boolean,
+    actions: PresetScreenActions,
+    onDismiss: () -> Unit,
+) {
+    val structuralPrompts = preset.prompts.filter(PresetPromptDefinition::marker)
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().testTag("presetAdvancedSheet"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item("title") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("名称、格式与结构", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    StatusText("这些字段通常无需调整；保留用于兼容少数社区 Preset。")
+                }
+            }
+            item("name") {
+                OutlinedTextField(
+                    value = preset.name,
+                    onValueChange = { value -> actions.updateDraft { it.copy(name = value) } },
+                    modifier = Modifier.fillMaxWidth().testTag("presetName"),
+                    label = { Text("名称") },
+                    enabled = editable,
+                    singleLine = true,
+                )
+            }
+            item("controls") { ControlEditor(preset, editable, actions) }
+            if (structuralPrompts.isNotEmpty()) {
+                item("structure-title") {
+                    Text("结构插槽", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                items(structuralPrompts, key = { "structure-${it.identifier}" }) { prompt ->
+                    val inOrder = preset.promptOrder.any { it.identifier == prompt.identifier }
+                    val enabled = preset.promptOrder.firstOrNull { it.identifier == prompt.identifier }?.enabled == true
+                    Card(Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Switch(
+                                checked = enabled,
+                                enabled = editable,
+                                onCheckedChange = { actions.setPromptEnabled(prompt.identifier, it) },
+                            )
+                            Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                                Text(prompt.name)
+                                Text(prompt.identifier, style = MaterialTheme.typography.labelSmall)
+                            }
+                            TextButton(
+                                enabled = editable && inOrder,
+                                onClick = { actions.movePrompt(prompt.identifier, -1) },
+                            ) { Text("↑") }
+                            TextButton(
+                                enabled = editable && inOrder,
+                                onClick = { actions.movePrompt(prompt.identifier, 1) },
+                            ) { Text("↓") }
+                        }
+                    }
+                }
+            }
+            item("done") {
+                TextButton(
+                    modifier = Modifier.fillMaxWidth().testTag("closePresetAdvanced"),
+                    onClick = onDismiss,
+                ) { Text("完成") }
+                Spacer(Modifier.height(12.dp))
+            }
         }
     }
 }
@@ -493,74 +1005,6 @@ private fun ControlEditor(preset: PresetAsset, editable: Boolean, actions: Prese
         }
         BooleanControl("显示 reasoning", controls.showThoughts, editable) { value ->
             actions.updateDraft { it.copy(controlSettings = it.controlSettings.copy(showThoughts = value)) }
-        }
-    }
-}
-
-@Composable
-private fun PromptEditor(
-    prompt: PresetPromptDefinition,
-    preset: PresetAsset,
-    editable: Boolean,
-    actions: PresetScreenActions,
-) {
-    val canEditDefinition = editable && !prompt.marker
-    Card(Modifier.fillMaxWidth().testTag("prompt-${prompt.identifier}")) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(prompt.identifier, style = MaterialTheme.typography.labelSmall)
-            OutlinedTextField(
-                value = prompt.name,
-                onValueChange = { value -> actions.updatePrompt(prompt.identifier) { it.copy(name = value) } },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("名称") },
-                enabled = canEditDefinition,
-                singleLine = true,
-            )
-            if (prompt.marker) {
-                StatusText("Marker 定义：可调整顺序和启用状态，内容不可编辑。")
-            } else {
-                TextArea("内容", prompt.content, canEditDefinition) { value ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(content = value) }
-                }
-                EnumCycler("Role", prompt.role, canEditDefinition) { value ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(role = value) }
-                }
-                EnumCycler("Placement", prompt.injectionPosition, canEditDefinition) { value ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(injectionPosition = value) }
-                }
-                RequiredIntField("Depth", prompt.injectionDepth, canEditDefinition) { value ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(injectionDepth = value.coerceAtLeast(0)) }
-                }
-                RequiredIntField("Order", prompt.injectionOrder, canEditDefinition) { value ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(injectionOrder = value) }
-                }
-                BooleanControl("允许角色 override", !prompt.forbidOverrides, canEditDefinition) { allowed ->
-                    actions.updatePrompt(prompt.identifier) { it.copy(forbidOverrides = !allowed) }
-                }
-                Text("Generation trigger", style = MaterialTheme.typography.labelLarge)
-                PresetGenerationTrigger.entries.forEach { trigger ->
-                    val checked = trigger in prompt.triggers
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = checked,
-                            enabled = canEditDefinition,
-                            onCheckedChange = { enabled ->
-                                actions.updatePrompt(prompt.identifier) { definition ->
-                                    definition.copy(
-                                        triggers = if (enabled) definition.triggers + trigger else definition.triggers - trigger,
-                                    )
-                                }
-                            },
-                        )
-                        Text(trigger.wireValue)
-                    }
-                }
-            }
-            val inOrder = preset.promptOrder.any { it.identifier == prompt.identifier }
-            TextButton(
-                enabled = editable,
-                onClick = { actions.togglePromptInOrder(prompt.identifier) },
-            ) { Text(if (inOrder) "移出 Prompt order" else "移入 Prompt order") }
         }
     }
 }
@@ -658,11 +1102,42 @@ private fun StatusText(message: String) {
 private fun PresetAsset.withGeneration(transform: PresetGenerationSettings.() -> PresetGenerationSettings): PresetAsset =
     copy(generationSettings = generationSettings.transform())
 
+private fun PresetAsset.quickPromptDefinitions(): List<PresetPromptDefinition> {
+    val definitions = prompts.associateBy(PresetPromptDefinition::identifier)
+    val added = mutableSetOf<String>()
+    return buildList {
+        promptOrder.forEach { entry ->
+            val prompt = definitions[entry.identifier]
+            if (prompt != null && !prompt.marker && added.add(prompt.identifier)) add(prompt)
+        }
+        prompts.forEach { prompt ->
+            if (!prompt.marker && added.add(prompt.identifier)) add(prompt)
+        }
+    }
+}
+
+private fun String.quickSummary(): String = replace(Regex("\\s+"), " ")
+    .trim()
+    .take(120)
+    .ifBlank { "没有额外内容" }
+
+private fun PresetGenerationSettings.outputLimitSummary(): String =
+    if (isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) "回复 $maxOutputTokens" else "回复上限关闭"
+
 private fun PresetAsset.compatibilitySummary(): String {
     val retainedOnly = buildList {
-        if (generationSettings.topA != null && generationSettings.topA != 0.0) add("top_a")
-        if (generationSettings.minP != null && generationSettings.minP != 0.0) add("min_p")
-        if (generationSettings.repetitionPenalty != null && generationSettings.repetitionPenalty != 1.0) {
+        if (
+            generationSettings.isEnabled(PresetGenerationParameter.TOP_A) &&
+            generationSettings.topA != null && generationSettings.topA != 0.0
+        ) add("top_a")
+        if (
+            generationSettings.isEnabled(PresetGenerationParameter.MIN_P) &&
+            generationSettings.minP != null && generationSettings.minP != 0.0
+        ) add("min_p")
+        if (
+            generationSettings.isEnabled(PresetGenerationParameter.REPETITION_PENALTY) &&
+            generationSettings.repetitionPenalty != null && generationSettings.repetitionPenalty != 1.0
+        ) {
             add("repetition penalty")
         }
         if (controlSettings.assistantPrefill.isNotBlank()) add("prefill 按协议降级")

@@ -5,8 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetPromptDefinition
 import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
+import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
+import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -107,8 +110,14 @@ class PresetViewModel(
     fun setPromptEnabled(identifier: String, enabled: Boolean) {
         updateDraft { draft ->
             draft.copy(
-                promptOrder = draft.promptOrder.map {
-                    if (it.identifier == identifier) it.copy(enabled = enabled) else it
+                promptOrder = if (draft.promptOrder.any { it.identifier == identifier }) {
+                    draft.promptOrder.map {
+                        if (it.identifier == identifier) it.copy(enabled = enabled) else it
+                    }
+                } else if (enabled) {
+                    draft.promptOrder + PresetPromptOrderEntry(identifier, enabled = true)
+                } else {
+                    draft.promptOrder
                 },
             )
         }
@@ -130,6 +139,51 @@ class PresetViewModel(
     fun updateRegex(id: String, transform: (RegexDefinition) -> RegexDefinition) {
         updateDraft { draft ->
             draft.copy(regexScripts = draft.regexScripts.map { if (it.id == id) transform(it) else it })
+        }
+    }
+
+    fun setGenerationParameterEnabled(parameter: PresetGenerationParameter, enabled: Boolean) {
+        updateDraft { draft ->
+            var settings = draft.generationSettings.withEnabled(parameter, enabled)
+            if (enabled) {
+                settings = when (parameter) {
+                    PresetGenerationParameter.OUTPUT_LIMIT -> settings
+                    PresetGenerationParameter.TEMPERATURE -> if (settings.temperature == null) {
+                        settings.copy(temperature = 1.0)
+                    } else settings
+                    PresetGenerationParameter.TOP_P -> if (settings.topP == null) {
+                        settings.copy(topP = 1.0)
+                    } else settings
+                    PresetGenerationParameter.TOP_K -> if (settings.topK?.let { it <= 0 } != false) {
+                        settings.copy(topK = 40)
+                    } else settings
+                    PresetGenerationParameter.TOP_A -> if (settings.topA == null) {
+                        settings.copy(topA = 0.0)
+                    } else settings
+                    PresetGenerationParameter.MIN_P -> if (settings.minP == null) {
+                        settings.copy(minP = 0.0)
+                    } else settings
+                    PresetGenerationParameter.REPETITION_PENALTY -> if (settings.repetitionPenalty == null) {
+                        settings.copy(repetitionPenalty = 1.0)
+                    } else settings
+                    PresetGenerationParameter.FREQUENCY_PENALTY -> if (settings.frequencyPenalty == null) {
+                        settings.copy(frequencyPenalty = 0.0)
+                    } else settings
+                    PresetGenerationParameter.PRESENCE_PENALTY -> if (settings.presencePenalty == null) {
+                        settings.copy(presencePenalty = 0.0)
+                    } else settings
+                    PresetGenerationParameter.SEED -> if (settings.seed == null) settings.copy(seed = 0) else settings
+                    PresetGenerationParameter.REASONING_EFFORT -> {
+                        if (settings.reasoningEffort == PresetReasoningEffort.AUTO) {
+                            settings.copy(reasoningEffort = PresetReasoningEffort.MEDIUM)
+                        } else settings
+                    }
+                    PresetGenerationParameter.VERBOSITY -> if (settings.verbosity == PresetVerbosity.AUTO) {
+                        settings.copy(verbosity = PresetVerbosity.MEDIUM)
+                    } else settings
+                }
+            }
+            draft.copy(generationSettings = settings)
         }
     }
 

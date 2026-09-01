@@ -22,18 +22,22 @@ object PresetExporter {
 
         preset.generationSettings.apply {
             root.putNullableNumber("openai_max_context", maxContextTokens)
-            root["openai_max_tokens"] = JsonPrimitive(maxOutputTokens)
-            root.putNullableNumber("temperature", temperature)
-            root.putNullableNumber("top_p", topP)
-            root.putNullableNumber("top_k", topK)
-            root.putNullableNumber("top_a", topA)
-            root.putNullableNumber("min_p", minP)
-            root.putNullableNumber("repetition_penalty", repetitionPenalty)
-            root.putNullableNumber("frequency_penalty", frequencyPenalty)
-            root.putNullableNumber("presence_penalty", presencePenalty)
-            root["seed"] = JsonPrimitive(seed ?: -1)
-            root["reasoning_effort"] = JsonPrimitive(reasoningEffort.wireValue)
-            root["verbosity"] = JsonPrimitive(verbosity.wireValue)
+            root.putPresetNumber(this, PresetGenerationParameter.OUTPUT_LIMIT, maxOutputTokens)
+            root.putPresetNumber(this, PresetGenerationParameter.TEMPERATURE, temperature)
+            root.putPresetNumber(this, PresetGenerationParameter.TOP_P, topP)
+            root.putPresetNumber(this, PresetGenerationParameter.TOP_K, topK)
+            root.putPresetNumber(this, PresetGenerationParameter.TOP_A, topA)
+            root.putPresetNumber(this, PresetGenerationParameter.MIN_P, minP)
+            root.putPresetNumber(this, PresetGenerationParameter.REPETITION_PENALTY, repetitionPenalty)
+            root.putPresetNumber(this, PresetGenerationParameter.FREQUENCY_PENALTY, frequencyPenalty)
+            root.putPresetNumber(this, PresetGenerationParameter.PRESENCE_PENALTY, presencePenalty)
+            if (isEnabled(PresetGenerationParameter.SEED)) {
+                root[PresetGenerationParameter.SEED.sourceKey] = JsonPrimitive(seed ?: -1)
+            } else {
+                root.remove(PresetGenerationParameter.SEED.sourceKey)
+            }
+            root.putPresetText(this, PresetGenerationParameter.REASONING_EFFORT, reasoningEffort.wireValue)
+            root.putPresetText(this, PresetGenerationParameter.VERBOSITY, verbosity.wireValue)
         }
 
         preset.controlSettings.apply {
@@ -262,6 +266,30 @@ private fun MutableMap<String, JsonElement>.putNullableNumber(name: String, valu
         is Double -> this[name] = JsonPrimitive(value)
         is Float -> this[name] = JsonPrimitive(value)
         else -> this[name] = JsonPrimitive(value.toDouble())
+    }
+}
+
+private fun MutableMap<String, JsonElement>.putPresetNumber(
+    settings: PresetGenerationSettings,
+    parameter: PresetGenerationParameter,
+    value: Number?,
+) {
+    if (settings.isEnabled(parameter)) {
+        putNullableNumber(parameter.sourceKey, value)
+    } else {
+        remove(parameter.sourceKey)
+    }
+}
+
+private fun MutableMap<String, JsonElement>.putPresetText(
+    settings: PresetGenerationSettings,
+    parameter: PresetGenerationParameter,
+    value: String,
+) {
+    if (settings.isEnabled(parameter)) {
+        this[parameter.sourceKey] = JsonPrimitive(value)
+    } else {
+        remove(parameter.sourceKey)
     }
 }
 

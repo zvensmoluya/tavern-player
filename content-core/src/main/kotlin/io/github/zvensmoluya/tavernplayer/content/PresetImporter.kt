@@ -333,35 +333,54 @@ class PresetImporter(
             diagnostics.warning("STREAM_FORCED_ON", "Preset 关闭了 stream；Tavern Player 始终启用流式生成", "stream_openai")
         }
 
+        val maxContextTokens = raw.int("openai_max_context", diagnostics, "openai_max_context")?.let { value ->
+            if (value > 0) value else {
+                diagnostics.warning("INVALID_GENERATION_SETTING", "openai_max_context 必须大于 0，已按不设人为上限处理", "openai_max_context")
+                null
+            }
+        }
+        val maxOutputTokens = (raw.int("openai_max_tokens", diagnostics, "openai_max_tokens") ?: 1_024).let { value ->
+            if (value > 0) value else {
+                diagnostics.warning("INVALID_GENERATION_SETTING", "openai_max_tokens 必须大于 0，已使用 1024", "openai_max_tokens")
+                1_024
+            }
+        }
+        val temperature = raw.validNullableDouble("temperature", diagnostics) { it >= 0.0 } ?: 1.0
+        val topP = raw.validNullableDouble("top_p", diagnostics) { it in 0.0..1.0 } ?: 1.0
+        val topK = (raw.int("top_k", diagnostics, "top_k") ?: 0).let { value ->
+            if (value >= 0) value else {
+                diagnostics.warning("INVALID_GENERATION_SETTING", "top_k 必须大于等于 0，已使用 0", "top_k")
+                0
+            }
+        }
+        val frequencyPenalty = raw.validNullableDouble("frequency_penalty", diagnostics) { it in -2.0..2.0 } ?: 0.0
+        val presencePenalty = raw.validNullableDouble("presence_penalty", diagnostics) { it in -2.0..2.0 } ?: 0.0
+        val seed = raw.int("seed", diagnostics, "seed")?.takeIf { it >= 0 }
+        val reasoningEffort = raw.reasoningEffort(diagnostics)
+        val verbosity = raw.verbosity(diagnostics)
+        val disabledParameters = PresetGenerationParameter.entries
+            .filterNotTo(mutableSetOf()) { parameter -> raw.containsKey(parameter.sourceKey) }
+            .apply {
+                if (seed == null) add(PresetGenerationParameter.SEED)
+                if (reasoningEffort == PresetReasoningEffort.AUTO) add(PresetGenerationParameter.REASONING_EFFORT)
+                if (verbosity == PresetVerbosity.AUTO) add(PresetGenerationParameter.VERBOSITY)
+            }
+
         return PresetGenerationSettings(
-            maxContextTokens = raw.int("openai_max_context", diagnostics, "openai_max_context")?.let { value ->
-                if (value > 0) value else {
-                    diagnostics.warning("INVALID_GENERATION_SETTING", "openai_max_context 必须大于 0，已按不设人为上限处理", "openai_max_context")
-                    null
-                }
-            },
-            maxOutputTokens = (raw.int("openai_max_tokens", diagnostics, "openai_max_tokens") ?: 1_024).let { value ->
-                if (value > 0) value else {
-                    diagnostics.warning("INVALID_GENERATION_SETTING", "openai_max_tokens 必须大于 0，已使用 1024", "openai_max_tokens")
-                    1_024
-                }
-            },
-            temperature = raw.validNullableDouble("temperature", diagnostics) { it >= 0.0 } ?: 1.0,
-            topP = raw.validNullableDouble("top_p", diagnostics) { it in 0.0..1.0 } ?: 1.0,
-            topK = (raw.int("top_k", diagnostics, "top_k") ?: 0).let { value ->
-                if (value >= 0) value else {
-                    diagnostics.warning("INVALID_GENERATION_SETTING", "top_k 必须大于等于 0，已使用 0", "top_k")
-                    0
-                }
-            },
+            maxContextTokens = maxContextTokens,
+            maxOutputTokens = maxOutputTokens,
+            temperature = temperature,
+            topP = topP,
+            topK = topK,
             topA = topA,
             minP = minP,
             repetitionPenalty = repetitionPenalty,
-            frequencyPenalty = raw.validNullableDouble("frequency_penalty", diagnostics) { it in -2.0..2.0 } ?: 0.0,
-            presencePenalty = raw.validNullableDouble("presence_penalty", diagnostics) { it in -2.0..2.0 } ?: 0.0,
-            seed = raw.int("seed", diagnostics, "seed")?.takeIf { it >= 0 },
-            reasoningEffort = raw.reasoningEffort(diagnostics),
-            verbosity = raw.verbosity(diagnostics),
+            frequencyPenalty = frequencyPenalty,
+            presencePenalty = presencePenalty,
+            seed = seed,
+            reasoningEffort = reasoningEffort,
+            verbosity = verbosity,
+            disabledParameters = disabledParameters,
         )
     }
 

@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
 @Composable
@@ -414,7 +415,12 @@ private fun PresetPicker(
                             fontWeight = if (preset.id == selectedId) FontWeight.Bold else FontWeight.Normal,
                         )
                         Text(
-                            "${preset.prompts.size} Prompt · ${preset.regexScripts.size} Regex · 回复 ${preset.generationSettings.maxOutputTokens}",
+                            "${preset.prompts.count { !it.marker }} 个快速项 · ${preset.regexScripts.size} Regex · " +
+                                if (preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) {
+                                    "回复 ${preset.generationSettings.maxOutputTokens}"
+                                } else {
+                                    "回复上限关闭"
+                                },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -482,7 +488,10 @@ private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
                         title = "Provider 映射",
                         content = buildString {
                             append("${preview.protocol.displayName()} · ${preview.model}\n")
-                            append("store=false · hostedState=false · maxOutput=${preview.maxOutputTokens}")
+                            append(
+                                "store=false · hostedState=false · maxOutput=" +
+                                    (preview.maxOutputTokens?.toString() ?: "未携带"),
+                            )
                             preview.systemInstruction?.let { append("\n\nsystemInstruction:\n$it") }
                         },
                     )

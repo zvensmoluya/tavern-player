@@ -34,6 +34,7 @@ import io.github.zvensmoluya.modelgateway.responses.ResponsesTextConfig
 import io.github.zvensmoluya.modelgateway.responses.ResponsesUsage
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
 import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
@@ -60,7 +61,7 @@ data class ProviderRequestPreview(
     val model: String,
     val systemInstruction: String?,
     val messages: List<ProviderPreviewMessage>,
-    val maxOutputTokens: Int,
+    val maxOutputTokens: Int?,
     val store: Boolean,
     val usesHostedState: Boolean,
     val assistantPrefillApplied: Boolean,
@@ -337,7 +338,9 @@ internal object GenerationRequestMapper {
     fun map(connection: StoredConnection, plan: GenerationPlan): PreparedGenerationRequest {
         val protocol = connection.protocol
         val report = PresetMappingReport().apply {
-            applied("output_limit")
+            if (plan.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) {
+                applied("output_limit")
+            }
             recordUniversallyUnmapped(plan.generationSettings)
         }
         return when (protocol) {
@@ -355,18 +358,36 @@ internal object GenerationRequestMapper {
         report: PresetMappingReport,
     ): PreparedGenerationRequest.Responses {
         val settings = plan.generationSettings
-        val temperature = settings.temperature.validRange("temperature", 0.0..2.0, report)
-        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)
+        val temperature = settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature)
+            .validRange("temperature", 0.0..2.0, report)
+        val topP = settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP)
+            .validRange("top_p", 0.0..1.0, report)
         temperature?.let { report.applied("temperature") }
         topP?.let { report.applied("top_p") }
-        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Responses API 无对应字段")
-        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Responses API 无对应字段")
-        settings.seed?.let { report.omitted("seed", "Responses API 无对应字段") }
+        settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)?.takeIf { it > 0 }?.let {
+            report.omitted("top_k", "Responses API 无对应字段")
+        }
+        report.omitIfNonDefault(
+            "frequency_penalty",
+            settings.enabledValue(PresetGenerationParameter.FREQUENCY_PENALTY, settings.frequencyPenalty),
+            0.0,
+            "Responses API 无对应字段",
+        )
+        report.omitIfNonDefault(
+            "presence_penalty",
+            settings.enabledValue(PresetGenerationParameter.PRESENCE_PENALTY, settings.presencePenalty),
+            0.0,
+            "Responses API 无对应字段",
+        )
+        settings.enabledValue(PresetGenerationParameter.SEED, settings.seed)
+            ?.let { report.omitted("seed", "Responses API 无对应字段") }
         if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "Responses API 无法表达 assistant prefill")
         if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
             report.omitted("names_behavior", "Responses 文本消息未发送 author name")
         }
-        val reasoning = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+        val reasoning = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
+            ?.takeUnless { it == PresetReasoningEffort.AUTO }
+            ?.let { effort ->
             if (connection.selectedModel.supportsOpenAiReasoning()) {
                 report.applied("reasoning_effort")
                 ResponsesReasoning(
@@ -378,7 +399,9 @@ internal object GenerationRequestMapper {
                 null
             }
         }
-        val text = settings.verbosity.takeUnless { it == PresetVerbosity.AUTO }?.let { verbosity ->
+        val text = settings.enabledValue(PresetGenerationParameter.VERBOSITY, settings.verbosity)
+            ?.takeUnless { it == PresetVerbosity.AUTO }
+            ?.let { verbosity ->
             if (connection.selectedModel.supportsOpenAiVerbosity()) {
                 report.applied("verbosity")
                 ResponsesTextConfig(verbosity.wireValue.lowercase())
@@ -402,7 +425,9 @@ internal object GenerationRequestMapper {
                 model = connection.selectedModel,
                 input = messages,
                 instructions = null,
-                maxOutputTokens = plan.maxOutputTokens,
+                maxOutputTokens = plan.maxOutputTokens.takeIf {
+                    settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+                },
                 previousResponseId = null,
                 reasoning = reasoning,
                 text = text,
@@ -420,19 +445,31 @@ internal object GenerationRequestMapper {
         report: PresetMappingReport,
     ): PreparedGenerationRequest.Chat {
         val settings = plan.generationSettings
-        val temperature = settings.temperature.validRange("temperature", 0.0..2.0, report)
-        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)
-        val frequencyPenalty = settings.frequencyPenalty.validRange("frequency_penalty", -2.0..2.0, report)
-        val presencePenalty = settings.presencePenalty.validRange("presence_penalty", -2.0..2.0, report)
+        val temperature = settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature)
+            .validRange("temperature", 0.0..2.0, report)
+        val topP = settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP)
+            .validRange("top_p", 0.0..1.0, report)
+        val frequencyPenalty = settings
+            .enabledValue(PresetGenerationParameter.FREQUENCY_PENALTY, settings.frequencyPenalty)
+            .validRange("frequency_penalty", -2.0..2.0, report)
+        val presencePenalty = settings
+            .enabledValue(PresetGenerationParameter.PRESENCE_PENALTY, settings.presencePenalty)
+            .validRange("presence_penalty", -2.0..2.0, report)
+        val seed = settings.enabledValue(PresetGenerationParameter.SEED, settings.seed)
         temperature?.let { report.applied("temperature") }
         topP?.let { report.applied("top_p") }
         frequencyPenalty?.let { report.applied("frequency_penalty") }
         presencePenalty?.let { report.applied("presence_penalty") }
-        settings.seed?.let { report.applied("seed") }
+        seed?.let { report.applied("seed") }
+        settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)?.takeIf { it > 0 }?.let {
+            report.omitted("top_k", "Chat Completions 无对应字段")
+        }
         if (plan.assistantPrefill.isNotBlank()) {
             report.omitted("assistant_prefill", "Chat Completions 无法准确表达 assistant prefill")
         }
-        val reasoning = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+        val reasoning = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
+            ?.takeUnless { it == PresetReasoningEffort.AUTO }
+            ?.let { effort ->
             if (connection.selectedModel.supportsOpenAiReasoning()) {
                 report.applied("reasoning_effort")
                 effort.openAiWireValue(connection.selectedModel, report)
@@ -441,7 +478,9 @@ internal object GenerationRequestMapper {
                 null
             }
         }
-        val verbosity = settings.verbosity.takeUnless { it == PresetVerbosity.AUTO }?.let { value ->
+        val verbosity = settings.enabledValue(PresetGenerationParameter.VERBOSITY, settings.verbosity)
+            ?.takeUnless { it == PresetVerbosity.AUTO }
+            ?.let { value ->
             if (connection.selectedModel.supportsOpenAiVerbosity()) {
                 report.applied("verbosity")
                 value.wireValue.lowercase()
@@ -471,14 +510,16 @@ internal object GenerationRequestMapper {
             request = ChatCompletionsRequest(
                 model = connection.selectedModel,
                 messages = messages,
-                maxCompletionTokens = plan.maxOutputTokens,
+                maxCompletionTokens = plan.maxOutputTokens.takeIf {
+                    settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+                },
                 reasoningEffort = reasoning,
                 verbosity = verbosity,
                 temperature = temperature,
                 topP = topP,
                 frequencyPenalty = frequencyPenalty,
                 presencePenalty = presencePenalty,
-                seed = settings.seed,
+                seed = seed,
                 store = false,
             ),
             preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.content }, report = report),
@@ -493,35 +534,65 @@ internal object GenerationRequestMapper {
         val settings = plan.generationSettings
         val capabilities = connection.selectedModel.anthropicCapabilities()
         val temperature = if (capabilities.samplers) {
-            settings.temperature.validRange("temperature", 0.0..1.0, report)?.also { report.applied("temperature") }
+            settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature)
+                .validRange("temperature", 0.0..1.0, report)
+                ?.also { report.applied("temperature") }
         } else {
-            report.omitIfNonDefault("temperature", settings.temperature, 1.0, "模型能力未知或该 Claude 版本拒绝采样参数")
+            report.omitIfNonDefault(
+                "temperature",
+                settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature),
+                1.0,
+                "模型能力未知或该 Claude 版本拒绝采样参数",
+            )
             null
         }
         val topP = if (capabilities.samplers) {
-            settings.topP.validRange("top_p", 0.0..1.0, report)?.also { report.applied("top_p") }
+            settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP)
+                .validRange("top_p", 0.0..1.0, report)
+                ?.also { report.applied("top_p") }
         } else {
-            report.omitIfNonDefault("top_p", settings.topP, 1.0, "模型能力未知或该 Claude 版本拒绝采样参数")
+            report.omitIfNonDefault(
+                "top_p",
+                settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP),
+                1.0,
+                "模型能力未知或该 Claude 版本拒绝采样参数",
+            )
             null
         }
         val topK = if (capabilities.samplers) {
-            settings.topK?.takeIf { it > 0 }?.also { report.applied("top_k") }
+            settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)
+                ?.takeIf { it > 0 }
+                ?.also { report.applied("top_k") }
         } else {
-            settings.topK?.takeIf { it > 0 }?.let {
+            settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)?.takeIf { it > 0 }?.let {
                 report.omitted("top_k", "模型能力未知或该 Claude 版本拒绝采样参数")
             }
             null
         }
-        settings.seed?.let { report.omitted("seed", "Anthropic Messages 无 seed 字段") }
-        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Anthropic Messages 无对应字段")
-        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Anthropic Messages 无对应字段")
+        settings.enabledValue(PresetGenerationParameter.SEED, settings.seed)
+            ?.let { report.omitted("seed", "Anthropic Messages 无 seed 字段") }
+        report.omitIfNonDefault(
+            "frequency_penalty",
+            settings.enabledValue(PresetGenerationParameter.FREQUENCY_PENALTY, settings.frequencyPenalty),
+            0.0,
+            "Anthropic Messages 无对应字段",
+        )
+        report.omitIfNonDefault(
+            "presence_penalty",
+            settings.enabledValue(PresetGenerationParameter.PRESENCE_PENALTY, settings.presencePenalty),
+            0.0,
+            "Anthropic Messages 无对应字段",
+        )
         if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
             report.omitted("names_behavior", "Anthropic Messages 无 author name 字段")
         }
 
         var thinking: AnthropicThinking? = null
         var outputConfig: AnthropicOutputConfig? = null
-        if (settings.reasoningEffort != PresetReasoningEffort.AUTO) {
+        if (
+            settings.isEnabled(PresetGenerationParameter.REASONING_EFFORT) &&
+            settings.reasoningEffort != PresetReasoningEffort.AUTO
+        ) {
             when {
                 capabilities.adaptiveThinking -> {
                     thinking = AnthropicThinking(AnthropicThinkingType.ADAPTIVE)
@@ -539,6 +610,12 @@ internal object GenerationRequestMapper {
                 }
                 else -> report.omitted("reasoning_effort", "模型 thinking 能力未知")
             }
+        }
+        if (
+            settings.isEnabled(PresetGenerationParameter.VERBOSITY) &&
+            settings.verbosity != PresetVerbosity.AUTO
+        ) {
+            report.omitted("verbosity", "Anthropic Messages 无 verbosity 字段")
         }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
@@ -566,6 +643,12 @@ internal object GenerationRequestMapper {
             }
         }
         if (mapped.isEmpty()) throw GatewayException.Configuration("Anthropic request requires conversation messages")
+        if (!settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) {
+            report.omitted(
+                "output_limit",
+                "Preset 已关闭回复上限；Anthropic Messages 要求 max_tokens，已使用播放器安全预算",
+            )
+        }
         return PreparedGenerationRequest.Anthropic(
             request = AnthropicMessagesRequest(
                 model = connection.selectedModel,
@@ -584,6 +667,7 @@ internal object GenerationRequestMapper {
                 system,
                 mapped.map { it.role.wire to it.text },
                 prefillApplied = prefill != null,
+                requestOutputLimit = plan.maxOutputTokens,
                 report = report,
             ),
         )
@@ -595,17 +679,42 @@ internal object GenerationRequestMapper {
         report: PresetMappingReport,
     ): PreparedGenerationRequest.Interactions {
         val settings = plan.generationSettings
-        settings.seed?.let { report.applied("seed") }
-        report.omitIfNonDefault("temperature", settings.temperature, 1.0, "计划约定 Interactions 仅映射 output、seed 与 thinking level")
-        report.omitIfNonDefault("top_p", settings.topP, 1.0, "计划约定 Interactions 不映射 top_p")
-        settings.topK?.takeIf { it > 0 }?.let { report.omitted("top_k", "Interactions 映射边界不包含 top_k") }
-        report.omitIfNonDefault("frequency_penalty", settings.frequencyPenalty, 0.0, "Interactions 映射边界不包含 frequency penalty")
-        report.omitIfNonDefault("presence_penalty", settings.presencePenalty, 0.0, "Interactions 映射边界不包含 presence penalty")
+        val seed = settings.enabledValue(PresetGenerationParameter.SEED, settings.seed)
+        seed?.let { report.applied("seed") }
+        report.omitIfNonDefault(
+            "temperature",
+            settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature),
+            1.0,
+            "计划约定 Interactions 仅映射 output、seed 与 thinking level",
+        )
+        report.omitIfNonDefault(
+            "top_p",
+            settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP),
+            1.0,
+            "计划约定 Interactions 不映射 top_p",
+        )
+        settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)?.takeIf { it > 0 }?.let {
+            report.omitted("top_k", "Interactions 映射边界不包含 top_k")
+        }
+        report.omitIfNonDefault(
+            "frequency_penalty",
+            settings.enabledValue(PresetGenerationParameter.FREQUENCY_PENALTY, settings.frequencyPenalty),
+            0.0,
+            "Interactions 映射边界不包含 frequency penalty",
+        )
+        report.omitIfNonDefault(
+            "presence_penalty",
+            settings.enabledValue(PresetGenerationParameter.PRESENCE_PENALTY, settings.presencePenalty),
+            0.0,
+            "Interactions 映射边界不包含 presence penalty",
+        )
         if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "Interactions 无法表达 assistant prefill")
         if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
             report.omitted("names_behavior", "Interactions 无 author name 字段")
         }
-        val thinkingLevel = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+        val thinkingLevel = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
+            ?.takeUnless { it == PresetReasoningEffort.AUTO }
+            ?.let { effort ->
             val supported = connection.selectedModel.geminiThinkingLevels()
             if (supported.isEmpty()) {
                 report.omitted("reasoning_effort", "模型 thinking level 能力未知")
@@ -614,6 +723,12 @@ internal object GenerationRequestMapper {
                 report.applied("reasoning_effort")
                 effort.geminiThinkingLevel(supported, report)
             }
+        }
+        if (
+            settings.isEnabled(PresetGenerationParameter.VERBOSITY) &&
+            settings.verbosity != PresetVerbosity.AUTO
+        ) {
+            report.omitted("verbosity", "Interactions 映射边界不包含 verbosity")
         }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
@@ -637,8 +752,10 @@ internal object GenerationRequestMapper {
                 model = connection.selectedModel,
                 input = steps,
                 systemInstruction = system,
-                maxOutputTokens = plan.maxOutputTokens,
-                seed = settings.seed,
+                maxOutputTokens = plan.maxOutputTokens.takeIf {
+                    settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+                },
+                seed = seed,
                 thinkingLevel = thinkingLevel,
                 previousInteractionId = null,
                 store = false,
@@ -665,20 +782,32 @@ internal object GenerationRequestMapper {
         report: PresetMappingReport,
     ): PreparedGenerationRequest.GenerateContent {
         val settings = plan.generationSettings
-        val temperature = settings.temperature.validMinimum("temperature", 0.0, report)
+        val temperature = settings.enabledValue(PresetGenerationParameter.TEMPERATURE, settings.temperature)
+            .validMinimum("temperature", 0.0, report)
             ?.also { report.applied("temperature") }
-        val topP = settings.topP.validRange("top_p", 0.0..1.0, report)?.also { report.applied("top_p") }
-        val topK = settings.topK?.takeIf { it > 0 }?.also { report.applied("top_k") }
-        val frequencyPenalty = settings.frequencyPenalty.validRange("frequency_penalty", -2.0..2.0, report)
+        val topP = settings.enabledValue(PresetGenerationParameter.TOP_P, settings.topP)
+            .validRange("top_p", 0.0..1.0, report)
+            ?.also { report.applied("top_p") }
+        val topK = settings.enabledValue(PresetGenerationParameter.TOP_K, settings.topK)
+            ?.takeIf { it > 0 }
+            ?.also { report.applied("top_k") }
+        val frequencyPenalty = settings
+            .enabledValue(PresetGenerationParameter.FREQUENCY_PENALTY, settings.frequencyPenalty)
+            .validRange("frequency_penalty", -2.0..2.0, report)
             ?.also { report.applied("frequency_penalty") }
-        val presencePenalty = settings.presencePenalty.validRange("presence_penalty", -2.0..2.0, report)
+        val presencePenalty = settings
+            .enabledValue(PresetGenerationParameter.PRESENCE_PENALTY, settings.presencePenalty)
+            .validRange("presence_penalty", -2.0..2.0, report)
             ?.also { report.applied("presence_penalty") }
-        settings.seed?.let { report.applied("seed") }
+        val seed = settings.enabledValue(PresetGenerationParameter.SEED, settings.seed)
+        seed?.let { report.applied("seed") }
         if (plan.assistantPrefill.isNotBlank()) report.omitted("assistant_prefill", "GenerateContent 无法表达 assistant prefill")
         if (plan.messages.any { !it.authorName.isNullOrBlank() }) {
             report.omitted("names_behavior", "GenerateContent 无 author name 字段")
         }
-        val thinking = settings.reasoningEffort.takeUnless { it == PresetReasoningEffort.AUTO }?.let { effort ->
+        val thinking = settings.enabledValue(PresetGenerationParameter.REASONING_EFFORT, settings.reasoningEffort)
+            ?.takeUnless { it == PresetReasoningEffort.AUTO }
+            ?.let { effort ->
             when (connection.selectedModel.geminiThinkingMode()) {
                 GeminiThinkingMode.LEVEL -> {
                     report.applied("reasoning_effort")
@@ -703,6 +832,12 @@ internal object GenerationRequestMapper {
                 }
             }
         }
+        if (
+            settings.isEnabled(PresetGenerationParameter.VERBOSITY) &&
+            settings.verbosity != PresetVerbosity.AUTO
+        ) {
+            report.omitted("verbosity", "GenerateContent 无 verbosity 字段")
+        }
         val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
         val system = leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
         val raw = plan.messages.drop(leadingSystem.size).map { message ->
@@ -726,11 +861,13 @@ internal object GenerationRequestMapper {
                 model = connection.selectedModel,
                 contents = contents,
                 systemInstruction = system,
-                maxOutputTokens = plan.maxOutputTokens,
+                maxOutputTokens = plan.maxOutputTokens.takeIf {
+                    settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+                },
                 temperature = temperature,
                 topP = topP,
                 topK = topK,
-                seed = settings.seed,
+                seed = seed,
                 frequencyPenalty = frequencyPenalty,
                 presencePenalty = presencePenalty,
                 thinking = thinking,
@@ -742,7 +879,9 @@ internal object GenerationRequestMapper {
                 messages = contents.map {
                     ProviderPreviewMessage(it.role.wire, it.text, it.thoughtSignature != null)
                 },
-                maxOutputTokens = plan.maxOutputTokens,
+                maxOutputTokens = plan.maxOutputTokens.takeIf {
+                    settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+                },
                 store = false,
                 usesHostedState = false,
                 assistantPrefillApplied = false,
@@ -758,13 +897,16 @@ internal object GenerationRequestMapper {
         system: String?,
         messages: List<Pair<String, String>>,
         prefillApplied: Boolean = false,
+        requestOutputLimit: Int? = plan.maxOutputTokens.takeIf {
+            plan.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
+        },
         report: PresetMappingReport,
     ) = ProviderRequestPreview(
         protocol = connection.protocol,
         model = connection.selectedModel,
         systemInstruction = system,
         messages = messages.map { (role, content) -> ProviderPreviewMessage(role, content) },
-        maxOutputTokens = plan.maxOutputTokens,
+        maxOutputTokens = requestOutputLimit,
         store = false,
         usesHostedState = false,
         assistantPrefillApplied = prefillApplied,
@@ -790,11 +932,21 @@ private class PresetMappingReport {
     }
 
     fun recordUniversallyUnmapped(settings: PresetGenerationSettings) {
-        omitIfNonDefault("top_a", settings.topA, 0.0, "五种 Provider adapter 均无安全的等价字段")
-        omitIfNonDefault("min_p", settings.minP, 0.0, "五种 Provider adapter 均无安全的等价字段")
+        omitIfNonDefault(
+            "top_a",
+            settings.enabledValue(PresetGenerationParameter.TOP_A, settings.topA),
+            0.0,
+            "五种 Provider adapter 均无安全的等价字段",
+        )
+        omitIfNonDefault(
+            "min_p",
+            settings.enabledValue(PresetGenerationParameter.MIN_P, settings.minP),
+            0.0,
+            "五种 Provider adapter 均无安全的等价字段",
+        )
         omitIfNonDefault(
             "repetition_penalty",
-            settings.repetitionPenalty,
+            settings.enabledValue(PresetGenerationParameter.REPETITION_PENALTY, settings.repetitionPenalty),
             1.0,
             "五种 Provider adapter 均无安全的等价字段",
         )
@@ -804,6 +956,11 @@ private class PresetMappingReport {
 
     fun omissions(): List<PresetControlOmission> = omitted.values.toList()
 }
+
+private fun <T> PresetGenerationSettings.enabledValue(
+    parameter: PresetGenerationParameter,
+    value: T?,
+): T? = value.takeIf { isEnabled(parameter) }
 
 private fun Double?.validRange(
     control: String,

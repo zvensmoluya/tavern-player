@@ -34,7 +34,8 @@
 - 内置“默认”Preset 使用 ST 默认 Prompt 骨架、中性 main prompt、模型 context 上限和 1024 回复上限。它不可删除或直接编辑，只能复制。
 - 导入保留定义池、全局 Prompt order、未使用定义、Prompt / Regex / 控制字段和未知扩展；连接 endpoint、代理密码、自定义 headers/body、账户标识等敏感数据在落盘前删除，原始未清理文件不会保存。
 - 名称大小写不敏感且唯一；重复内容复用已有资产，同名异内容自动编号。删除 active 项会原子回退到内置默认。
-- 编辑采用显式保存 / 取消。可以编辑已有 Prompt 与 order、生成参数和控制 Prompt，并启停已有 Preset Regex；不新增或删除 Prompt 定义，也不新建或重写 Regex。
+- 编辑采用显式保存 / 取消。主界面只把普通 Prompt 与 Preset Regex 投影为快速开关，不建立通用 Context 管理器；Prompt 文本编辑位于单项详情，role、placement / depth、order 与控制格式位于更深的兼容入口。
+- 模型请求参数是低频 Preset 条目，位于独立次级面板并可逐项开启或关闭。关闭时保留本地值，但从兼容 Provider 请求和 ST 导出中移除；切换 Provider 不反向修改 Preset。Provider 协议必填值由播放器的安全预算补齐并进入诊断。
 
 ### World Book
 
@@ -93,7 +94,7 @@
 - 不支持 Provider 原生多候选 `n`；swipe 通过再次生成新候选实现。
 - V1 不支持 Multimodal，包括用户图片、附件、模型图片生成和图片内联。
 - V1 不支持 JSON Schema / structured output、Provider web search、logprobs 等特殊生成模式。
-- OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 分别映射各自能表达的 Preset 参数。未知模型能力采用保守省略，所有省略或降级进入请求预览与上下文诊断，不阻止普通生成。
+- OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent 分别映射已开启且各自能表达的 Preset 参数。用户关闭的字段先于能力判断被拔除；未知模型能力采用保守省略，协议要求但 Preset 已关闭的必填字段使用播放器安全值。能力省略或降级进入请求预览与上下文诊断，不阻止普通生成。
 - `top_a`、`min_p`、`repetition_penalty` 以及协议无法表达的 assistant prefill 只保留、导出并告警。Tavern Player 强制 `stream=true`、单候选和无 Provider hosted state。
 
 ## 6. Tools、扩展与外部系统

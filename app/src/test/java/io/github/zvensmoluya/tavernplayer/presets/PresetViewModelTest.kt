@@ -1,6 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.presets
 
 import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.conversation.MainDispatcherRule
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -45,10 +46,15 @@ class PresetViewModelTest {
                 generationSettings = it.generationSettings.copy(maxOutputTokens = 2_048),
             )
         }
+        viewModel.setGenerationParameterEnabled(PresetGenerationParameter.OUTPUT_LIMIT, false)
         viewModel.save()
 
         assertEquals("Saved", repository.get(copied.id)?.name)
         assertEquals(2_048, repository.get(copied.id)?.generationSettings?.maxOutputTokens)
+        assertFalse(
+            repository.get(copied.id)?.generationSettings
+                ?.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT) == true,
+        )
         assertFalse(viewModel.uiState.value.dirty)
     }
 }

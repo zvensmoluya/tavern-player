@@ -9,6 +9,7 @@ import io.github.zvensmoluya.modelgateway.gemini.GeminiContentRole
 import io.github.zvensmoluya.modelgateway.gemini.GeminiInteractionInputStep
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
 import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
@@ -182,6 +183,63 @@ class GenerationRequestMapperTest {
         assertNull(prepared.request.verbosity)
         assertTrue(prepared.preview.omittedPresetControls.any { it.control == "reasoning_effort" })
         assertTrue(prepared.preview.omittedPresetControls.any { it.control == "verbosity" })
+    }
+
+    @Test
+    fun `disabled preset request controls are unplugged before provider capability mapping`() {
+        val settings = plan().generationSettings.copy(
+            temperature = 0.4,
+            topP = 0.7,
+            seed = 42,
+            reasoningEffort = PresetReasoningEffort.HIGH,
+            topA = 0.2,
+            disabledParameters = setOf(
+                PresetGenerationParameter.OUTPUT_LIMIT,
+                PresetGenerationParameter.TEMPERATURE,
+                PresetGenerationParameter.TOP_P,
+                PresetGenerationParameter.SEED,
+                PresetGenerationParameter.REASONING_EFFORT,
+                PresetGenerationParameter.TOP_A,
+            ),
+        )
+        val disabled = plan().copy(generationSettings = settings)
+
+        val responses = GenerationRequestMapper.map(connection(ModelProtocol.OPENAI_RESPONSES), disabled)
+            as PreparedGenerationRequest.Responses
+        assertNull(responses.request.maxOutputTokens)
+        assertNull(responses.request.temperature)
+        assertNull(responses.request.topP)
+        assertNull(responses.request.reasoning)
+        assertNull(responses.preview.maxOutputTokens)
+        assertFalse(responses.preview.appliedPresetControls.contains("output_limit"))
+        assertFalse(responses.preview.omittedPresetControls.any { it.control == "top_a" })
+
+        val chat = GenerationRequestMapper.map(connection(ModelProtocol.OPENAI_CHAT_COMPLETIONS), disabled)
+            as PreparedGenerationRequest.Chat
+        assertNull(chat.request.maxCompletionTokens)
+        assertNull(chat.request.temperature)
+        assertNull(chat.request.topP)
+        assertNull(chat.request.seed)
+        assertNull(chat.request.reasoningEffort)
+
+        val anthropic = GenerationRequestMapper.map(connection(ModelProtocol.ANTHROPIC_MESSAGES), disabled)
+            as PreparedGenerationRequest.Anthropic
+        assertEquals(disabled.maxOutputTokens, anthropic.request.maxTokens)
+        assertEquals(disabled.maxOutputTokens, anthropic.preview.maxOutputTokens)
+        assertTrue(anthropic.preview.omittedPresetControls.any { it.control == "output_limit" })
+
+        val interactions = GenerationRequestMapper.map(connection(ModelProtocol.GEMINI_INTERACTIONS), disabled)
+            as PreparedGenerationRequest.Interactions
+        assertNull(interactions.request.maxOutputTokens)
+        assertNull(interactions.request.seed)
+
+        val generate = GenerationRequestMapper.map(connection(ModelProtocol.GEMINI_GENERATE_CONTENT), disabled)
+            as PreparedGenerationRequest.GenerateContent
+        assertNull(generate.request.maxOutputTokens)
+        assertNull(generate.request.temperature)
+        assertNull(generate.request.topP)
+        assertNull(generate.request.seed)
+        assertNull(generate.request.thinking)
     }
 
     @Test

@@ -26,6 +26,9 @@ class PresetImporterTest {
         assertEquals("默认", preset.name)
         assertNull(preset.generationSettings.maxContextTokens)
         assertEquals(1_024, preset.generationSettings.maxOutputTokens)
+        assertTrue(preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT))
+        assertFalse(preset.generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE))
+        assertFalse(preset.generationSettings.isEnabled(PresetGenerationParameter.TOP_P))
         assertEquals(
             "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.",
             preset.prompts.single { it.identifier == "main" }.content,
@@ -51,6 +54,9 @@ class PresetImporterTest {
         assertEquals(setOf(PresetGenerationTrigger.REGENERATE), absolute.triggers)
         assertEquals(setOf("continue"), absolute.unknownTriggers)
         assertEquals(1, preset.regexScripts.size)
+        assertTrue(preset.generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE))
+        assertTrue(preset.generationSettings.isEnabled(PresetGenerationParameter.TOP_P))
+        assertFalse(preset.generationSettings.isEnabled(PresetGenerationParameter.SEED))
         assertEquals(setOf(RegexPlacement.AI_OUTPUT, RegexPlacement.REASONING), preset.regexScripts.single().placements)
         assertTrue(result.diagnostics.any { it.code == "MISSING_PROMPT_DEFINITION_REFERENCE" })
         assertTrue(result.diagnostics.any { it.code == "UNSUPPORTED_PROMPT_TRIGGER" })
@@ -89,6 +95,8 @@ class PresetImporterTest {
         assertEquals("Legacy auxiliary", result.preset.prompts.single { it.identifier == "nsfw" }.content)
         assertEquals("Legacy post-history", result.preset.prompts.single { it.identifier == "jailbreak" }.content)
         assertEquals(0.7, result.preset.generationSettings.temperature)
+        assertTrue(result.preset.generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE))
+        assertFalse(result.preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT))
         assertTrue(result.diagnostics.any { it.code == "LEGACY_PROMPTS_MIGRATED" })
     }
 
@@ -137,7 +145,7 @@ class PresetImporterTest {
             generationSettings = imported.preset.generationSettings.copy(
                 maxOutputTokens = 777,
                 seed = 123,
-            ),
+            ).withEnabled(PresetGenerationParameter.SEED, true),
             controlSettings = imported.preset.controlSettings.copy(
                 assistantPrefill = "Prefill",
                 showThoughts = false,
@@ -161,6 +169,24 @@ class PresetImporterTest {
         assertTrue(root["stream_openai"]!!.jsonPrimitive.boolean)
         assertEquals(1, root["n"]!!.jsonPrimitive.content.toInt())
         assertTrue(root["prompt_order"]!!.jsonArray.hasGlobalOrder(100001))
+    }
+
+    @Test
+    fun disabledRequestParametersKeepTheirValueButDisappearFromExportAndRestoreAsDisabled() {
+        val imported = importer.import(complexPreset(), "Switches.json") as PresetImportResult.Ready
+        val disabled = imported.preset.copy(
+            generationSettings = imported.preset.generationSettings
+                .withEnabled(PresetGenerationParameter.TEMPERATURE, false),
+        )
+
+        assertEquals(0.8, disabled.generationSettings.temperature)
+        val exported = PresetExporter.export(disabled)
+        val root = Json.parseToJsonElement(exported.decodeToString()).jsonObject
+        val reimported = importer.import(exported, "Switches.json") as PresetImportResult.Ready
+
+        assertFalse(root.containsKey("temperature"))
+        assertFalse(reimported.preset.generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE))
+        assertTrue(reimported.preset.generationSettings.isEnabled(PresetGenerationParameter.TOP_P))
     }
 
     @Test

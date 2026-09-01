@@ -2,6 +2,7 @@ package io.github.zvensmoluya.tavernplayer.presets
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
+import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetImporter
 import java.io.File
@@ -62,10 +63,19 @@ class PresetRepositoryTest {
             "Focused.json",
         ) as PresetLibraryImportResult.Saved
 
+        repository.save(
+            imported.preset.copy(
+                generationSettings = imported.preset.generationSettings
+                    .withEnabled(PresetGenerationParameter.TEMPERATURE, false),
+            ),
+        )
         repository.activate(imported.preset.id)
         val restored = PresetRepository(root, ioDispatcher = dispatcher)
         assertEquals(imported.preset.id, restored.library.value.activePresetId)
         assertEquals(imported.preset.id, restored.captureActive().id)
+        assertFalse(
+            restored.captureActive().generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE),
+        )
 
         restored.delete(imported.preset.id)
         assertEquals(BuiltInPresets.DEFAULT_ID, restored.library.value.activePresetId)
