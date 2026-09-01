@@ -7,7 +7,9 @@ plugins {
 
 subprojects {
     val communityCard = providers.systemProperty("communityCard")
+    val stDefaultPreset = providers.systemProperty("stDefaultPreset")
     tasks.withType<Test>().configureEach {
         communityCard.orNull?.let { path -> systemProperty("communityCard", path) }
+        stDefaultPreset.orNull?.let { path -> systemProperty("stDefaultPreset", path) }
     }
 }

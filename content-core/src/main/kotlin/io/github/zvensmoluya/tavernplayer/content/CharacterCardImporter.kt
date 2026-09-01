@@ -409,7 +409,7 @@ class CharacterCardImporter(
     private fun parseRegexScripts(
         element: JsonElement?,
         diagnostics: MutableList<CompatibilityDiagnostic>,
-    ): List<CharacterRegexDefinition> {
+    ): List<RegexDefinition> {
         if (element == null || element is JsonNull) return emptyList()
         val array = element as? JsonArray ?: run {
             diagnostics.warning("INVALID_REGEX_SCRIPTS", "extensions.regex_scripts 不是数组，已忽略")
@@ -436,7 +436,7 @@ class CharacterCardImporter(
                     "Regex“${raw.string("scriptName", diagnostics).orEmpty()}”包含 Slash Command placement；当前产品不执行 slash/STscript",
                 )
             }
-            CharacterRegexDefinition(
+            RegexDefinition(
                 id = raw.primitiveText("id") ?: "regex-$index",
                 name = raw.string("scriptName", diagnostics).orEmpty().ifBlank { "Regex ${index + 1}" },
                 findRegex = raw.string("findRegex", diagnostics).orEmpty(),
@@ -494,7 +494,7 @@ class CharacterCardImporter(
 
     private fun detectOpaqueCapabilities(
         extensions: JsonObject,
-        regexScripts: List<CharacterRegexDefinition>,
+        regexScripts: List<RegexDefinition>,
         worldBooks: List<WorldBookDefinition>,
         diagnostics: MutableList<CompatibilityDiagnostic>,
     ) {

@@ -141,7 +141,7 @@ enum class RegexSubstitutionMode {
 }
 
 @Serializable
-data class CharacterRegexDefinition(
+data class RegexDefinition(
     val id: String,
     val name: String,
     val findRegex: String,
@@ -187,7 +187,7 @@ data class CharacterAsset(
     val modificationDateEpochSeconds: Long? = null,
     val depthPrompt: CharacterDepthPrompt? = null,
     val worldBooks: List<WorldBookDefinition> = emptyList(),
-    val regexScripts: List<CharacterRegexDefinition> = emptyList(),
+    val regexScripts: List<RegexDefinition> = emptyList(),
     val assets: List<CharacterAssetReference> = emptyList(),
     val extensions: JsonObject = JsonObject(emptyMap()),
     val rawCard: JsonObject = JsonObject(emptyMap()),
@@ -255,7 +255,7 @@ data class CharacterSnapshot(
     val characterVersion: String,
     val depthPrompt: CharacterDepthPrompt?,
     val worldBooks: List<WorldBookDefinition>,
-    val regexScripts: List<CharacterRegexDefinition>,
+    val regexScripts: List<RegexDefinition>,
     val diagnostics: List<CompatibilityDiagnostic>,
 )
 
@@ -264,6 +264,12 @@ enum class CharacterImportStatus {
     READY_WITH_WARNINGS,
     REJECTED,
 }
+
+@Deprecated(
+    message = "Regex definitions are shared by Character and Preset assets; use RegexDefinition",
+    replaceWith = ReplaceWith("RegexDefinition"),
+)
+typealias CharacterRegexDefinition = RegexDefinition
 
 sealed interface CharacterImportResult {
     val status: CharacterImportStatus
