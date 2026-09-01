@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -99,6 +101,15 @@ fun ChatScreen(
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
+    val messageListState = rememberLazyListState()
+    val latestMessage = state.messages.lastOrNull()
+    val scrollAnchorIndex = state.messages.size +
+        (if (state.message != null) 1 else 0) +
+        (if (state.retryAvailable) 1 else 0) +
+        (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) 1 else 0)
+    LaunchedEffect(latestMessage?.message?.id, latestMessage?.status, scrollAnchorIndex, state.message) {
+        if (latestMessage != null) messageListState.scrollToItem(scrollAnchorIndex)
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -149,6 +160,7 @@ fun ChatScreen(
         },
     ) { padding ->
         LazyColumn(
+            state = messageListState,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -205,6 +217,9 @@ fun ChatScreen(
                         }
                     }
                 }
+            }
+            item("latest-message-anchor") {
+                Spacer(Modifier.height(1.dp).testTag("latestMessageAnchor"))
             }
         }
     }
@@ -308,7 +323,11 @@ private fun MessageBubble(state: ChatMessageState) {
                 if (state.displayContent.isNotEmpty()) {
                     SafeMarkdownText(state.displayContent)
                 } else if (state.status == ChatMessageStatus.STREAMING) {
-                    Text("正在生成…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (state.message.reasoning.isEmpty()) "正在等待回复…" else "正在思考…",
+                        modifier = Modifier.testTag("generationStatus"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 val reasoning = state.displayReasoning.joinToString("\n").trim()
                 if (reasoning.isNotEmpty()) {

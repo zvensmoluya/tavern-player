@@ -87,7 +87,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 
-界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库和 Chat 都可以进入 Preset 中心；Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出，详情默认只展示普通 Prompt 与 Regex 快速开关；单项内容、兼容字段和结构设置位于逐层次级入口，请求参数使用独立 bottom sheet 并逐项拔插。全部修改仍显式保存或取消，不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
+界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库和 Chat 都可以进入 Preset 中心；Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出，详情默认只展示普通 Prompt 与 Regex 快速开关；单项内容、兼容字段和结构设置位于逐层次级入口，请求参数使用独立 bottom sheet 并逐项拔插。全部修改仍显式保存或取消，不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
 聊天正文不使用 WebView。渲染前删除 `script` / `style` 块、剥离其他 HTML 标签并解码实体，只把基础 Markdown 交给 Compose 展示。
 

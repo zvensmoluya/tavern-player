@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -81,6 +82,43 @@ class ChatScreenTest {
         compose.onNodeWithTag("cancelGeneration").performClick()
 
         assertTrue(cancelled)
+    }
+
+    @Test
+    fun `reasoning only stream reports thinking instead of appearing stuck`() {
+        val assistant = message(
+            id = "thinking",
+            content = "",
+            reasoning = listOf(ReasoningBlock(text = "先判断来客的意图")),
+        )
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(
+                        running = true,
+                        messages = listOf(ChatMessageState(assistant, ChatMessageStatus.STREAMING)),
+                    ),
+                    actions = actions(),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("generationStatus").assertTextEquals("正在思考…")
+    }
+
+    @Test
+    fun `restored chat starts at the latest message`() {
+        val messages = (1..20).map { index ->
+            ChatMessageState(message(id = "message-$index", content = "消息 $index"))
+        }
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(state = state(messages = messages), actions = actions())
+            }
+        }
+
+        compose.waitForIdle()
+        compose.onNodeWithText("消息 20").assertIsDisplayed()
     }
 
     @Test
