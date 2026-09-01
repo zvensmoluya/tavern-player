@@ -118,8 +118,11 @@ class ContextBudgeter(
         return input.preset.generationSettings.maxContextTokens?.let { minOf(it, modelLimit) } ?: modelLimit
     }
 
-    fun outputLimit(input: NormalGenerationInput): Int =
-        minOf(input.preset.generationSettings.maxOutputTokens, input.modelOutputTokens ?: Int.MAX_VALUE)
+    fun outputLimit(input: NormalGenerationInput): Int {
+        val contextLimit = contextLimit(input)
+        val modelLimit = input.modelOutputTokens ?: unknownModelOutputLimit(contextLimit)
+        return minOf(input.preset.generationSettings.maxOutputTokens, modelLimit)
+    }
 
     fun budget(
         messages: List<PreparedMessage>,
@@ -134,6 +137,29 @@ class ContextBudgeter(
         val working = messages.toMutableList()
         val trace = mutableListOf<CompilationTraceEntry>()
         val diagnostics = mutableListOf<CompilationDiagnostic>()
+        if (input.modelContextTokens == null && knownContextLimit(input.modelId) == null) {
+            diagnostics += CompilationDiagnostic(
+                severity = DiagnosticSeverity.WARNING,
+                code = "MODEL_CONTEXT_LIMIT_FALLBACK",
+                message = "模型目录未提供 context 上限，且模型名称未命中已知表；本轮使用 $contextLimit tokens 的安全上限",
+            )
+        }
+        val requestedOutputTokens = input.preset.generationSettings.maxOutputTokens
+        if (outputTokens < requestedOutputTokens) {
+            diagnostics += CompilationDiagnostic(
+                severity = DiagnosticSeverity.WARNING,
+                code = if (input.modelOutputTokens == null) {
+                    "MODEL_OUTPUT_LIMIT_FALLBACK"
+                } else {
+                    "MODEL_OUTPUT_LIMIT_CLAMPED"
+                },
+                message = if (input.modelOutputTokens == null) {
+                    "模型目录未提供回复上限；Preset 请求 $requestedOutputTokens tokens，本轮安全预留 $outputTokens tokens"
+                } else {
+                    "Preset 请求 $requestedOutputTokens tokens，已按模型回复上限收敛为 $outputTokens tokens"
+                },
+            )
+        }
         var count = accounting.count(working, input.modelId)
 
         while (count.tokens > inputLimit) {
@@ -198,7 +224,11 @@ class ContextBudgeter(
         }
     }
 
+    private fun unknownModelOutputLimit(contextLimit: Int): Int =
+        minOf(DEFAULT_UNKNOWN_MODEL_OUTPUT_LIMIT, (contextLimit / 2).coerceAtLeast(1))
+
     companion object {
         private const val DEFAULT_CONTEXT_LIMIT = 32_768
+        private const val DEFAULT_UNKNOWN_MODEL_OUTPUT_LIMIT = 16_384
     }
 }

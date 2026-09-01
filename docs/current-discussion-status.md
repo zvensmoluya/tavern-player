@@ -82,6 +82,7 @@
 
 - Context 管理是必须能力。保留 ST 的内容取舍语义，包括回复 token 预留、必选 Prompt、历史由近到远进入、examples 与 history 的预算关系、World Book 独立预算，以及 depth injection 等内容的既定优先关系。
 - Tokenizer、模型 context window 和实际请求 token 计算由 Tavern Player 自己正确实现。兼容目标是 ST 的 context semantics，不是 ST 当前的 token accounting implementation。
+- 模型目录和已知模型表都无法给出能力时，context 使用 32K 安全 fallback；output 未知且 Preset 请求过高时，安全预留不超过有效 context 的一半和 16384 tokens。该收敛必须进入诊断，不能静默改写 Preset 资产。
 
 ## 5. Provider 与回复能力
 

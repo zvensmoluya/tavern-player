@@ -68,7 +68,8 @@ World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 ke
 
 - 已映射的 OpenAI 模型使用 JTokkit 的 r50k / p50k / cl100k / o200k 编码与消息 framing；
 - 未知或自定义 endpoint 使用带消息开销的保守 UTF-8 估算；
-- context limit 依次取模型目录、已验证模型表和 32K fallback，再受 Preset 与模型 output limit 约束。
+- context limit 依次取模型目录、已验证模型表和 32K fallback，再受 Preset 上限约束；
+- 模型目录未提供 output limit 时，回复预留采用“不超过有效 context 一半、最高 16384”的安全 fallback，并且只在 Preset 请求更高值时收敛；模型目录提供的 output limit 仍然优先。
 
 最终协议请求构造后，Anthropic 与 Gemini 使用官方 count-tokens endpoint 验证；OpenAI 已映射模型使用本地精确计数；其余请求保持 `ESTIMATED`。超限时最多按同一优先级重新裁剪三次。
 

@@ -92,6 +92,60 @@ class TokenAccountingTest {
         assertEquals("MANDATORY_CONTEXT_OVERFLOW", result.failure?.code)
     }
 
+    @Test
+    fun `unknown model safely caps oversized preset output without consuming the entire fallback context`() {
+        val accounting = object : TokenAccounting {
+            override fun count(messages: List<PreparedMessage>, modelId: String) =
+                TokenCount(11_268, TokenCountQuality.ESTIMATED, "fixture")
+        }
+        val result = ContextBudgeter(accounting).budget(
+            listOf(prepared("required", "main")),
+            input(context = 2_000_000, output = 65_535).copy(
+                modelId = "custom-model",
+                modelContextTokens = null,
+                modelOutputTokens = null,
+            ),
+        )
+
+        assertEquals(32_768, result.report.contextLimit)
+        assertEquals(16_384, result.report.reservedOutputTokens)
+        assertEquals(null, result.failure)
+        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_LIMIT_FALLBACK" })
+        assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_LIMIT_FALLBACK" })
+    }
+
+    @Test
+    fun `unknown model preserves a conservative preset output request`() {
+        val result = ContextBudgeter().budget(
+            listOf(prepared("required", "main")),
+            input(context = 2_000_000, output = 1_024).copy(
+                modelId = "custom-model",
+                modelContextTokens = null,
+                modelOutputTokens = null,
+            ),
+        )
+
+        assertEquals(1_024, result.report.reservedOutputTokens)
+        assertTrue(result.diagnostics.none { it.code == "MODEL_OUTPUT_LIMIT_FALLBACK" })
+    }
+
+    @Test
+    fun `catalog model limits take priority over fallback limits`() {
+        val result = ContextBudgeter().budget(
+            listOf(prepared("required", "main")),
+            input(context = 2_000_000, output = 65_535).copy(
+                modelId = "custom-model",
+                modelContextTokens = 128_000,
+                modelOutputTokens = 32_000,
+            ),
+        )
+
+        assertEquals(128_000, result.report.contextLimit)
+        assertEquals(32_000, result.report.reservedOutputTokens)
+        assertTrue(result.diagnostics.any { it.code == "MODEL_OUTPUT_LIMIT_CLAMPED" })
+        assertTrue(result.diagnostics.none { it.code == "MODEL_CONTEXT_LIMIT_FALLBACK" })
+    }
+
     private fun prepared(
         content: String,
         stage: String,
