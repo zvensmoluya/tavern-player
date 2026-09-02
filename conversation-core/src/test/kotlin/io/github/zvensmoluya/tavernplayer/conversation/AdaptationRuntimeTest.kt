@@ -7,6 +7,9 @@ import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormOption
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateRule
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
@@ -91,6 +94,62 @@ class AdaptationRuntimeTest {
         ) as AdaptationExecutionResult.Success
 
         assertEquals("Traveler meets Mara as Mira", result.effects.single().value)
+    }
+
+    @Test
+    fun `assistant update dialect ingests only complete whitelisted scalar operations`() {
+        val base = artifact()
+        val stateful = base.copy(
+            requiredCapabilities = base.requiredCapabilities + "state.ingest",
+            state = listOf(
+                AdaptationStateDefinition("world-day", AdaptationStateType.NUMBER, JsonPrimitive(1)),
+                AdaptationStateDefinition("world-location", AdaptationStateType.STRING, JsonPrimitive("家")),
+            ),
+            messageStateRules = listOf(
+                AdaptationMessageStateRule(
+                    AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
+                    listOf(
+                        AdaptationMessageStateMapping("世界.日期", "world-day"),
+                        AdaptationMessageStateMapping("世界.地点", "world-location"),
+                    ),
+                ),
+            ),
+        )
+        val initial = AdaptationRuntime().initialState(stateful)
+        val source = """
+            正文中的 _.set('世界.日期', 1, 99); 不应执行。
+            <UpdateVariable>
+              <Analysis>ignored</Analysis>
+              _.set('世界.日期', 1, 2); // 时间流逝
+              _.set('世界.地点', '家', '客厅, 东侧');
+              _.set('世界.日期', previousValue, 7);
+              _.set('世界.日期', 2, fetch('bad'));
+              _.set('世界.日期', 2, '9');
+              _.set('世界.地点', '家', 99);
+              _.set('未知.字段', 0, 7);
+            </UpdateVariable>
+            <UpdateVariable>
+              _.set('世界.日期', 2, 3);
+        """.trimIndent()
+
+        val result = AdaptationRuntime().ingestAssistantMessage(stateful, source, initial)
+
+        assertEquals(2, result.appliedUpdates)
+        assertEquals(2.0, (result.runtimeState.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
+        assertEquals("客厅, 东侧", (result.runtimeState.adaptationState["world-location"] as JsonPrimitive).content)
+        assertEquals(1.0, (initial.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
+    }
+
+    @Test
+    fun `native display template resolves state and identities`() {
+        val rendered = renderAdaptationText(
+            "{{user}}：{{state.world-day}} / {{char}}",
+            mapOf("world-day" to JsonPrimitive(3)),
+            userName = "Traveler",
+            characterName = "Mara",
+        )
+
+        assertEquals("Traveler：3 / Mara", rendered)
     }
 
     private fun artifact() = AdaptationArtifact(

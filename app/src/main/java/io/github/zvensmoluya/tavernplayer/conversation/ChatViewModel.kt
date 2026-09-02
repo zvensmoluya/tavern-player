@@ -389,6 +389,9 @@ class ChatViewModel(
                             generationId = generationId,
                             modelId = modelId,
                         )
+                        val projectedRuntime = record.character.adaptation?.let { adaptation ->
+                            adaptationRuntime.ingestAssistantMessage(adaptation, sourceText, projected.runtimeState).runtimeState
+                        } ?: projected.runtimeState
                         if (mode == MessageEditMode.TEXT_ONLY) {
                             selected.copy(
                                 message = selected.message.copy(
@@ -418,7 +421,7 @@ class ChatViewModel(
                                 edited = true,
                                 runtimeStateBefore = runtimeBefore,
                                 projectionRuntimeStateBefore = projectionRuntime,
-                                runtimeStateAfter = projected.runtimeState,
+                                runtimeStateAfter = projectedRuntime,
                             )
                         }
                     }
@@ -833,7 +836,10 @@ class ChatViewModel(
                 evaluationZoneId = evaluationZoneId,
             )
         }
-        pendingAssistantRuntime = projection.runtimeState
+        val projectedRuntime = record.character.adaptation?.let { adaptation ->
+            adaptationRuntime.ingestAssistantMessage(adaptation, rawAssistant, projection.runtimeState).runtimeState
+        } ?: projection.runtimeState
+        pendingAssistantRuntime = projectedRuntime
         val messageId = record.findVariant(variantId)?.message?.id
         if (messageId != null) {
             displayCache[messageId] = projection.displayText
@@ -856,7 +862,7 @@ class ChatViewModel(
                     reasoning = reasoning,
                 ),
                 generationPlan = plan,
-                runtimeStateAfter = projection.runtimeState,
+                runtimeStateAfter = projectedRuntime,
             )
         }
         if (projection.diagnostics.isNotEmpty()) {
@@ -1109,6 +1115,9 @@ class ChatViewModel(
                 generationId = "fallback-opening-$index",
                 modelId = "",
             ) as TextExpansionResult.Success
+            val expandedRuntime = snapshot.adaptation?.let { adaptation ->
+                adaptationRuntime.ingestAssistantMessage(adaptation, greeting, expanded.runtimeState).runtimeState
+            } ?: expanded.runtimeState
             MessageVariant(
                 id = idGenerator(),
                 message = ConversationMessage(
@@ -1124,7 +1133,7 @@ class ChatViewModel(
                 presetContentSha256 = preset.contentSha256,
                 runtimeStateBefore = initialRuntime,
                 projectionRuntimeStateBefore = initialRuntime,
-                runtimeStateAfter = expanded.runtimeState,
+                runtimeStateAfter = expandedRuntime,
             )
         }
         return ConversationRecord(

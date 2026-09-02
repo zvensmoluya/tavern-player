@@ -1,5 +1,12 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
+import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
+import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationView
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetControlSettings
@@ -239,6 +246,54 @@ class PromptCompilerTest {
         assertEquals("count=", first.storageText)
         assertEquals(null, first.runtimeState.localVariables["count"])
         assertEquals(first, replay)
+    }
+
+    @Test
+    fun `native attachment suppresses claimed character markup regex and removes its marker`() {
+        val input = baseInput()
+        val marker = "<StatusPlaceHolderImpl/>"
+        val character = input.character.copy(
+            regexScripts = listOf(
+                RegexDefinition(
+                    id = "status-html",
+                    name = "Status HTML",
+                    findRegex = marker,
+                    replaceString = "<html><script>unsafe()</script><div>legacy status</div></html>",
+                    placements = setOf(RegexPlacement.AI_OUTPUT),
+                    markdownOnly = true,
+                ),
+            ),
+            adaptation = AdaptationArtifact(
+                sourceSha256 = "a".repeat(64),
+                compiler = AdaptationCompiler("fixture", "1"),
+                status = AdaptationStatus.PARTIAL,
+                requiredCapabilities = listOf("ui.native"),
+                views = listOf(
+                    AdaptationView(
+                        id = "status-view",
+                        placement = AdaptationViewPlacement.MESSAGE_ATTACHMENT,
+                        trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_CONTAINS, marker),
+                        nodes = emptyList(),
+                    ),
+                ),
+            ),
+        )
+
+        val projection = compiler.projectAssistantOutput(
+            rawText = "Narrative\n$marker",
+            rawReasoning = emptyList(),
+            character = character,
+            persona = input.persona,
+            preset = input.preset,
+            runtimeState = ConversationRuntimeState(),
+            history = input.history,
+            conversationId = "chat",
+            generationId = "native-status",
+            modelId = "custom",
+        )
+
+        assertEquals("Narrative\n$marker", projection.storageText)
+        assertEquals("Narrative\n", projection.displayText)
     }
 
     @Test

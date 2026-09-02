@@ -8,6 +8,9 @@ import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
 import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateRule
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
@@ -86,7 +89,7 @@ class CharacterAndConversationRepositoryTest {
         val root = temporary.newFolder("adaptation")
         val characters = CharacterRepository(root)
         val source = """
-            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Form","first_mes":"<GAMESTART/>"}}
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Form","first_mes":"<GAMESTART/>","extensions":{"regex_scripts":[{"id":"opening","scriptName":"Opening","findRegex":"<GAMESTART/>","replaceString":"<form></form>","disabled":false,"placement":[2]}]}}}
         """.trimIndent().encodeToByteArray()
         val saved = characters.import(source, "native-form.json") as CharacterSaveResult.Saved
         val artifact = adaptation(saved.character.sourceSha256)
@@ -104,6 +107,37 @@ class CharacterAndConversationRepositoryTest {
         val conversation = conversations.create(installed.character, Persona("persona", "Traveler"), preset())
         assertEquals(artifact, conversation.character.adaptation)
         assertEquals("ready", conversation.runtimeState.adaptationState["phase"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `opening assistant update commits adaptation state`() = runTest {
+        val root = temporary.newFolder("opening-state")
+        val artifact = adaptation("a".repeat(64)).copy(
+            requiredCapabilities = listOf("ui.native", "chat.setDraft", "state.ingest"),
+            messageStateRules = listOf(
+                AdaptationMessageStateRule(
+                    dialect = AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
+                    mappings = listOf(AdaptationMessageStateMapping("world.phase", "phase")),
+                ),
+            ),
+        )
+        val character = CharacterAsset(
+            id = "opening-state",
+            name = "Opening State",
+            firstMessage = """
+                <GAMESTART/>
+                <UpdateVariable>
+                _.set('world.phase', 'ready', 'started');
+                </UpdateVariable>
+            """.trimIndent(),
+            adaptation = artifact,
+        )
+        val repository = ConversationRepository(root, PromptCompiler(), idFactory = { "opening-state-id" })
+
+        val conversation = repository.create(character, Persona("persona", "Traveler"), preset())
+
+        assertEquals("started", conversation.runtimeState.adaptationState["phase"]?.jsonPrimitive?.content)
+        assertEquals("started", conversation.turns.single().selected.runtimeStateAfter?.adaptationState?.get("phase")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -205,7 +239,7 @@ class CharacterAndConversationRepositoryTest {
         sourceSha256 = sourceSha256,
         compiler = AdaptationCompiler("fixture", "1"),
         status = AdaptationStatus.FULL,
-        requiredCapabilities = listOf("ui.native", "chat.setDraft", "state.write"),
+        requiredCapabilities = listOf("ui.native", "chat.setDraft"),
         state = listOf(AdaptationStateDefinition("phase", AdaptationStateType.STRING, JsonPrimitive("ready"))),
         views = listOf(
             AdaptationView(

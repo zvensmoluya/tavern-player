@@ -14,6 +14,14 @@ import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
+import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
+import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateRule
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.io.IOException
 import java.nio.file.Files
@@ -23,6 +31,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.double
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -62,6 +72,36 @@ class ChatViewModelTest {
         assertEquals(14L, state.lastTrace?.usage?.totalTokens)
         assertNotNull(state.lastTrace?.providerPreview)
         assertTrue(state.regenerateAvailable)
+    }
+
+    @Test
+    fun `completed assistant update dialect commits adaptation state`() = runTest {
+        val adaptation = AdaptationArtifact(
+            sourceSha256 = "a".repeat(64),
+            compiler = AdaptationCompiler("fixture", "1"),
+            status = AdaptationStatus.FULL,
+            requiredCapabilities = listOf("state.ingest"),
+            state = listOf(AdaptationStateDefinition("world-day", AdaptationStateType.NUMBER, JsonPrimitive(1))),
+            messageStateRules = listOf(
+                AdaptationMessageStateRule(
+                    AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
+                    listOf(AdaptationMessageStateMapping("世界.日期", "world-day")),
+                ),
+            ),
+        )
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                emit(GenerationEvent.TextDelta("正文\n<UpdateVariable>\n_.set('世界.日期', 1, 2);"))
+                emit(GenerationEvent.TextDelta("\n</UpdateVariable>"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+
+        assertEquals(2.0, (viewModel.uiState.value.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
     }
 
     @Test

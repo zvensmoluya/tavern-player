@@ -187,6 +187,8 @@ fun ChatScreen(
                     NativeAdaptationView(
                         view = view,
                         state = state.adaptationState,
+                        userName = state.persona.name,
+                        characterName = state.character.promptName,
                         enabled = !state.running,
                         onSubmit = { values -> actions.submitAdaptation(view.id, values) },
                     )
@@ -196,6 +198,8 @@ fun ChatScreen(
                 MessageBubble(
                     state = message,
                     adaptationState = state.adaptationState,
+                    userName = state.persona.name,
+                    characterName = state.character.promptName,
                     onSubmitAdaptation = actions.submitAdaptation,
                     editable = !state.running,
                     editingText = editingText.takeIf { editingMessageId == message.message.id },
@@ -394,6 +398,8 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 private fun MessageBubble(
     state: ChatMessageState,
     adaptationState: Map<String, kotlinx.serialization.json.JsonElement>,
+    userName: String,
+    characterName: String,
     onSubmitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit,
     editable: Boolean,
     editingText: String?,
@@ -441,6 +447,8 @@ private fun MessageBubble(
                         NativeAdaptationView(
                             view = view,
                             state = adaptationState,
+                            userName = userName,
+                            characterName = characterName,
                             enabled = editable,
                             onSubmit = { values -> onSubmitAdaptation(view.id, values) },
                         )
@@ -459,6 +467,8 @@ private fun MessageBubble(
                         NativeAdaptationView(
                             view = view,
                             state = adaptationState,
+                            userName = userName,
+                            characterName = characterName,
                             enabled = editable,
                             onSubmit = { values -> onSubmitAdaptation(view.id, values) },
                         )

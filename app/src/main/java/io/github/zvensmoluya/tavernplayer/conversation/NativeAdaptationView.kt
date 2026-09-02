@@ -37,6 +37,8 @@ import kotlinx.serialization.json.doubleOrNull
 internal fun NativeAdaptationView(
     view: AdaptationView,
     state: Map<String, JsonElement>,
+    userName: String,
+    characterName: String,
     enabled: Boolean,
     onSubmit: (Map<String, List<String>>) -> Unit,
 ) {
@@ -53,6 +55,8 @@ internal fun NativeAdaptationView(
                 AdaptationNode(
                     node = node,
                     state = state,
+                    userName = userName,
+                    characterName = characterName,
                     values = values,
                     enabled = enabled,
                     onValue = { fieldId, fieldValues -> values = values + (fieldId to fieldValues) },
@@ -75,13 +79,23 @@ internal fun NativeAdaptationView(
 private fun AdaptationNode(
     node: AdaptationUiNode,
     state: Map<String, JsonElement>,
+    userName: String,
+    characterName: String,
     values: Map<String, List<String>>,
     enabled: Boolean,
     onValue: (String, List<String>) -> Unit,
 ) {
     when (node.type) {
-        AdaptationUiNodeType.TEXT -> if (node.text.isNotBlank()) {
-            Text(node.text, style = MaterialTheme.typography.bodyMedium)
+        AdaptationUiNodeType.TEXT -> if (node.title.isNotBlank() || node.text.isNotBlank()) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (node.title.isNotBlank()) Text(node.title, style = MaterialTheme.typography.labelMedium)
+                if (node.text.isNotBlank()) {
+                    Text(
+                        renderAdaptationText(node.text, state, userName, characterName),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
         }
         AdaptationUiNodeType.STATUS -> StatusNode(node, state)
         AdaptationUiNodeType.FORM -> Column(
@@ -92,15 +106,15 @@ private fun AdaptationNode(
             node.fields.forEach { field ->
                 AdaptationField(field, values[field.id].orEmpty(), enabled) { onValue(field.id, it) }
             }
-            node.children.forEach { AdaptationNode(it, state, values, enabled, onValue) }
+            node.children.forEach { AdaptationNode(it, state, userName, characterName, values, enabled, onValue) }
         }
         AdaptationUiNodeType.SECTION -> Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (node.title.isNotBlank()) Text(node.title, fontWeight = FontWeight.SemiBold)
-            if (node.text.isNotBlank()) Text(node.text)
-            node.children.forEach { AdaptationNode(it, state, values, enabled, onValue) }
+            if (node.text.isNotBlank()) Text(renderAdaptationText(node.text, state, userName, characterName))
+            node.children.forEach { AdaptationNode(it, state, userName, characterName, values, enabled, onValue) }
         }
     }
 }

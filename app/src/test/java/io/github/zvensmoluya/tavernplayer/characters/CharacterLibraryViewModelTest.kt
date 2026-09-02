@@ -46,7 +46,7 @@ class CharacterLibraryViewModelTest {
     @Test
     fun `Shelf character installs a source-bound native adaptation`() = runTest {
         val source = """
-            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Lantern","first_mes":"<OPENING/>"}}
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Lantern","first_mes":"<OPENING/>","extensions":{"regex_scripts":[{"id":"opening","scriptName":"Opening","findRegex":"<OPENING/>","replaceString":"<form></form>","disabled":false,"placement":[2]}]}}}
         """.trimIndent().encodeToByteArray()
         val hash = MessageDigest.getInstance("SHA-256").digest(source).joinToString("") { "%02x".format(it) }
         val adaptation = """

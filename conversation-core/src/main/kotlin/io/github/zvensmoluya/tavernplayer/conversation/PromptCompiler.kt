@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
@@ -614,9 +616,27 @@ class PromptCompiler(
         diagnostics: MutableList<CompilationDiagnostic>,
     ): String {
         val textContext = context.copy(inputText = text)
+        val nativeAttachmentMarkers = if (placement == RegexPlacement.AI_OUTPUT && projection == RegexProjection.DISPLAY) {
+            character.adaptation?.views.orEmpty()
+                .filter { view ->
+                    view.placement == AdaptationViewPlacement.MESSAGE_ATTACHMENT &&
+                        view.trigger.type != AdaptationTriggerType.ALWAYS &&
+                        view.matchesMessage(text)
+                }
+                .map { it.trigger.value }
+                .filter(String::isNotEmpty)
+                .toSet()
+        } else {
+            emptySet()
+        }
+        val characterRules = if (nativeAttachmentMarkers.isEmpty()) {
+            character.regexScripts
+        } else {
+            character.regexScripts.filterNot { it.findRegex.trim() in nativeAttachmentMarkers }
+        }
         val regexed = regexEngine.apply(
             text,
-            preset.regexScripts + character.regexScripts,
+            preset.regexScripts + characterRules,
             placement,
             projection,
             depth,
@@ -625,7 +645,8 @@ class PromptCompiler(
             conversationId,
         )
         diagnostics += regexed.diagnostics
-        val expanded = macroEngine.evaluate(regexed.text, textContext, transaction)
+        val markerFreeText = nativeAttachmentMarkers.fold(regexed.text) { current, marker -> current.replace(marker, "") }
+        val expanded = macroEngine.evaluate(markerFreeText, textContext, transaction)
         diagnostics += expanded.diagnostics
         return expanded.text
     }

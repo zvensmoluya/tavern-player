@@ -13,6 +13,7 @@ data class ProgramView(
     val sourceSha256: String,
     val programBlocks: List<ProgramBlock> = emptyList(),
     val worldBookHandles: List<WorldBookHandle> = emptyList(),
+    val stateProtocolHints: List<ProgramStateProtocolHint> = emptyList(),
     val dependencies: List<ProgramDependency> = emptyList(),
     val observedCapabilities: List<String> = emptyList(),
     val referencedVariables: List<String> = emptyList(),
@@ -37,6 +38,7 @@ data class ProgramBlock(
     val originalSha256: String,
     val enabled: Boolean = true,
     val triggerPattern: String? = null,
+    val triggerMatchMode: String? = null,
     val placements: List<Int> = emptyList(),
 )
 
@@ -47,6 +49,20 @@ data class WorldBookHandle(
     val enabled: Boolean,
     val contentChars: Int,
     val contentSha256: String,
+)
+
+@Serializable
+data class ProgramStateProtocolHint(
+    val dialect: String,
+    val variableName: String,
+    val values: List<ProgramStateValueHint> = emptyList(),
+)
+
+@Serializable
+data class ProgramStateValueHint(
+    val path: String,
+    val type: AdaptationStateType,
+    val initialValue: JsonElement,
 )
 
 @Serializable
@@ -77,6 +93,7 @@ data class AdaptationArtifact(
     val status: AdaptationStatus,
     val requiredCapabilities: List<String> = emptyList(),
     val state: List<AdaptationStateDefinition> = emptyList(),
+    val messageStateRules: List<AdaptationMessageStateRule> = emptyList(),
     val views: List<AdaptationView> = emptyList(),
     val report: AdaptationReport = AdaptationReport(),
 )
@@ -106,6 +123,23 @@ data class AdaptationStateDefinition(
     val key: String,
     val type: AdaptationStateType,
     val initialValue: JsonElement = JsonPrimitive(""),
+)
+
+@Serializable
+enum class AdaptationMessageStateDialect {
+    UPDATE_VARIABLE_SET_V1,
+}
+
+@Serializable
+data class AdaptationMessageStateRule(
+    val dialect: AdaptationMessageStateDialect,
+    val mappings: List<AdaptationMessageStateMapping> = emptyList(),
+)
+
+@Serializable
+data class AdaptationMessageStateMapping(
+    val sourcePath: String,
+    val target: String,
 )
 
 @Serializable

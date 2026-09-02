@@ -31,6 +31,7 @@ import io.github.zvensmoluya.tavernplayer.content.AdaptationView
 import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -115,6 +116,36 @@ class ChatScreenTest {
         assertEquals("opening-form", submitted?.first)
         assertEquals(listOf("米拉"), submitted?.second?.get("name"))
         assertEquals(listOf("chat"), submitted?.second?.get("reason"))
+    }
+
+    @Test
+    fun `native attachment resolves state and identity templates`() {
+        val view = AdaptationView(
+            id = "status-view",
+            placement = AdaptationViewPlacement.MESSAGE_ATTACHMENT,
+            trigger = AdaptationViewTrigger(AdaptationTriggerType.ALWAYS),
+            nodes = listOf(
+                AdaptationUiNode(
+                    id = "world-time",
+                    type = AdaptationUiNodeType.TEXT,
+                    text = "{{user}} · 第 {{state.world-day}} 日 · {{char}}",
+                ),
+            ),
+        )
+        val opening = ChatMessageState(message = message(), adaptationViews = listOf(view))
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(
+                        messages = listOf(opening),
+                        adaptationState = mapOf("world-day" to JsonPrimitive(3)),
+                    ),
+                    actions = actions(),
+                )
+            }
+        }
+
+        compose.onNodeWithText("旅人 · 第 3 日 · 米拉").performScrollTo().assertIsDisplayed()
     }
 
     @Test

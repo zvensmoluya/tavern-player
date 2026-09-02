@@ -10,6 +10,7 @@ import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
 import io.github.zvensmoluya.tavernplayer.content.AdaptationValidationIssue
 import io.github.zvensmoluya.tavernplayer.content.AdaptationValidator
+import io.github.zvensmoluya.tavernplayer.content.ProgramViewExtractor
 import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
 import java.io.File
 import java.util.Base64
@@ -142,7 +143,7 @@ class CharacterRepository(
             if (!structuralValidation.valid) return@withLock AdaptationInstallResult.Rejected(structuralValidation.issues)
             val existing = _characters.value.firstOrNull { it.sourceSha256 == artifact.sourceSha256 }
                 ?: return@withLock AdaptationInstallResult.SourceNotFound
-            val validation = adaptationValidator.validate(artifact, existing.sourceSha256)
+            val validation = adaptationValidator.validateAgainstProgramView(artifact, ProgramViewExtractor().extract(existing))
             if (!validation.valid) return@withLock AdaptationInstallResult.Rejected(validation.issues)
             val updated = existing.copy(adaptation = artifact)
             val directory = File(root, existing.id)

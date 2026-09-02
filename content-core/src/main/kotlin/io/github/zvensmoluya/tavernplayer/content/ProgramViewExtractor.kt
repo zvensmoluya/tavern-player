@@ -6,8 +6,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 
 class ProgramViewExtractor {
     fun extract(character: CharacterAsset): ProgramView {
@@ -26,6 +28,10 @@ class ProgramViewExtractor {
                     originalSha256 = regex.replaceString.sha256(),
                     enabled = !regex.disabled,
                     triggerPattern = sanitizer.sanitize(regex.findRegex),
+                    triggerMatchMode = observedTriggerMatchMode(
+                        regex.findRegex,
+                        listOf(character.firstMessage) + character.alternateFirstMessages,
+                    ),
                     placements = regex.placements.map(RegexPlacement::wireValue).sorted(),
                 )
             }
@@ -44,7 +50,14 @@ class ProgramViewExtractor {
             )
         }
 
+        val stateProtocolHints = extractStateProtocolHints(character, sanitizer)
         val programText = blocks.joinToString("\n") { it.content }
+        val observedCapabilities = detectCapabilities(programText).toMutableSet()
+        val referencedVariables = detectVariables(programText).toMutableSet()
+        if (stateProtocolHints.isNotEmpty()) {
+            observedCapabilities += setOf("state.read", "state.write")
+            referencedVariables += stateProtocolHints.map(ProgramStateProtocolHint::variableName).filter(String::isNotBlank)
+        }
         val omitted = listOf(
             "description" to character.description,
             "personality" to character.personality,
@@ -65,20 +78,93 @@ class ProgramViewExtractor {
                 book.entries.map { entry ->
                     WorldBookHandle(
                         handle = "worldbook:$bookIndex:${entry.id}",
-                        name = sanitizer.sanitize(entry.name),
+                        name = sanitizer.sanitize(entry.name.ifBlank { entry.comment }),
                         enabled = entry.enabled,
                         contentChars = entry.content.length,
                         contentSha256 = entry.content.sha256(),
                     )
                 }
             },
+            stateProtocolHints = stateProtocolHints,
             dependencies = sanitizer.dependencies(),
-            observedCapabilities = detectCapabilities(programText),
-            referencedVariables = detectVariables(programText),
+            observedCapabilities = observedCapabilities.sorted(),
+            referencedVariables = referencedVariables.sorted(),
             omittedContent = omitted,
             redactions = sanitizer.redactions(),
         )
     }
+
+    private fun observedTriggerMatchMode(pattern: String, messages: List<String>): String? {
+        val literal = pattern.trim()
+        if (literal.isEmpty() || literal.any { it in "\\.^$|?*+()[]{}" }) return null
+        if (messages.any { it.trim() == literal }) return AdaptationTriggerType.MESSAGE_EXACT.name
+        if (messages.any { it.contains(literal) }) return AdaptationTriggerType.MESSAGE_CONTAINS.name
+        return null
+    }
+
+    private fun extractStateProtocolHints(
+        character: CharacterAsset,
+        sanitizer: ProgramSanitizer,
+    ): List<ProgramStateProtocolHint> {
+        val entries = character.worldBooks.flatMap { it.entries }
+        val ruleEntries = entries.filter { entry ->
+            entry.enabled && UPDATE_VARIABLE_BLOCK.containsMatchIn(entry.content) && UPDATE_SET_CALL.containsMatchIn(entry.content)
+        }
+        if (ruleEntries.isEmpty()) return emptyList()
+        val variableName = ruleEntries.firstNotNullOfOrNull { entry ->
+            MESSAGE_VARIABLE_MACRO.find(entry.content)?.groupValues?.getOrNull(1)?.trim()?.takeIf(String::isNotBlank)
+        }.orEmpty()
+        val updatePaths = ruleEntries.flatMap { entry ->
+            UPDATE_SET_PATH.findAll(entry.content).map { it.groupValues[1] }.filter(::validStatePath).toList()
+        }.toSet()
+        val values = linkedMapOf<String, ProgramStateValueHint>()
+        entries.filter { entry ->
+            entry.name.contains("initvar", ignoreCase = true) || entry.comment.contains("initvar", ignoreCase = true)
+        }.forEach { entry ->
+            val root = runCatching { Json.parseToJsonElement(entry.content) }.getOrNull() ?: return@forEach
+            collectStateValueHints(root, emptyList(), sanitizer, values)
+        }
+        updatePaths.filterNot(values::containsKey).forEach { path ->
+            values[path] = ProgramStateValueHint(path, AdaptationStateType.STRING, JsonPrimitive(""))
+        }
+        if (values.isEmpty()) return emptyList()
+        return listOf(
+            ProgramStateProtocolHint(
+                dialect = AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1.name,
+                variableName = sanitizer.sanitize(variableName),
+                values = values.values.sortedBy(ProgramStateValueHint::path),
+            ),
+        )
+    }
+
+    private fun collectStateValueHints(
+        element: JsonElement,
+        path: List<String>,
+        sanitizer: ProgramSanitizer,
+        target: MutableMap<String, ProgramStateValueHint>,
+    ) {
+        if (element is JsonObject) {
+            element.entries.sortedBy { it.key }.forEach { (key, child) ->
+                collectStateValueHints(child, path + key, sanitizer, target)
+            }
+            return
+        }
+        val primitive = when (element) {
+            is JsonArray -> element.firstOrNull() as? JsonPrimitive
+            is JsonPrimitive -> element
+        } ?: return
+        val joined = path.joinToString(".")
+        if (!validStatePath(joined)) return
+        val hint = when {
+            primitive.isString -> ProgramStateValueHint(joined, AdaptationStateType.STRING, JsonPrimitive(sanitizer.sanitize(primitive.content)))
+            primitive.booleanOrNull != null -> ProgramStateValueHint(joined, AdaptationStateType.BOOLEAN, primitive)
+            primitive.doubleOrNull?.isFinite() == true -> ProgramStateValueHint(joined, AdaptationStateType.NUMBER, primitive)
+            else -> null
+        }
+        if (hint != null) target[joined] = hint
+    }
+
+    private fun validStatePath(value: String): Boolean = value.length <= 256 && STATE_PATH.matches(value)
 
     private data class ScriptObject(
         val path: String,
@@ -191,8 +277,13 @@ class ProgramViewExtractor {
             "(?i)\\b(getvar|setvar|addvar|incvar|decvar|getglobalvar|setglobalvar|get_message_variable|set_message_variable)\\s*\\(\\s*['\"]([^'\"]+)['\"]",
         )
         private val MACRO_VARIABLE = Regex(
-            "(?i)\\{\\{\\s*(?:getvar|getglobalvar|get_message_variable)::([^}]+)}}",
+            "(?i)\\{\\{\\s*(?:getvar|getglobalvar|get_message_variable)::([^}]+)\\}\\}",
         )
+        private val UPDATE_VARIABLE_BLOCK = Regex("<UpdateVariable>[\\s\\S]*?</UpdateVariable>")
+        private val UPDATE_SET_CALL = Regex("(?m)^\\s*_\\.set\\s*\\(")
+        private val UPDATE_SET_PATH = Regex("(?m)^\\s*_\\.set\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*,")
+        private val MESSAGE_VARIABLE_MACRO = Regex("(?i)\\{\\{\\s*get_message_variable::([^},]+)")
+        private val STATE_PATH = Regex("[^.\\s'\"(){}\\[\\]\$]+(?:\\.[^.\\s'\"(){}\\[\\]\$]+){0,15}")
         private val CAPABILITIES = linkedMapOf(
             "chat.read" to listOf(Regex("\\bgetChatMessages\\b"), Regex("\\bgetCurrentMessageId\\b")),
             "chat.write" to listOf(Regex("\\bsetChatMessage\\b"), Regex("#send_textarea"), Regex("\\bcreateChatMessages\\b")),

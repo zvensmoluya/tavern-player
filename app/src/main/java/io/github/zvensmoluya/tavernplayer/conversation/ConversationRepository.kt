@@ -53,7 +53,8 @@ class ConversationRepository(
             val capturedPreset = preset.snapshot()
             val snapshot = character.snapshot()
             val greetings = listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages
-            val initialRuntime = AdaptationRuntime().initialState(snapshot.adaptation)
+            val adaptationRuntime = AdaptationRuntime()
+            val initialRuntime = adaptationRuntime.initialState(snapshot.adaptation)
             var committedRuntime = initialRuntime
             val variants = greetings.mapIndexedNotNull { index, greeting ->
                 if (greeting.isBlank()) return@mapIndexedNotNull null
@@ -70,7 +71,10 @@ class ConversationRepository(
                     modelId = "",
                     depth = 0,
                 ) as TextExpansionResult.Success
-                if (index == 0) committedRuntime = projected.runtimeState
+                val projectedRuntime = snapshot.adaptation?.let { adaptation ->
+                    adaptationRuntime.ingestAssistantMessage(adaptation, greeting, projected.runtimeState).runtimeState
+                } ?: projected.runtimeState
+                if (index == 0) committedRuntime = projectedRuntime
                 val message = ConversationMessage(
                     id = idFactory(),
                     role = MessageRole.ASSISTANT,
@@ -87,7 +91,7 @@ class ConversationRepository(
                     presetContentSha256 = capturedPreset.contentSha256,
                     runtimeStateBefore = initialRuntime,
                     projectionRuntimeStateBefore = initialRuntime,
-                    runtimeStateAfter = projected.runtimeState,
+                    runtimeStateAfter = projectedRuntime,
                 )
             }
             val turns = variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
