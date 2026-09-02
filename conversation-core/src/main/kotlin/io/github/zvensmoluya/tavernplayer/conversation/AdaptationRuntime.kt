@@ -49,6 +49,8 @@ class AdaptationRuntime {
         artifact: AdaptationArtifact,
         submission: AdaptationFormSubmission,
         runtimeState: ConversationRuntimeState,
+        userName: String = "",
+        characterName: String = "",
     ): AdaptationExecutionResult {
         val view = artifact.views.firstOrNull { it.id == submission.viewId }
             ?: return AdaptationExecutionResult.Failure("UNKNOWN_VIEW", "找不到 Native 适配视图")
@@ -71,7 +73,7 @@ class AdaptationRuntime {
                 AdaptationActionType.CHAT_SET_DRAFT -> {
                     val template = action.template
                         ?: return AdaptationExecutionResult.Failure("MISSING_TEMPLATE", "草稿动作缺少模板")
-                    val rendered = renderTemplate(template, submission.values, state)
+                    val rendered = renderTemplate(template, submission.values, state, userName, characterName)
                     if (rendered.length > MAX_DRAFT_CHARS) {
                         return AdaptationExecutionResult.Failure("DRAFT_TOO_LONG", "生成的草稿超过 $MAX_DRAFT_CHARS 字符")
                     }
@@ -80,7 +82,7 @@ class AdaptationRuntime {
                 AdaptationActionType.STATE_SET -> {
                     val definition = definitions[action.target]
                         ?: return AdaptationExecutionResult.Failure("UNKNOWN_STATE", "动作引用了未知状态")
-                    val raw = action.template?.let { renderTemplate(it, submission.values, state) } ?: action.value
+                    val raw = action.template?.let { renderTemplate(it, submission.values, state, userName, characterName) } ?: action.value
                     state[definition.key] = parseStateValue(definition, raw)
                         ?: return AdaptationExecutionResult.Failure("INVALID_STATE_VALUE", "状态 ${definition.key} 的值类型不正确")
                 }
@@ -90,7 +92,7 @@ class AdaptationRuntime {
                     if (definition.type != AdaptationStateType.NUMBER) {
                         return AdaptationExecutionResult.Failure("INVALID_STATE_TYPE", "increment 只能修改数值状态")
                     }
-                    val raw = action.template?.let { renderTemplate(it, submission.values, state) } ?: action.value
+                    val raw = action.template?.let { renderTemplate(it, submission.values, state, userName, characterName) } ?: action.value
                     val delta = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
                         ?: return AdaptationExecutionResult.Failure("INVALID_STATE_VALUE", "increment 需要有限数值")
                     val current = (state[definition.key] as? JsonPrimitive)?.doubleOrNull ?: 0.0
@@ -151,11 +153,18 @@ class AdaptationRuntime {
         template: String,
         form: Map<String, List<String>>,
         state: Map<String, JsonElement>,
-    ): String = TEMPLATE_REFERENCE.replace(template) { match ->
-        when (match.groupValues[1]) {
-            "form" -> form[match.groupValues[2]].orEmpty().joinToString("、")
-            "state" -> (state[match.groupValues[2]] as? JsonPrimitive)?.content.orEmpty()
-            else -> match.value
+        userName: String,
+        characterName: String,
+    ): String {
+        val scoped = TEMPLATE_REFERENCE.replace(template) { match ->
+            when (match.groupValues[1]) {
+                "form" -> form[match.groupValues[2]].orEmpty().joinToString("、")
+                "state" -> (state[match.groupValues[2]] as? JsonPrimitive)?.content.orEmpty()
+                else -> match.value
+            }
+        }
+        return IDENTITY_REFERENCE.replace(scoped) { match ->
+            if (match.groupValues[1] == "user") userName else characterName
         }
     }
 
@@ -168,7 +177,8 @@ class AdaptationRuntime {
     companion object {
         private const val MAX_FIELD_CHARS = 8_192
         private const val MAX_DRAFT_CHARS = 16_384
-        private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})}}")
+        private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})\\}\\}")
+        private val IDENTITY_REFERENCE = Regex("\\{\\{(user|char)\\}\\}")
     }
 }
 

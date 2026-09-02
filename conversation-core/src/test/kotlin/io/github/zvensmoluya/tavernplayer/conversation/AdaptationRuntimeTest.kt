@@ -66,6 +66,33 @@ class AdaptationRuntimeTest {
         assertTrue(view.matchesMessage("  <GAMESTART/>  "))
     }
 
+    @Test
+    fun `draft template resolves conversation identities`() {
+        val original = artifact()
+        val artifact = original.copy(
+            views = listOf(
+                original.views.single().copy(
+                    submitActions = listOf(
+                        AdaptationAction(
+                            AdaptationActionType.CHAT_SET_DRAFT,
+                            template = "{{user}} meets {{char}} as {{form.name}}",
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val result = AdaptationRuntime().execute(
+            artifact,
+            AdaptationFormSubmission("opening-form", mapOf("name" to listOf("Mira"))),
+            AdaptationRuntime().initialState(artifact),
+            userName = "Traveler",
+            characterName = "Mara",
+        ) as AdaptationExecutionResult.Success
+
+        assertEquals("Traveler meets Mara as Mira", result.effects.single().value)
+    }
+
     private fun artifact() = AdaptationArtifact(
         sourceSha256 = "a".repeat(64),
         compiler = AdaptationCompiler("fixture", "1"),

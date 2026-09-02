@@ -183,6 +183,8 @@ class ChatViewModel(
                 artifact = artifact,
                 submission = AdaptationFormSubmission(viewId, values),
                 runtimeState = record.runtimeState,
+                userName = record.persona.name,
+                characterName = record.character.promptName,
             )
         ) {
             is AdaptationExecutionResult.Failure -> _uiState.update { it.copy(message = result.message) }

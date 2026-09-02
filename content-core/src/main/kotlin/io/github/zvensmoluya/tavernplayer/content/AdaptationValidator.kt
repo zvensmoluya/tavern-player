@@ -211,7 +211,7 @@ class AdaptationValidator {
         private val SHA256 = Regex("[0-9a-f]{64}")
         private val ID = Regex("[a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15}")
         private val EXTERNAL_IO = Regex("(?i)(?:https?://|data:|file:|content:)")
-        private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})}}")
-        private val ANY_TEMPLATE_REFERENCE = Regex("\\{\\{([^{}]+)}}")
+        private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})\\}\\}")
+        private val ANY_TEMPLATE_REFERENCE = Regex("\\{\\{([^{}]+)\\}\\}")
     }
 }
