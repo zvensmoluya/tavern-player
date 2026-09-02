@@ -6,8 +6,8 @@ import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
+import io.github.zvensmoluya.tavernplayer.content.PresetExporter
 import io.github.zvensmoluya.tavernplayer.content.PresetPromptDefinition
-import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
 import io.github.zvensmoluya.tavernplayer.content.PresetReasoningEffort
 import io.github.zvensmoluya.tavernplayer.content.PresetVerbosity
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
@@ -66,13 +66,22 @@ class PresetViewModel(
 
     fun openEditor(presetId: String) {
         val preset = repository.get(presetId) ?: return
-        _uiState.update {
-            it.copy(
-                selectedPresetId = preset.id,
-                draft = preset,
-                dirty = false,
-                message = null,
-            )
+        if (_uiState.value.busy) return
+        _uiState.update { it.copy(busy = true, message = null) }
+        viewModelScope.launch {
+            runCatching { repository.activate(presetId) }
+                .onSuccess { active ->
+                    _uiState.update {
+                        it.copy(
+                            selectedPresetId = active.id,
+                            draft = active,
+                            dirty = false,
+                            busy = false,
+                            message = null,
+                        )
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(busy = false, message = error.displayMessage()) } }
         }
     }
 
@@ -83,7 +92,6 @@ class PresetViewModel(
     fun updateDraft(transform: (PresetAsset) -> PresetAsset) {
         _uiState.update { state ->
             val draft = state.draft ?: return@update state
-            if (draft.builtIn) return@update state
             state.copy(draft = transform(draft), dirty = true, message = null)
         }
     }
@@ -94,45 +102,13 @@ class PresetViewModel(
         }
     }
 
-    fun togglePromptInOrder(identifier: String) {
-        updateDraft { draft ->
-            val present = draft.promptOrder.any { it.identifier == identifier }
-            draft.copy(
-                promptOrder = if (present) {
-                    draft.promptOrder.filterNot { it.identifier == identifier }
-                } else {
-                    draft.promptOrder + PresetPromptOrderEntry(identifier)
-                },
-            )
-        }
-    }
-
     fun setPromptEnabled(identifier: String, enabled: Boolean) {
         updateDraft { draft ->
             draft.copy(
-                promptOrder = if (draft.promptOrder.any { it.identifier == identifier }) {
-                    draft.promptOrder.map {
-                        if (it.identifier == identifier) it.copy(enabled = enabled) else it
-                    }
-                } else if (enabled) {
-                    draft.promptOrder + PresetPromptOrderEntry(identifier, enabled = true)
-                } else {
-                    draft.promptOrder
+                promptOrder = draft.promptOrder.map {
+                    if (it.identifier == identifier) it.copy(enabled = enabled) else it
                 },
             )
-        }
-    }
-
-    fun movePrompt(identifier: String, delta: Int) {
-        updateDraft { draft ->
-            val current = draft.promptOrder.indexOfFirst { it.identifier == identifier }
-            if (current < 0) return@updateDraft draft
-            val destination = (current + delta).coerceIn(0, draft.promptOrder.lastIndex)
-            if (destination == current) return@updateDraft draft
-            val reordered = draft.promptOrder.toMutableList()
-            val item = reordered.removeAt(current)
-            reordered.add(destination, item)
-            draft.copy(promptOrder = reordered)
         }
     }
 
@@ -188,16 +164,24 @@ class PresetViewModel(
     }
 
     fun save() {
+        save(closeEditor = false)
+    }
+
+    fun saveAndClose() {
+        save(closeEditor = true)
+    }
+
+    private fun save(closeEditor: Boolean) {
         val draft = _uiState.value.draft ?: return
-        if (draft.builtIn || _uiState.value.busy) return
+        if (_uiState.value.busy) return
         _uiState.update { it.copy(busy = true, message = null) }
         viewModelScope.launch {
             runCatching { repository.save(draft) }
                 .onSuccess { saved ->
                     _uiState.update {
                         it.copy(
-                            selectedPresetId = saved.id,
-                            draft = saved,
+                            selectedPresetId = saved.id.takeUnless { closeEditor },
+                            draft = saved.takeUnless { closeEditor },
                             dirty = false,
                             busy = false,
                             message = "已保存 ${saved.name}",
@@ -218,11 +202,12 @@ class PresetViewModel(
         }
     }
 
-    fun copy(presetId: String) {
+    fun saveAs(name: String) {
+        val draft = _uiState.value.draft ?: return
         if (_uiState.value.busy) return
         _uiState.update { it.copy(busy = true, message = null) }
         viewModelScope.launch {
-            runCatching { repository.copy(presetId) }
+            runCatching { repository.saveAs(draft, name) }
                 .onSuccess { copied ->
                     _uiState.update {
                         it.copy(
@@ -230,12 +215,21 @@ class PresetViewModel(
                             draft = copied,
                             dirty = false,
                             busy = false,
-                            message = "已复制 ${copied.name}",
+                            message = "已另存并切换到 ${copied.name}",
                         )
                     }
                 }
                 .onFailure { error -> _uiState.update { it.copy(busy = false, message = error.displayMessage()) } }
         }
+    }
+
+    fun restoreInitial() {
+        val draft = _uiState.value.draft ?: return
+        runCatching { repository.initialVersion(draft.id) }
+            .onSuccess { restored ->
+                _uiState.update { it.copy(draft = restored, dirty = true, message = "已恢复初始设置，保存后生效") }
+            }
+            .onFailure { error -> _uiState.update { it.copy(message = error.displayMessage()) } }
     }
 
     fun delete(presetId: String) {
@@ -286,6 +280,13 @@ class PresetViewModel(
                 }
                 .onFailure { error -> _uiState.update { it.copy(busy = false, message = error.displayMessage()) } }
         }
+    }
+
+    fun exportDraft(): ByteArray? {
+        val draft = _uiState.value.draft ?: return null
+        return runCatching { PresetExporter.export(draft) }
+            .onFailure { error -> _uiState.update { it.copy(message = error.displayMessage()) } }
+            .getOrNull()
     }
 
     fun exportPreset(presetId: String): ByteArray? = runCatching { repository.exportPreset(presetId) }

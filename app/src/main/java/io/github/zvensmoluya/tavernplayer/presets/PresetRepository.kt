@@ -6,6 +6,7 @@ import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetExporter
 import io.github.zvensmoluya.tavernplayer.content.PresetImportResult
 import io.github.zvensmoluya.tavernplayer.content.PresetImporter
+import io.github.zvensmoluya.tavernplayer.content.PresetInitialState
 import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
 import java.io.File
 import java.util.Locale
@@ -62,7 +63,7 @@ sealed class PresetRepositoryException(message: String) : IllegalArgumentExcepti
 
 class PresetNotFoundException(id: String) : PresetRepositoryException("Preset 不存在：$id")
 
-class BuiltInPresetMutationException : PresetRepositoryException("内置默认 Preset 只能复制")
+class BuiltInPresetMutationException : PresetRepositoryException("内置默认 Preset 不能删除")
 
 class PresetNameConflictException(name: String) : PresetRepositoryException("Preset 名称已存在：$name")
 
@@ -107,16 +108,20 @@ class PresetRepository(
                     is PresetImportResult.Rejected -> PresetLibraryImportResult.Rejected(result.diagnostics)
                     is PresetImportResult.Ready -> {
                         val duplicate = _library.value.presets.firstOrNull {
-                            it.contentSha256 == result.preset.contentSha256
+                            it.sourceSha256 == result.preset.sourceSha256 ||
+                                it.contentSha256 == result.preset.contentSha256
                         }
                         if (duplicate != null) {
+                            if (_library.value.activePresetId != duplicate.id) {
+                                persistAndPublish(storedPresets(), duplicate.id)
+                            }
                             PresetLibraryImportResult.Saved(
                                 preset = duplicate.snapshot(),
                                 duplicate = true,
                                 diagnostics = result.diagnostics,
                             )
                         } else {
-                            val users = userPresets()
+                            val users = storedPresets()
                             val name = allocateName(result.preset.name, _library.value.presets)
                             val preset = normalize(
                                 result.preset.copy(
@@ -125,7 +130,7 @@ class PresetRepository(
                                     builtIn = false,
                                 ),
                             )
-                            persistAndPublish(users + preset, _library.value.activePresetId)
+                            persistAndPublish(users + preset, preset.id)
                             PresetLibraryImportResult.Saved(
                                 preset = preset.snapshot(),
                                 duplicate = false,
@@ -141,7 +146,7 @@ class PresetRepository(
         mutex.withLock {
             val preset = findRequired(presetId)
             if (_library.value.activePresetId != presetId) {
-                persistAndPublish(userPresets(), presetId)
+                persistAndPublish(storedPresets(), presetId)
             }
             preset.snapshot()
         }
@@ -150,7 +155,6 @@ class PresetRepository(
     suspend fun save(preset: PresetAsset): PresetAsset = withContext(ioDispatcher) {
         mutex.withLock {
             val existing = findRequired(preset.id)
-            if (existing.builtIn) throw BuiltInPresetMutationException()
             val name = preset.name.trim().takeIf(String::isNotEmpty) ?: throw InvalidPresetNameException()
             if (hasNameConflict(name, excludingId = preset.id)) throw PresetNameConflictException(name)
             val saved = normalize(
@@ -158,11 +162,12 @@ class PresetRepository(
                     id = existing.id,
                     sourceSha256 = existing.sourceSha256,
                     name = name,
-                    builtIn = false,
+                    initialState = existing.initialState,
+                    builtIn = existing.builtIn,
                 ),
             )
-            val users = userPresets().map { current -> if (current.id == saved.id) saved else current }
-            persistAndPublish(users, _library.value.activePresetId)
+            val stored = storedPresets().map { current -> if (current.id == saved.id) saved else current }
+            persistAndPublish(stored, _library.value.activePresetId)
             saved.snapshot()
         }
     }
@@ -170,28 +175,53 @@ class PresetRepository(
     suspend fun rename(presetId: String, name: String): PresetAsset =
         save(findRequiredSnapshot(presetId).copy(name = name))
 
-    suspend fun copy(presetId: String, requestedName: String? = null): PresetAsset = withContext(ioDispatcher) {
+    suspend fun saveAs(preset: PresetAsset, requestedName: String): PresetAsset = withContext(ioDispatcher) {
         mutex.withLock {
-            val source = findRequired(presetId)
-            val baseName = requestedName?.trim().orEmpty().ifBlank { "${source.name} 副本" }
-            val name = allocateName(baseName, _library.value.presets)
+            findRequired(preset.id)
+            val requested = requestedName.trim().takeIf(String::isNotEmpty) ?: throw InvalidPresetNameException()
+            if (hasNameConflict(requested)) throw PresetNameConflictException(requested)
+            val source = PresetExporter.exportToJson(preset.copy(name = requested))
+            val fingerprint = PresetExporter.fingerprint(preset.copy(name = requested, source = source))
             val copied = normalize(
-                source.snapshot().copy(
+                preset.snapshot().copy(
                     id = uniqueId(),
-                    name = name,
+                    sourceSha256 = fingerprint,
+                    contentSha256 = fingerprint,
+                    name = requested,
+                    source = source,
+                    initialState = PresetInitialState(source),
                     builtIn = false,
                 ),
             )
-            persistAndPublish(userPresets() + copied, _library.value.activePresetId)
+            persistAndPublish(storedPresets() + copied, copied.id)
             copied.snapshot()
         }
+    }
+
+    fun initialVersion(presetId: String): PresetAsset {
+        val existing = findRequiredSnapshot(presetId)
+        val initial = existing.initialState ?: PresetInitialState(existing.source)
+        val restored = when (val result = importer.import(initial.source.toString().encodeToByteArray(), "${existing.name}.json")) {
+            is PresetImportResult.Ready -> result.preset
+            is PresetImportResult.Rejected -> error(result.diagnostics.firstOrNull()?.message ?: "无法恢复 Preset 初始设置")
+        }
+        return restored.copy(
+            id = existing.id,
+            sourceSha256 = existing.sourceSha256,
+            contentSha256 = existing.contentSha256,
+            name = existing.name,
+            source = initial.source,
+            initialState = initial,
+            diagnostics = existing.diagnostics,
+            builtIn = existing.builtIn,
+        ).snapshot()
     }
 
     suspend fun delete(presetId: String): PresetAsset = withContext(ioDispatcher) {
         mutex.withLock {
             val preset = findRequired(presetId)
             if (preset.builtIn) throw BuiltInPresetMutationException()
-            val users = userPresets().filterNot { it.id == presetId }
+            val users = storedPresets().filterNot { it.id == presetId }
             val nextActive = if (_library.value.activePresetId == presetId) {
                 BuiltInPresets.DEFAULT_ID
             } else {
@@ -210,7 +240,7 @@ class PresetRepository(
     private fun findRequired(presetId: String): PresetAsset =
         _library.value.presets.firstOrNull { it.id == presetId } ?: throw PresetNotFoundException(presetId)
 
-    private fun userPresets(): List<PresetAsset> = _library.value.presets.filterNot(PresetAsset::builtIn)
+    private fun storedPresets(): List<PresetAsset> = _library.value.presets.map(PresetAsset::snapshot)
 
     private fun hasNameConflict(name: String, excludingId: String? = null): Boolean {
         val key = name.nameKey()
@@ -235,9 +265,9 @@ class PresetRepository(
         error("无法生成唯一 Preset ID")
     }
 
-    private fun persistAndPublish(userPresets: List<PresetAsset>, requestedActiveId: String) {
-        val normalized = normalizeLoaded(userPresets)
-        val knownIds = normalized.mapTo(mutableSetOf(BuiltInPresets.DEFAULT_ID), PresetAsset::id)
+    private fun persistAndPublish(presets: List<PresetAsset>, requestedActiveId: String) {
+        val normalized = normalizeLoaded(presets)
+        val knownIds = normalized.mapTo(mutableSetOf(), PresetAsset::id)
         val activeId = requestedActiveId.takeIf(knownIds::contains) ?: BuiltInPresets.DEFAULT_ID
         val manifest = PresetLibraryManifest(
             activePresetId = activeId,
@@ -248,9 +278,11 @@ class PresetRepository(
         publish(normalized, activeId)
     }
 
-    private fun publish(userPresets: List<PresetAsset>, activeId: String) {
+    private fun publish(presets: List<PresetAsset>, activeId: String) {
+        val builtIn = presets.firstOrNull { it.id == BuiltInPresets.DEFAULT_ID } ?: BuiltInPresets.default
+        val users = presets.filter { it.id != BuiltInPresets.DEFAULT_ID }
         val state = PresetLibraryState(
-            presets = listOf(BuiltInPresets.default) + userPresets.sortedWith(PRESET_ORDER),
+            presets = listOf(builtIn) + users.sortedWith(PRESET_ORDER),
             activePresetId = activeId,
         )
         _library.value = state
@@ -262,22 +294,32 @@ class PresetRepository(
         val manifest = manifestFile.takeIf(File::isFile)?.let { file ->
             runCatching { json.decodeFromString<PresetLibraryManifest>(file.readText()) }.getOrNull()
         }
-        val users = normalizeLoaded(manifest?.presets.orEmpty())
-        val knownIds = users.mapTo(mutableSetOf(BuiltInPresets.DEFAULT_ID), PresetAsset::id)
+        val presets = normalizeLoaded(manifest?.presets.orEmpty())
+        val knownIds = presets.mapTo(mutableSetOf(), PresetAsset::id)
         val activeId = manifest?.activePresetId?.takeIf(knownIds::contains) ?: BuiltInPresets.DEFAULT_ID
         return PresetLibraryState(
-            presets = listOf(BuiltInPresets.default) + users.sortedWith(PRESET_ORDER),
+            presets = listOf(presets.first { it.id == BuiltInPresets.DEFAULT_ID }) +
+                presets.filter { it.id != BuiltInPresets.DEFAULT_ID }.sortedWith(PRESET_ORDER),
             activePresetId = activeId,
         )
     }
 
     private fun normalizeLoaded(presets: List<PresetAsset>): List<PresetAsset> {
         val accepted = mutableListOf<PresetAsset>()
-        val ids = mutableSetOf(BuiltInPresets.DEFAULT_ID)
+        val ids = mutableSetOf<String>()
+        val persistedBuiltIn = presets.firstOrNull { it.id == BuiltInPresets.DEFAULT_ID }
+        val builtIn = persistedBuiltIn?.copy(
+            id = BuiltInPresets.DEFAULT_ID,
+            sourceSha256 = BuiltInPresets.default.sourceSha256,
+            initialState = BuiltInPresets.default.initialState,
+            builtIn = true,
+        )?.let(::normalize) ?: BuiltInPresets.default
+        accepted += builtIn
+        ids += BuiltInPresets.DEFAULT_ID
         presets.forEach { candidate ->
-            if (candidate.builtIn || candidate.id.isBlank() || !ids.add(candidate.id)) return@forEach
+            if (candidate.id == BuiltInPresets.DEFAULT_ID || candidate.id.isBlank() || !ids.add(candidate.id)) return@forEach
             val named = candidate.copy(
-                name = allocateName(candidate.name, listOf(BuiltInPresets.default) + accepted),
+                name = allocateName(candidate.name, accepted),
                 builtIn = false,
             )
             accepted += normalize(named)
@@ -289,7 +331,7 @@ class PresetRepository(
         val source = PresetExporter.exportToJson(preset)
         val draft = preset.copy(
             source = source,
-            builtIn = false,
+            initialState = preset.initialState ?: PresetInitialState(source),
         )
         return draft.copy(contentSha256 = PresetExporter.fingerprint(draft))
     }
@@ -300,7 +342,7 @@ class PresetRepository(
     }
 }
 
-private const val CURRENT_SCHEMA_VERSION = 2
+private const val CURRENT_SCHEMA_VERSION = 3
 
 private val PRESET_ORDER = compareBy<PresetAsset> { it.name.lowercase(Locale.ROOT) }.thenBy(PresetAsset::id)
 

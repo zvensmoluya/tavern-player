@@ -92,7 +92,7 @@ class PresetRepositoryTest {
     }
 
     @Test
-    fun `built in preset is immutable but its copy can be explicitly edited`() = runTest {
+    fun `built in preset can be edited restored and saved as a new active branch`() = runTest {
         val root = temporary.newFolder("preset-copy")
         var copyId = 0
         val repository = PresetRepository(
@@ -101,29 +101,40 @@ class PresetRepositoryTest {
             ioDispatcher = StandardTestDispatcher(testScheduler),
         )
 
-        val directEdit = runCatching {
-            repository.save(BuiltInPresets.default.copy(name = "Changed"))
-        }.exceptionOrNull()
-        val directDelete = runCatching {
-            repository.delete(BuiltInPresets.DEFAULT_ID)
-        }.exceptionOrNull()
-        assertTrue(directEdit is BuiltInPresetMutationException)
-        assertTrue(directDelete is BuiltInPresetMutationException)
-
-        val copied = repository.copy(BuiltInPresets.DEFAULT_ID)
-        val edited = repository.save(
-            copied.copy(
-                name = "My Default",
+        val editedDefault = repository.save(
+            BuiltInPresets.default.copy(
+                name = "Changed",
                 generationSettings = PresetGenerationSettings(maxOutputTokens = 2_048, temperature = 0.6),
             ),
         )
-        assertFalse(edited.builtIn)
-        assertNotEquals(BuiltInPresets.DEFAULT_ID, edited.id)
-        assertEquals(2_048, edited.generationSettings.maxOutputTokens)
-        assertNotEquals(copied.contentSha256, edited.contentSha256)
+        val directDelete = runCatching {
+            repository.delete(BuiltInPresets.DEFAULT_ID)
+        }.exceptionOrNull()
+        assertTrue(editedDefault.builtIn)
+        assertEquals("Changed", repository.activePreset.value.name)
+        assertTrue(directDelete is BuiltInPresetMutationException)
 
-        val secondCopy = repository.copy(BuiltInPresets.DEFAULT_ID)
-        val conflict = runCatching { repository.rename(secondCopy.id, "MY DEFAULT") }.exceptionOrNull()
+        val restarted = PresetRepository(root, ioDispatcher = StandardTestDispatcher(testScheduler))
+        assertEquals("Changed", restarted.get(BuiltInPresets.DEFAULT_ID)?.name)
+        val restored = restarted.initialVersion(BuiltInPresets.DEFAULT_ID)
+        assertEquals("Changed", restored.name)
+        assertEquals(BuiltInPresets.default.generationSettings, restored.generationSettings)
+
+        val branch = repository.saveAs(editedDefault, "My Default")
+        assertFalse(branch.builtIn)
+        assertNotEquals(BuiltInPresets.DEFAULT_ID, branch.id)
+        assertEquals(branch.id, repository.library.value.activePresetId)
+        assertEquals(2_048, branch.generationSettings.maxOutputTokens)
+        repository.save(branch.copy(generationSettings = branch.generationSettings.copy(maxOutputTokens = 4_096)))
+        assertEquals(2_048, repository.initialVersion(branch.id).generationSettings.maxOutputTokens)
+        repository.save(restored)
+        assertEquals(
+            BuiltInPresets.default.generationSettings,
+            PresetRepository(root, ioDispatcher = StandardTestDispatcher(testScheduler))
+                .get(BuiltInPresets.DEFAULT_ID)?.generationSettings,
+        )
+
+        val conflict = runCatching { repository.saveAs(editedDefault, "MY DEFAULT") }.exceptionOrNull()
         assertTrue(conflict is PresetNameConflictException)
     }
 

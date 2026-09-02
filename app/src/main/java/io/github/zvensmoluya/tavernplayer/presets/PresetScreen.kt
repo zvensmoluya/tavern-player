@@ -3,9 +3,11 @@ package io.github.zvensmoluya.tavernplayer.presets
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,7 +25,8 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -62,16 +65,15 @@ data class PresetScreenActions(
     val cancelEditor: () -> Unit = {},
     val updateDraft: ((PresetAsset) -> PresetAsset) -> Unit = {},
     val updatePrompt: (String, (PresetPromptDefinition) -> PresetPromptDefinition) -> Unit = { _, _ -> },
-    val togglePromptInOrder: (String) -> Unit = {},
     val setPromptEnabled: (String, Boolean) -> Unit = { _, _ -> },
-    val movePrompt: (String, Int) -> Unit = { _, _ -> },
     val updateRegexEnabled: (String, Boolean) -> Unit = { _, _ -> },
     val setGenerationParameterEnabled: (PresetGenerationParameter, Boolean) -> Unit = { _, _ -> },
     val save: () -> Unit = {},
-    val activate: (String) -> Unit = {},
-    val copy: (String) -> Unit = {},
+    val saveAndClose: () -> Unit = {},
+    val saveAs: (String) -> Unit = {},
+    val restoreInitial: () -> Unit = {},
     val delete: (String) -> Unit = {},
-    val export: (PresetAsset) -> Unit = {},
+    val exportCurrent: () -> Unit = {},
 )
 
 @Composable
@@ -83,6 +85,7 @@ fun PresetRoute(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingExport by remember { mutableStateOf<ByteArray?>(null) }
+    BackHandler(enabled = state.draft == null, onBack = onBack)
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -122,19 +125,20 @@ fun PresetRoute(
             cancelEditor = viewModel::cancelEditor,
             updateDraft = viewModel::updateDraft,
             updatePrompt = viewModel::updatePrompt,
-            togglePromptInOrder = viewModel::togglePromptInOrder,
             setPromptEnabled = viewModel::setPromptEnabled,
-            movePrompt = viewModel::movePrompt,
             updateRegexEnabled = { id, enabled -> viewModel.updateRegex(id) { it.copy(disabled = !enabled) } },
             setGenerationParameterEnabled = viewModel::setGenerationParameterEnabled,
             save = viewModel::save,
-            activate = viewModel::activate,
-            copy = viewModel::copy,
+            saveAndClose = viewModel::saveAndClose,
+            saveAs = viewModel::saveAs,
+            restoreInitial = viewModel::restoreInitial,
             delete = viewModel::delete,
-            export = { preset ->
-                viewModel.exportPreset(preset.id)?.let { bytes ->
-                    pendingExport = bytes
-                    exportLauncher.launch("${preset.name.safeFileName()}.json")
+            exportCurrent = {
+                state.draft?.let { preset ->
+                    viewModel.exportDraft()?.let { bytes ->
+                        pendingExport = bytes
+                        exportLauncher.launch("${preset.name.safeFileName()}.json")
+                    }
                 }
             },
         ),
@@ -187,7 +191,6 @@ private fun PresetCenter(state: PresetUiState, actions: PresetScreenActions) {
                 PresetCard(
                     preset = preset,
                     active = preset.id == state.activePresetId,
-                    busy = state.busy,
                     actions = actions,
                 )
             }
@@ -199,7 +202,6 @@ private fun PresetCenter(state: PresetUiState, actions: PresetScreenActions) {
 private fun PresetCard(
     preset: PresetAsset,
     active: Boolean,
-    busy: Boolean,
     actions: PresetScreenActions,
 ) {
     Card(
@@ -238,13 +240,11 @@ private fun PresetCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!active) {
-                    TextButton(enabled = !busy, onClick = { actions.activate(preset.id) }) { Text("使用") }
-                }
-                TextButton(enabled = !busy, onClick = { actions.copy(preset.id) }) { Text("复制") }
-                TextButton(enabled = !busy, onClick = { actions.export(preset) }) { Text("导出") }
-            }
+            Text(
+                if (active) "点击继续调整" else "点击切换并调整",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }
@@ -256,13 +256,179 @@ private fun PresetEditor(
     preset: PresetAsset,
     actions: PresetScreenActions,
 ) {
-    var deleteConfirmation by remember(preset.id) { mutableStateOf(false) }
-    var requestParametersVisible by remember(preset.id) { mutableStateOf(false) }
-    var advancedVisible by remember(preset.id) { mutableStateOf(false) }
+    var page by remember(preset.id) { mutableStateOf(PresetEditorPage.MAIN) }
     var promptDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
     var regexDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
-    val editable = !preset.builtIn && !state.busy
+    var leaveConfirmation by remember(preset.id) { mutableStateOf(false) }
+    var deleteConfirmation by remember(preset.id) { mutableStateOf(false) }
+    var restoreConfirmation by remember(preset.id) { mutableStateOf(false) }
+    var saveAsVisible by remember(preset.id) { mutableStateOf(false) }
+    var saveAsName by remember(preset.id) { mutableStateOf("${preset.name} 分支") }
+    val editable = !state.busy
+
+    fun backFromEditor() {
+        when {
+            promptDetailId != null -> promptDetailId = null
+            regexDetailId != null -> regexDetailId = null
+            page != PresetEditorPage.MAIN -> page = PresetEditorPage.MAIN
+            state.dirty -> leaveConfirmation = true
+            else -> actions.cancelEditor()
+        }
+    }
+
+    BackHandler(onBack = ::backFromEditor)
+
+    when {
+        promptDetailId != null -> {
+            val prompt = preset.prompts.firstOrNull { it.identifier == promptDetailId }
+            if (prompt != null) {
+                PromptDetailPage(prompt, editable, actions) { promptDetailId = null }
+            } else {
+                promptDetailId = null
+            }
+        }
+        regexDetailId != null -> {
+            val regex = preset.regexScripts.firstOrNull { it.id == regexDetailId }
+            if (regex != null) {
+                RegexDetailPage(regex.name, regex.findRegex, regex.replaceString) { regexDetailId = null }
+            } else {
+                regexDetailId = null
+            }
+        }
+        page == PresetEditorPage.REQUEST_PARAMETERS -> GenerationParameterPage(
+            preset = preset,
+            editable = editable,
+            actions = actions,
+            onBack = { page = PresetEditorPage.MAIN },
+        )
+        page == PresetEditorPage.ADVANCED -> AdvancedPresetPage(
+            preset = preset,
+            editable = editable,
+            actions = actions,
+            onBack = { page = PresetEditorPage.MAIN },
+        )
+        else -> PresetMainEditor(
+            state = state,
+            preset = preset,
+            editable = editable,
+            actions = actions,
+            onBack = ::backFromEditor,
+            onOpenPrompt = { promptDetailId = it },
+            onOpenRegex = { regexDetailId = it },
+            onOpenParameters = { page = PresetEditorPage.REQUEST_PARAMETERS },
+            onOpenAdvanced = { page = PresetEditorPage.ADVANCED },
+            onSaveAs = {
+                saveAsName = "${preset.name} 分支"
+                saveAsVisible = true
+            },
+            onRestore = { restoreConfirmation = true },
+            onDelete = { deleteConfirmation = true },
+        )
+    }
+
+    if (leaveConfirmation) {
+        AlertDialog(
+            onDismissRequest = { leaveConfirmation = false },
+            title = { Text("保存对 Preset 的修改？") },
+            text = { Text("保存后，之后的生成会使用这些设置。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    leaveConfirmation = false
+                    actions.saveAndClose()
+                }) { Text("保存并返回") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = actions.cancelEditor) { Text("放弃修改") }
+                    TextButton(onClick = { leaveConfirmation = false }) { Text("继续编辑") }
+                }
+            },
+        )
+    }
+    if (saveAsVisible) {
+        AlertDialog(
+            onDismissRequest = { saveAsVisible = false },
+            title = { Text("另存为新预设") },
+            text = {
+                OutlinedTextField(
+                    value = saveAsName,
+                    onValueChange = { saveAsName = it },
+                    label = { Text("新名称") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("saveAsPresetName"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = saveAsName.isNotBlank(),
+                    onClick = {
+                        saveAsVisible = false
+                        actions.saveAs(saveAsName)
+                    },
+                ) { Text("创建并使用") }
+            },
+            dismissButton = { TextButton(onClick = { saveAsVisible = false }) { Text("取消") } },
+        )
+    }
+    if (restoreConfirmation) {
+        AlertDialog(
+            onDismissRequest = { restoreConfirmation = false },
+            title = { Text("恢复初始设置？") },
+            text = { Text("当前草稿会恢复到导入、内置或创建分支时的状态；保存后才会生效。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    restoreConfirmation = false
+                    actions.restoreInitial()
+                }) { Text("恢复") }
+            },
+            dismissButton = { TextButton(onClick = { restoreConfirmation = false }) { Text("取消") } },
+        )
+    }
+    if (deleteConfirmation) {
+        AlertDialog(
+            onDismissRequest = { deleteConfirmation = false },
+            title = { Text("删除 ${preset.name}？") },
+            text = { Text("删除后会立即切换到内置默认，这项操作无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag("confirmDeletePreset"),
+                    onClick = {
+                        deleteConfirmation = false
+                        actions.delete(preset.id)
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deleteConfirmation = false }) { Text("保留") } },
+        )
+    }
+}
+
+private enum class PresetEditorPage {
+    MAIN,
+    REQUEST_PARAMETERS,
+    ADVANCED,
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetMainEditor(
+    state: PresetUiState,
+    preset: PresetAsset,
+    editable: Boolean,
+    actions: PresetScreenActions,
+    onBack: () -> Unit,
+    onOpenPrompt: (String) -> Unit,
+    onOpenRegex: (String) -> Unit,
+    onOpenParameters: () -> Unit,
+    onOpenAdvanced: () -> Unit,
+    onSaveAs: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val quickPrompts = preset.quickPromptDefinitions()
+    val unusedPromptCount = preset.prompts.count { definition ->
+        !definition.marker && preset.promptOrder.none { it.identifier == definition.identifier }
+    }
     val enabledRequestParameters = PresetGenerationParameter.entries.count(
         preset.generationSettings::isEnabled,
     )
@@ -273,20 +439,20 @@ private fun PresetEditor(
                     Column {
                         Text(preset.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            if (preset.builtIn) "内置 · 复制后编辑" else if (state.dirty) "未保存" else "已保存",
+                            if (state.dirty) "使用中 · 未保存" else "使用中 · 已保存",
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }
                 },
                 navigationIcon = {
-                    TextButton(modifier = Modifier.testTag("cancelPresetEdit"), onClick = actions.cancelEditor) {
-                        Text("取消")
+                    TextButton(modifier = Modifier.testTag("cancelPresetEdit"), onClick = onBack) {
+                        Text("返回")
                     }
                 },
                 actions = {
                     TextButton(
                         modifier = Modifier.testTag("savePreset"),
-                        enabled = editable && state.dirty,
+                        enabled = state.dirty && !state.busy,
                         onClick = actions.save,
                     ) { Text("保存") }
                 },
@@ -308,13 +474,6 @@ private fun PresetEditor(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        if (preset.builtIn) {
-                            Text(
-                                "内置默认只可查看；复制后才能调整。",
-                                color = MaterialTheme.colorScheme.primary,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
                     }
                 }
             }
@@ -331,8 +490,13 @@ private fun PresetEditor(
                     enabled = enabled,
                     editable = editable,
                     onEnabledChange = { actions.setPromptEnabled(prompt.identifier, it) },
-                    onOpenDetails = { promptDetailId = prompt.identifier },
+                    onOpenDetails = { onOpenPrompt(prompt.identifier) },
                 )
+            }
+            if (unusedPromptCount > 0) {
+                item("unused-prompt-note") {
+                    StatusText("另有 $unusedPromptCount 个未进入编排的 Prompt 定义已完整保留；开关不会把它们追加到队列。")
+                }
             }
             item("regex-title") {
                 Text("文本处理开关", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -345,92 +509,44 @@ private fun PresetEditor(
                     enabled = !regex.disabled,
                     editable = editable,
                     onEnabledChange = { actions.updateRegexEnabled(regex.id, it) },
-                    onOpenDetails = { regexDetailId = regex.id },
+                    onOpenDetails = { onOpenRegex(regex.id) },
                 )
             }
             item("secondary-settings") {
                 EditorSection("较少使用") {
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().testTag("openRequestParameters"),
-                        onClick = { requestParametersVisible = true },
+                        onClick = onOpenParameters,
                     ) {
                         Text("请求参数 · $enabledRequestParameters 项开启")
                     }
                     TextButton(
                         modifier = Modifier.fillMaxWidth().testTag("openPresetAdvanced"),
-                        onClick = { advancedVisible = true },
+                        onClick = onOpenAdvanced,
                     ) { Text("名称、格式与结构") }
                 }
             }
             item("actions") {
-                EditorSection("资产操作") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(enabled = !state.busy, onClick = { actions.copy(preset.id) }) { Text("复制") }
-                        OutlinedButton(enabled = !state.busy, onClick = { actions.export(preset) }) { Text("导出") }
-                        if (!preset.builtIn) {
-                            OutlinedButton(enabled = !state.busy, onClick = { deleteConfirmation = true }) {
-                                Text("删除")
-                            }
+                EditorSection("预设操作") {
+                    OutlinedButton(modifier = Modifier.fillMaxWidth(), enabled = !state.busy, onClick = onSaveAs) {
+                        Text("另存为新预设")
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !state.busy,
+                        onClick = actions.exportCurrent,
+                    ) { Text("导出当前 JSON") }
+                    TextButton(modifier = Modifier.fillMaxWidth(), enabled = !state.busy, onClick = onRestore) {
+                        Text("恢复初始设置")
+                    }
+                    if (!preset.builtIn) {
+                        TextButton(modifier = Modifier.fillMaxWidth(), enabled = !state.busy, onClick = onDelete) {
+                            Text("删除预设")
                         }
                     }
                 }
             }
         }
-    }
-
-    promptDetailId?.let { identifier ->
-        preset.prompts.firstOrNull { it.identifier == identifier }?.let { prompt ->
-            PromptDetailSheet(
-                prompt = prompt,
-                preset = preset,
-                editable = editable,
-                actions = actions,
-                onDismiss = { promptDetailId = null },
-            )
-        }
-    }
-    regexDetailId?.let { id ->
-        preset.regexScripts.firstOrNull { it.id == id }?.let { regex ->
-            RegexDetailSheet(
-                name = regex.name,
-                findRegex = regex.findRegex,
-                replaceString = regex.replaceString,
-                onDismiss = { regexDetailId = null },
-            )
-        }
-    }
-    if (requestParametersVisible) {
-        GenerationParameterSheet(
-            preset = preset,
-            editable = editable,
-            actions = actions,
-            onDismiss = { requestParametersVisible = false },
-        )
-    }
-    if (advancedVisible) {
-        AdvancedPresetSheet(
-            preset = preset,
-            editable = editable,
-            actions = actions,
-            onDismiss = { advancedVisible = false },
-        )
-    }
-    if (deleteConfirmation) {
-        AlertDialog(
-            onDismissRequest = { deleteConfirmation = false },
-            title = { Text("删除 ${preset.name}？") },
-            text = { Text(if (preset.id == state.activePresetId) "删除后会立即回退到内置默认。" else "这项操作无法撤销。") },
-            confirmButton = {
-                TextButton(
-                    modifier = Modifier.testTag("confirmDeletePreset"),
-                    onClick = {
-                        deleteConfirmation = false
-                        actions.delete(preset.id)
-                    },
-                ) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { deleteConfirmation = false }) { Text("保留") } },
-        )
     }
 }
 
@@ -502,17 +618,23 @@ private fun RegexQuickSetting(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PromptDetailSheet(
+private fun PromptDetailPage(
     prompt: PresetPromptDefinition,
-    preset: PresetAsset,
     editable: Boolean,
     actions: PresetScreenActions,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
     var advanced by remember(prompt.identifier) { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(prompt.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+            )
+        },
+    ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().testTag("promptDetail-${prompt.identifier}"),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("promptDetail-${prompt.identifier}"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -555,7 +677,7 @@ private fun PromptDetailSheet(
                         RequiredIntField("Depth", prompt.injectionDepth, editable) { value ->
                             actions.updatePrompt(prompt.identifier) { it.copy(injectionDepth = value.coerceAtLeast(0)) }
                         }
-                        RequiredIntField("Order", prompt.injectionOrder, editable) { value ->
+                        RequiredIntField("深度注入次序", prompt.injectionOrder, editable) { value ->
                             actions.updatePrompt(prompt.identifier) { it.copy(injectionOrder = value) }
                         }
                         BooleanControl("允许角色 override", !prompt.forbidOverrides, editable) { allowed ->
@@ -583,30 +705,14 @@ private fun PromptDetailSheet(
                                 Text(trigger.wireValue)
                             }
                         }
-                        val inOrder = preset.promptOrder.any { it.identifier == prompt.identifier }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(
-                                modifier = Modifier.testTag("order-up-${prompt.identifier}"),
-                                enabled = editable && inOrder,
-                                onClick = { actions.movePrompt(prompt.identifier, -1) },
-                            ) { Text("上移") }
-                            TextButton(
-                                modifier = Modifier.testTag("order-down-${prompt.identifier}"),
-                                enabled = editable && inOrder,
-                                onClick = { actions.movePrompt(prompt.identifier, 1) },
-                            ) { Text("下移") }
-                            TextButton(
-                                enabled = editable,
-                                onClick = { actions.togglePromptInOrder(prompt.identifier) },
-                            ) { Text(if (inOrder) "移出顺序" else "移入顺序") }
-                        }
+                        StatusText("Prompt 在编排中的位置保持不变；启停只修改 enabled。")
                     }
                 }
             }
             item("done") {
                 TextButton(
                     modifier = Modifier.fillMaxWidth().testTag("closePromptDetail"),
-                    onClick = onDismiss,
+                    onClick = onBack,
                 ) { Text("完成") }
                 Spacer(Modifier.height(12.dp))
             }
@@ -616,15 +722,22 @@ private fun PromptDetailSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RegexDetailSheet(
+private fun RegexDetailPage(
     name: String,
     findRegex: String,
     replaceString: String,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+            )
+        },
+    ) { padding ->
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -633,7 +746,7 @@ private fun RegexDetailSheet(
             Text(findRegex, style = MaterialTheme.typography.bodySmall)
             Text("替换", style = MaterialTheme.typography.labelLarge)
             Text(replaceString, style = MaterialTheme.typography.bodySmall)
-            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onDismiss) { Text("完成") }
+            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onBack) { Text("完成") }
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -641,16 +754,23 @@ private fun RegexDetailSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GenerationParameterSheet(
+private fun GenerationParameterPage(
     preset: PresetAsset,
     editable: Boolean,
     actions: PresetScreenActions,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val settings = preset.generationSettings
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("请求参数") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+            )
+        },
+    ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().testTag("requestParameterSheet"),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("requestParameterSheet"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -854,7 +974,7 @@ private fun GenerationParameterSheet(
             item("done") {
                 TextButton(
                     modifier = Modifier.fillMaxWidth().testTag("closeRequestParameters"),
-                    onClick = onDismiss,
+                    onClick = onBack,
                 ) { Text("完成") }
                 Spacer(Modifier.height(12.dp))
             }
@@ -901,16 +1021,26 @@ private fun GenerationParameterControl(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AdvancedPresetSheet(
+private fun AdvancedPresetPage(
     preset: PresetAsset,
     editable: Boolean,
     actions: PresetScreenActions,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
-    val structuralPrompts = preset.prompts.filter(PresetPromptDefinition::marker)
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val definitions = preset.prompts.associateBy(PresetPromptDefinition::identifier)
+    val structuralPrompts = preset.promptOrder.mapNotNull { entry ->
+        definitions[entry.identifier]?.takeIf(PresetPromptDefinition::marker)
+    }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("名称、格式与结构") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
+            )
+        },
+    ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().testTag("presetAdvancedSheet"),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("presetAdvancedSheet"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -936,7 +1066,6 @@ private fun AdvancedPresetSheet(
                     Text("结构插槽", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 items(structuralPrompts, key = { "structure-${it.identifier}" }) { prompt ->
-                    val inOrder = preset.promptOrder.any { it.identifier == prompt.identifier }
                     val enabled = preset.promptOrder.firstOrNull { it.identifier == prompt.identifier }?.enabled == true
                     Card(Modifier.fillMaxWidth()) {
                         Row(
@@ -952,14 +1081,6 @@ private fun AdvancedPresetSheet(
                                 Text(prompt.name)
                                 Text(prompt.identifier, style = MaterialTheme.typography.labelSmall)
                             }
-                            TextButton(
-                                enabled = editable && inOrder,
-                                onClick = { actions.movePrompt(prompt.identifier, -1) },
-                            ) { Text("↑") }
-                            TextButton(
-                                enabled = editable && inOrder,
-                                onClick = { actions.movePrompt(prompt.identifier, 1) },
-                            ) { Text("↓") }
                         }
                     }
                 }
@@ -967,7 +1088,7 @@ private fun AdvancedPresetSheet(
             item("done") {
                 TextButton(
                     modifier = Modifier.fillMaxWidth().testTag("closePresetAdvanced"),
-                    onClick = onDismiss,
+                    onClick = onBack,
                 ) { Text("完成") }
                 Spacer(Modifier.height(12.dp))
             }
@@ -1077,12 +1198,25 @@ private inline fun <reified T : Enum<T>> EnumCycler(
     crossinline onChange: (T) -> Unit,
 ) {
     val values = enumValues<T>()
+    var expanded by remember(value) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f))
-        TextButton(
-            enabled = enabled,
-            onClick = { onChange(values[(values.indexOf(value) + 1) % values.size]) },
-        ) { Text(value.name.lowercase()) }
+        Box {
+            OutlinedButton(enabled = enabled, onClick = { expanded = true }) {
+                Text(value.name.lowercase())
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                values.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.name.lowercase()) },
+                        onClick = {
+                            expanded = false
+                            onChange(option)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1104,16 +1238,7 @@ private fun PresetAsset.withGeneration(transform: PresetGenerationSettings.() ->
 
 private fun PresetAsset.quickPromptDefinitions(): List<PresetPromptDefinition> {
     val definitions = prompts.associateBy(PresetPromptDefinition::identifier)
-    val added = mutableSetOf<String>()
-    return buildList {
-        promptOrder.forEach { entry ->
-            val prompt = definitions[entry.identifier]
-            if (prompt != null && !prompt.marker && added.add(prompt.identifier)) add(prompt)
-        }
-        prompts.forEach { prompt ->
-            if (!prompt.marker && added.add(prompt.identifier)) add(prompt)
-        }
-    }
+    return promptOrder.mapNotNull { entry -> definitions[entry.identifier]?.takeUnless(PresetPromptDefinition::marker) }
 }
 
 private fun String.quickSummary(): String = replace(Regex("\\s+"), " ")

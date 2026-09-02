@@ -130,6 +130,11 @@ data class PresetControlSettings(
 )
 
 @Serializable
+data class PresetInitialState(
+    val source: JsonObject,
+)
+
+@Serializable
 data class PresetAsset(
     val id: String,
     val sourceSha256: String,
@@ -142,6 +147,8 @@ data class PresetAsset(
     val regexScripts: List<RegexDefinition> = emptyList(),
     /** Complete parsed ST source. Unsupported fields remain inert but survive edit and export. */
     val source: JsonObject = JsonObject(emptyMap()),
+    /** Immutable reset point captured on import, built-in creation, or Save As. */
+    val initialState: PresetInitialState? = null,
     val diagnostics: List<CompatibilityDiagnostic> = emptyList(),
     val builtIn: Boolean = false,
 ) {
@@ -169,6 +176,7 @@ data class PresetAsset(
             )
         },
         source = JsonObject(source.toMap()),
+        initialState = initialState?.copy(source = JsonObject(initialState.source.toMap())),
         diagnostics = diagnostics.toList(),
     )
 }

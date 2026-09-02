@@ -31,11 +31,12 @@
 - Preset 不属于 Conversation 的剧情状态；Conversation 不保存 Preset snapshot、版本引用或历史绑定。单次生成 metadata 可以记录当时使用的 Preset，但这只是诊断信息。
 - Preset 引用的 Macro、Regex、Tools 和 Provider 特殊能力分别受对应领域的产品边界约束。
 - 当前只导入不超过 32 MiB、可识别的 ST OpenAI / Chat Completion JSON；不支持 Text Completion Preset、空白创建、Provider / 模型绑定或第三方脚本授权。
-- 内置“默认”Preset 使用 ST 默认 Prompt 骨架、中性 main prompt、模型 context 上限和 1024 回复上限。它不可删除或直接编辑，只能复制。
+- 内置“默认”Preset 使用 ST 默认 Prompt 骨架、中性 main prompt、模型 context 上限和 1024 回复上限。它不可删除，但当前版本可以直接编辑；“恢复初始设置”回到代码内置版本。
 - 导入保留完整解析后的 JSON，包括定义池、全局 Prompt order、未使用定义、Prompt / Regex / 控制字段、未知扩展，以及 Provider / 模型、endpoint、自定义 headers/body 和凭据形字段。后几类只作为惰性兼容内容落盘和导出，不会自动改变 Player 连接、触发网络访问或获得执行权；不额外保留原文件的空白与格式。
 - 名称大小写不敏感且唯一；重复内容复用已有资产，同名异内容自动编号。删除 active 项会原子回退到内置默认。
-- 编辑采用显式保存 / 取消。主界面只把普通 Prompt 与 Preset Regex 投影为快速开关，不建立通用 Context 管理器；Prompt 文本编辑位于单项详情，role、placement / depth、order 与控制格式位于更深的兼容入口。
-- 模型请求参数是低频 Preset 条目，位于独立次级面板并可逐项开启或关闭。关闭时保留本地值，但从兼容 Provider 请求和 ST 导出中移除；切换 Provider 不反向修改 Preset。Provider 协议必填值由播放器的安全预算补齐并进入诊断。
+- 导入、内置和“另存为”分别捕获不可变初始版本，当前编辑不覆盖该恢复基线。编辑采用显式保存；带修改返回时必须选择保存、放弃或继续编辑。“另存为”从当前草稿创建并立即启用新 Preset；导出 JSON 使用当前草稿。
+- 从 Preset 列表进入一项时会先把它设为全局 active，再编辑同一项。主界面只把实际 `prompt_order` 中的普通 Prompt 与 Preset Regex 投影为快速开关；Prompt 开关只修改既有 order entry 的 `enabled`，不插入、移除或移动队列，未编排定义继续完整保留。
+- Prompt 文本与兼容字段、Preset 名称 / 控制格式 / 结构 marker、模型请求参数分别位于独立次级页面。请求参数可逐项开启或关闭；关闭时保留本地值，但从兼容 Provider 请求和 ST 导出中移除。切换 Provider 不反向修改 Preset，Provider 协议必填值由播放器的安全预算补齐并进入诊断。
 
 ### World Book
 

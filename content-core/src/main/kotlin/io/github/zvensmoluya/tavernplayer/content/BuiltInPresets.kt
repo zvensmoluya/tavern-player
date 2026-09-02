@@ -34,11 +34,12 @@ object BuiltInPresets {
         )
         val source = PresetExporter.exportToJson(draft)
         val fingerprint = PresetExporter.fingerprint(source)
-        draft.copy(
+        val finalized = draft.copy(
             sourceSha256 = fingerprint,
             contentSha256 = fingerprint,
             source = source,
         )
+        finalized.copy(initialState = PresetInitialState(source))
     }
 }
 

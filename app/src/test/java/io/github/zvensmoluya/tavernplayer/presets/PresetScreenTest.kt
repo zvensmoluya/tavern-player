@@ -57,7 +57,7 @@ class PresetScreenTest {
     }
 
     @Test
-    fun `editor keeps changes local until explicit save and edits order and regex state`() {
+    fun `editor keeps changes local until explicit save and edits prompt and regex state`() {
         var state by mutableStateOf(
             PresetUiState(
                 presets = listOf(editablePreset()),
@@ -88,15 +88,6 @@ class PresetScreenTest {
                                 dirty = true,
                             )
                         },
-                        movePrompt = { id, delta ->
-                            val draft = state.draft!!
-                            val from = draft.promptOrder.indexOfFirst { it.identifier == id }
-                            val to = (from + delta).coerceIn(0, draft.promptOrder.lastIndex)
-                            val order = draft.promptOrder.toMutableList()
-                            val item = order.removeAt(from)
-                            order.add(to, item)
-                            state = state.copy(draft = draft.copy(promptOrder = order), dirty = true)
-                        },
                         updateRegexEnabled = { id, enabled ->
                             val draft = state.draft!!
                             state = state.copy(
@@ -117,7 +108,10 @@ class PresetScreenTest {
                                 dirty = true,
                             )
                         },
-                        save = { saved = state.draft },
+                        save = {
+                            saved = state.draft
+                            state = state.copy(dirty = false)
+                        },
                     ),
                 )
             }
@@ -130,16 +124,13 @@ class PresetScreenTest {
         compose.onNodeWithTag("presetEditor").performScrollToNode(hasTestTag("openPresetAdvanced"))
         compose.onNodeWithTag("openPresetAdvanced").performClick()
         compose.onNodeWithTag("presetName").performTextReplacement("Edited")
-        compose.onNodeWithTag("savePreset").assertIsEnabled()
         compose.onNodeWithTag("presetAdvancedSheet").performScrollToNode(hasTestTag("closePresetAdvanced"))
         compose.onNodeWithTag("closePresetAdvanced").performClick()
+        compose.onNodeWithTag("savePreset").assertIsEnabled()
 
         compose.onNodeWithTag("presetEditor").performScrollToNode(hasTestTag("prompt-details-main"))
         compose.onNodeWithTag("prompt-details-main").performClick()
         compose.onNodeWithTag("showPromptAdvanced").performClick()
-        compose.onNodeWithTag("promptDetail-main").performScrollToNode(hasTestTag("order-down-main"))
-        compose.onNodeWithTag("order-down-main").performClick()
-        assertEquals("worldInfoBefore", state.draft?.promptOrder?.first()?.identifier)
         compose.onNodeWithTag("promptDetail-main").performScrollToNode(hasTestTag("closePromptDetail"))
         compose.onNodeWithTag("closePromptDetail").performClick()
 
@@ -195,7 +186,39 @@ class PresetScreenTest {
     }
 
     @Test
-    fun `built in editor requires copy before editing`() {
+    fun `dirty editor confirms before returning`() {
+        var cancelled = false
+        var savedAndClosed = false
+        compose.setContent {
+            TavernPlayerTheme {
+                PresetScreen(
+                    state = PresetUiState(
+                        presets = listOf(editablePreset()),
+                        activePresetId = "custom",
+                        selectedPresetId = "custom",
+                        draft = editablePreset(),
+                        dirty = true,
+                    ),
+                    actions = PresetScreenActions(
+                        cancelEditor = { cancelled = true },
+                        saveAndClose = { savedAndClosed = true },
+                    ),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("cancelPresetEdit").performClick()
+        compose.onNodeWithText("保存对 Preset 的修改？").assertIsDisplayed()
+        compose.onNodeWithText("继续编辑").performClick()
+        assertFalse(cancelled)
+
+        compose.onNodeWithTag("cancelPresetEdit").performClick()
+        compose.onNodeWithText("保存并返回").performClick()
+        assertTrue(savedAndClosed)
+    }
+
+    @Test
+    fun `built in editor is directly editable and restorable`() {
         val builtIn = BuiltInPresets.default
         compose.setContent {
             TavernPlayerTheme {
@@ -211,8 +234,8 @@ class PresetScreenTest {
             }
         }
 
-        compose.onNodeWithText("内置 · 复制后编辑").assertIsDisplayed()
-        compose.onNodeWithTag("prompt-enabled-main").assertIsNotEnabled()
+        compose.onNodeWithText("使用中 · 已保存").assertIsDisplayed()
+        compose.onNodeWithTag("prompt-enabled-main").assertIsEnabled()
         compose.onNodeWithTag("savePreset").assertIsNotEnabled()
         assertFalse(builtIn.builtIn.not())
     }
