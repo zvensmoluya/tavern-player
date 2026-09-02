@@ -25,7 +25,7 @@ class PresetRepositoryTest {
     val temporary = TemporaryFolder()
 
     @Test
-    fun `import deduplicates content allocates names and persists only sanitized source`() = runTest {
+    fun `import deduplicates content allocates names and persists complete source`() = runTest {
         val root = temporary.newFolder("preset-import")
         var importedId = 0
         val repository = PresetRepository(
@@ -47,10 +47,17 @@ class PresetRepositoryTest {
         assertEquals("writer (2)", second.preset.name)
         assertEquals(3, repository.library.value.presets.size)
         val persisted = File(root, "tavern/presets/library.json").readText()
-        assertFalse(persisted.contains("do-not-store"))
-        assertFalse(persisted.contains("another-secret"))
-        assertFalse(persisted.contains("api.example.com"))
-        assertFalse(repository.exportPreset(second.preset.id).decodeToString().contains("another-secret"))
+        assertTrue(persisted.contains("do-not-store"))
+        assertTrue(persisted.contains("another-secret"))
+        assertTrue(persisted.contains("api.example.com"))
+
+        val restored = PresetRepository(
+            filesDir = root,
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val exported = restored.exportPreset(second.preset.id).decodeToString()
+        assertTrue(exported.contains("another-secret"))
+        assertTrue(exported.contains("api.example.com"))
     }
 
     @Test

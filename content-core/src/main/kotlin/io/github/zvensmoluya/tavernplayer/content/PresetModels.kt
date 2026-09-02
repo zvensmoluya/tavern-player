@@ -140,7 +140,8 @@ data class PresetAsset(
     val generationSettings: PresetGenerationSettings = PresetGenerationSettings(),
     val controlSettings: PresetControlSettings = PresetControlSettings(),
     val regexScripts: List<RegexDefinition> = emptyList(),
-    val sanitizedSource: JsonObject = JsonObject(emptyMap()),
+    /** Complete parsed ST source. Unsupported fields remain inert but survive edit and export. */
+    val source: JsonObject = JsonObject(emptyMap()),
     val diagnostics: List<CompatibilityDiagnostic> = emptyList(),
     val builtIn: Boolean = false,
 ) {
@@ -167,7 +168,7 @@ data class PresetAsset(
                 raw = JsonObject(regex.raw.toMap()),
             )
         },
-        sanitizedSource = JsonObject(sanitizedSource.toMap()),
+        source = JsonObject(source.toMap()),
         diagnostics = diagnostics.toList(),
     )
 }
@@ -184,8 +185,6 @@ sealed interface PresetImportResult {
 
     data class Ready(
         val preset: PresetAsset,
-        /** UTF-8 ST JSON after connection credentials and endpoint data have been removed. */
-        val sanitizedSourceBytes: ByteArray,
         override val diagnostics: List<CompatibilityDiagnostic>,
     ) : PresetImportResult {
         override val status: PresetImportStatus = if (diagnostics.isEmpty()) {

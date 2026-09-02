@@ -311,6 +311,28 @@ class PromptCompilerTest {
     }
 
     @Test
+    fun `persona description marker uses the current persona content at preset position`() {
+        val original = baseInput()
+        val input = original.copy(
+            persona = original.persona.copy(description = "旅人是来自北方的寡言制图师。"),
+            preset = original.preset.copy(
+                prompts = original.preset.prompts + PromptDefinition(
+                    identifier = "personaDescription",
+                    role = ContentRole.USER,
+                    marker = true,
+                ),
+                promptOrder = listOf(PromptOrderEntry("personaDescription")) + original.preset.promptOrder,
+            ),
+        )
+
+        val plan = (compiler.compile(input) as CompilationResult.Success).plan
+        val personaMessage = plan.messages.first { it.origin.sourceIds == listOf("personaDescription") }
+
+        assertEquals(MessageRole.USER, personaMessage.role)
+        assertEquals("旅人是来自北方的寡言制图师。", personaMessage.content)
+    }
+
+    @Test
     fun `normal and regenerate prompt triggers select the current transaction type`() {
         val original = baseInput()
         val preset = original.preset.copy(

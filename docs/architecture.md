@@ -12,7 +12,7 @@ app ───────────────> model-gateway
  └─> conversation-core ─> content-core
 ```
 
-- `content-core` 是纯 Kotlin 内容层，负责 Character Card 与 ST OpenAI Preset 的检测、解码、规范化模型、清理、导出和兼容性诊断。
+- `content-core` 是纯 Kotlin 内容层，负责 Character Card 与 ST OpenAI Preset 的检测、解码、规范化模型、完整来源保留、导出和兼容性诊断。
 - `conversation-core` 是纯 Kotlin 对话运行层，负责 Macro、Regex、World Book、Prompt、token accounting 和一次生成事务。
 - `model-gateway` 是协议边界，负责协议原生请求、最终 token 验证和流式响应。
 - `app` 负责 Android 文件访问、私有仓库、Compose 界面、生命周期和流式持久化。
@@ -24,7 +24,7 @@ app ───────────────> model-gateway
 `app` 中的 `ShelfTransferClient` 消费 Tavern Shelf Transfer Protocol v1。角色库首页通过系统二维码扫描器取得短期 URL；Android 17 在首次连接前请求本地网络权限。客户端读取 manifest 和原始 source，限制为现有 32 MiB 导入上限，并核对字节数与 SHA-256 后按 `kind` 路由到现有仓库：
 
 - `character` 进入 `CharacterRepository`；
-- `preset` 进入 `PresetRepository`，沿用现有 Preset 格式检测与清理；
+- `preset` 进入 `PresetRepository`，沿用现有 Preset 格式检测、规范化和完整来源保留；
 - `worldbook` 当前只识别并提示尚未支持独立导入。
 
 二维码 URL 只用于当前接收，不进入持久化状态。Shelf 使用局域网明文 HTTP，因此 Android 应用显式允许 cleartext；该能力只由 Shelf 接收入口触发。
@@ -47,7 +47,7 @@ app ───────────────> model-gateway
 
 `PresetImporter` 只接受不超过 32 MiB 的可识别 ST OpenAI / Chat Completion JSON。它解析 Prompt 定义池、`character_id=100001`（兼容 `100000`）的全局 order、未使用定义、legacy prompt、generation / control settings 和 Preset Regex。缺失定义引用按 ST 行为跳过并告警，不让局部坏数据阻断整份资产。
 
-未知字段和扩展载荷保存在 `PresetAsset.sanitizedSource`，但不会执行。递归清理器在任何落盘或导出前移除 endpoint、代理凭据、自定义 headers/body、账户标识和其他连接数据。`PresetExporter` 把编辑后的正式字段合并回清理后的 source，保留未知扩展并再次执行安全过滤；内容指纹基于规范化安全 JSON。
+完整导入对象保存在 `PresetAsset.source`。未知字段、扩展载荷、Provider / 模型选择、endpoint、自定义 headers/body 和凭据形字段都是惰性内容：可以落盘和重新导出，但不会自动改变 Player 连接、发起网络请求或获得脚本执行权。`PresetExporter` 把编辑后的正式字段合并回完整 source；内容指纹基于合并后的规范化 JSON。
 
 `BuiltInPresets.default` 是不可变内置资产：ST 默认 Prompt 骨架、中性 main prompt、无额外文风限制、context 不设人为上限、回复上限 1024。
 
@@ -91,9 +91,9 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source 和静态头像缩略图。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。
 
-`PresetRepository` 以一个原子 app-private manifest 保存用户 Preset、清理后的 source 树和全局 active ID，内置默认由代码注入。它提供导入、激活、显式保存、重命名、复制、删除和安全导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始未清理 Preset 不落盘。
+`PresetRepository` 以一个原子 app-private manifest 保存用户 Preset、完整 source 树和全局 active ID，内置默认由代码注入。它提供导入、激活、显式保存、重命名、复制、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
-`ConversationRepository` 保存完整 Character Snapshot、Persona、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
+`ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
 
 模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 

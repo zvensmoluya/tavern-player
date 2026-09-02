@@ -29,7 +29,7 @@ object BuiltInPresets {
                     .filterNotTo(mutableSetOf()) { it == PresetGenerationParameter.OUTPUT_LIMIT },
             ),
             controlSettings = PresetControlSettings(),
-            sanitizedSource = JsonObject(emptyMap()),
+            source = JsonObject(emptyMap()),
             builtIn = true,
         )
         val source = PresetExporter.exportToJson(draft)
@@ -37,7 +37,7 @@ object BuiltInPresets {
         draft.copy(
             sourceSha256 = fingerprint,
             contentSha256 = fingerprint,
-            sanitizedSource = source,
+            source = source,
         )
     }
 }

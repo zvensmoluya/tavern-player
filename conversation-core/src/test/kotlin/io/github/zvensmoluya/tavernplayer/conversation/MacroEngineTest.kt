@@ -65,6 +65,21 @@ class MacroEngineTest {
     }
 
     @Test
+    fun `persona name and description remain distinct macro sources`() {
+        val context = context().copy(
+            persona = Persona(
+                id = "persona",
+                name = "Traveler",
+                description = "A patient archivist from the coast.",
+            ),
+        )
+
+        val result = engine.evaluate("{{user}} / {{persona}}", context, MacroTransaction())
+
+        assertEquals("Traveler / A patient archivist from the coast.", result.text)
+    }
+
+    @Test
     fun `global variable conditions remain literal instead of becoming truthy local conditions`() {
         val scopedText = "{{if \$mood}}visible{{else}}hidden{{/if}}"
         val inlineText = "{{if::{{getglobalvar::mood}}::visible::hidden}}"

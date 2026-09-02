@@ -68,7 +68,12 @@ val CharacterSnapshot.examples: List<DialogueExample>
     get() = parseDialogueExamples(rawMessageExamples, promptName, "User")
 
 @Serializable
-data class Persona(val id: String, val name: String, val avatar: String? = null)
+data class Persona(
+    val id: String,
+    val name: String,
+    val avatar: String? = null,
+    val description: String = "",
+)
 
 @Serializable
 data class ReasoningBlock(val text: String = "", val signature: String? = null)

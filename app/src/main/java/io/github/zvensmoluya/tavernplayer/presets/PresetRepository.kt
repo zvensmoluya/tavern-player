@@ -70,7 +70,8 @@ class InvalidPresetNameException : PresetRepositoryException("Preset 名称不�
 
 /**
  * App-private global Preset library. The atomic manifest is the source of truth and contains the
- * active id, formal assets, and their sanitized ST source trees. Raw imported bytes are never kept.
+ * active id, formal assets, and their complete parsed ST source trees. Imported connection fields
+ * and extensions remain inert data unless a separate supported runtime explicitly consumes them.
  */
 class PresetRepository(
     filesDir: File,
@@ -285,9 +286,9 @@ class PresetRepository(
     }
 
     private fun normalize(preset: PresetAsset): PresetAsset {
-        val safeSource = PresetExporter.exportToJson(preset)
+        val source = PresetExporter.exportToJson(preset)
         val draft = preset.copy(
-            sanitizedSource = safeSource,
+            source = source,
             builtIn = false,
         )
         return draft.copy(contentSha256 = PresetExporter.fingerprint(draft))
@@ -299,7 +300,7 @@ class PresetRepository(
     }
 }
 
-private const val CURRENT_SCHEMA_VERSION = 1
+private const val CURRENT_SCHEMA_VERSION = 2
 
 private val PRESET_ORDER = compareBy<PresetAsset> { it.name.lowercase(Locale.ROOT) }.thenBy(PresetAsset::id)
 

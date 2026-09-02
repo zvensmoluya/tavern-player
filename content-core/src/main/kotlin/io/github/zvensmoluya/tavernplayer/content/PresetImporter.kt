@@ -57,14 +57,6 @@ class PresetImporter(
         }
 
         val diagnostics = mutableListOf<CompatibilityDiagnostic>()
-        val sanitized = sanitizePresetJson(raw)
-        if (sanitized.removedPaths.isNotEmpty()) {
-            diagnostics.warning(
-                "CONNECTION_DATA_REMOVED",
-                "已移除 Provider、模型、endpoint、header/body 或凭据类连接数据；这些字段不会落盘",
-                sanitized.removedPaths.joinToString(),
-            )
-        }
 
         return try {
             val definitions = if (hasDefinitionPool) {
@@ -93,11 +85,11 @@ class PresetImporter(
             }
 
             val regexScripts = parseRegexScripts(
-                (sanitized.json["extensions"] as? JsonObject)?.get("regex_scripts")
-                    ?: sanitized.json["regex_scripts"],
+                (raw["extensions"] as? JsonObject)?.get("regex_scripts")
+                    ?: raw["regex_scripts"],
                 diagnostics,
             )
-            detectPreservedCapabilities(sanitized.json, diagnostics)
+            detectPreservedCapabilities(raw, diagnostics)
 
             val sourceSha256 = sourceBytes.sha256()
             val draft = PresetAsset(
@@ -110,20 +102,19 @@ class PresetImporter(
                 generationSettings = parseGenerationSettings(raw, diagnostics),
                 controlSettings = parseControlSettings(raw, diagnostics),
                 regexScripts = regexScripts,
-                sanitizedSource = sanitized.json,
+                source = raw,
                 diagnostics = emptyList(),
             )
-            val safeSource = PresetExporter.exportToJson(draft)
-            val contentSha256 = PresetExporter.fingerprint(safeSource)
+            val exportedSource = PresetExporter.exportToJson(draft)
+            val contentSha256 = PresetExporter.fingerprint(exportedSource)
             val finalDiagnostics = diagnostics.distinctBy { Triple(it.code, it.message, it.source) }
             val preset = draft.copy(
                 contentSha256 = contentSha256,
-                sanitizedSource = safeSource,
+                source = exportedSource,
                 diagnostics = finalDiagnostics,
             )
             PresetImportResult.Ready(
                 preset = preset,
-                sanitizedSourceBytes = PresetExporter.export(preset),
                 diagnostics = finalDiagnostics,
             )
         } catch (error: ImportFailure) {

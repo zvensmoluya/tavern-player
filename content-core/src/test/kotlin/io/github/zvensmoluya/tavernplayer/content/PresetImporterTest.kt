@@ -101,10 +101,11 @@ class PresetImporterTest {
     }
 
     @Test
-    fun stripsConnectionSecretsButPreservesOpaqueScriptsWithoutExecutingThem() {
+    fun preservesCompleteSourceAcrossEditAndExportWithoutExecutingExtensions() {
         val source = """
             {
               "chat_completion_source":"custom",
+              "custom_model":"community-model",
               "custom_url":"https://private.invalid/v1",
               "proxy_password":"secret-value",
               "custom_include_headers":"Authorization: Bearer secret-value",
@@ -119,16 +120,32 @@ class PresetImporterTest {
         """.trimIndent().encodeToByteArray()
 
         val result = importer.import(source) as PresetImportResult.Ready
-        val exported = PresetExporter.export(result.preset).decodeToString()
+        val edited = result.preset.copy(
+            prompts = result.preset.prompts.map { prompt ->
+                if (prompt.identifier == "main") prompt.copy(content = "edited") else prompt
+            },
+        )
+        val exported = PresetExporter.export(edited).decodeToString()
         val json = Json.parseToJsonElement(exported).jsonObject
 
-        assertFalse(exported.contains("secret-value"))
-        assertFalse(exported.contains("nested-secret"))
-        assertFalse(json.containsKey("custom_url"))
-        assertFalse(json.containsKey("chat_completion_source"))
+        assertEquals("custom", json["chat_completion_source"]!!.jsonPrimitive.content)
+        assertEquals("community-model", json["custom_model"]!!.jsonPrimitive.content)
+        assertEquals("https://private.invalid/v1", json["custom_url"]!!.jsonPrimitive.content)
+        assertEquals("secret-value", json["proxy_password"]!!.jsonPrimitive.content)
+        assertEquals(
+            "Authorization: Bearer secret-value",
+            json["custom_include_headers"]!!.jsonPrimitive.content,
+        )
+        assertEquals(
+            "nested-secret",
+            json["extensions"]!!.jsonObject["future"]!!.jsonObject["api_key"]!!.jsonPrimitive.content,
+        )
         assertEquals(42, json["extensions"]!!.jsonObject["future"]!!.jsonObject["kept"]!!.jsonPrimitive.content.toInt())
         assertEquals("do-not-run()", json["tavern_helper"]!!.jsonObject["script"]!!.jsonPrimitive.content)
-        assertTrue(result.diagnostics.any { it.code == "CONNECTION_DATA_REMOVED" })
+        assertEquals(
+            "edited",
+            json["prompts"]!!.jsonArray.single().jsonObject["content"]!!.jsonPrimitive.content,
+        )
         assertTrue(result.diagnostics.any { it.code == "THIRD_PARTY_SCRIPT_PRESERVED" })
     }
 
@@ -144,7 +161,7 @@ class PresetImporterTest {
 
         val result = importer.import(source) as PresetImportResult.Ready
 
-        assertTrue(result.preset.sanitizedSource["extensions"]!!.jsonObject.containsKey("tavern_helper"))
+        assertTrue(result.preset.source["extensions"]!!.jsonObject.containsKey("tavern_helper"))
         assertFalse(result.diagnostics.any { it.code == "THIRD_PARTY_SCRIPT_PRESERVED" })
     }
 
@@ -182,8 +199,8 @@ class PresetImporterTest {
         assertFalse(reimported.preset.controlSettings.showThoughts)
         assertTrue(reimported.preset.regexScripts.single().disabled)
         assertEquals("kept", root["future_root"]!!.jsonObject["value"]!!.jsonPrimitive.content)
-        assertTrue(root["stream_openai"]!!.jsonPrimitive.boolean)
-        assertEquals(1, root["n"]!!.jsonPrimitive.content.toInt())
+        assertFalse(root["stream_openai"]!!.jsonPrimitive.boolean)
+        assertEquals(3, root["n"]!!.jsonPrimitive.content.toInt())
         assertTrue(root["prompt_order"]!!.jsonArray.hasGlobalOrder(100001))
     }
 
@@ -229,7 +246,11 @@ class PresetImporterTest {
         assertTrue(imported.preset.prompts.any { it.identifier == "main" })
         assertTrue(imported.preset.promptOrder.any { it.identifier == "chatHistory" })
         assertTrue(imported.preset.promptOrder.any { it.identifier == "personaDescription" })
-        assertFalse(exported.decodeToString().contains("chat_completion_source"))
+        val originalRoot = Json.parseToJsonElement(file.readText()).jsonObject
+        val exportedRoot = Json.parseToJsonElement(exported.decodeToString()).jsonObject
+        originalRoot["chat_completion_source"]?.let { source ->
+            assertEquals(source, exportedRoot["chat_completion_source"])
+        }
         assertEquals(imported.preset.contentSha256, reimported.preset.contentSha256)
     }
 
@@ -240,6 +261,8 @@ class PresetImporterTest {
           "top_a":0.2,
           "openai_max_context":8192,
           "openai_max_tokens":512,
+          "stream_openai":false,
+          "n":3,
           "prompts":[
             {"identifier":"main","name":"Main","role":"system","content":"Main content","future_prompt_key":"kept"},
             {"identifier":"absolute","name":"Depth","role":"user","content":"Depth content","injection_position":1,"injection_depth":2,"injection_order":7,"injection_trigger":["regenerate","continue"]},

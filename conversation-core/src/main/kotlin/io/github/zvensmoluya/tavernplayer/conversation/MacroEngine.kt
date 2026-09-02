@@ -265,7 +265,7 @@ class MacroEngine {
             "chardescription", "description" -> context.character.description
             "charpersonality", "personality" -> context.character.personality
             "charscenario", "scenario" -> context.character.scenario
-            "persona" -> ""
+            "persona" -> context.persona.description
             "mesexamplesraw", "mesexamples" -> context.character.rawMessageExamples
             "chardepthprompt" -> context.character.depthPrompt?.content.orEmpty()
             "charcreatornotes", "creatornotes" -> context.character.creatorNotes

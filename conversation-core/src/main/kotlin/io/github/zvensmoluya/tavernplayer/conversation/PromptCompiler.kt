@@ -715,7 +715,7 @@ class PromptCompiler(
                 input.preset.controlSettings.worldInfoFormat,
                 world.filter { it.position == WorldBookPosition.AFTER_CHARACTER }.joinToString("\n") { it.content },
             )
-            PERSONA_DESCRIPTION_MARKER -> ""
+            PERSONA_DESCRIPTION_MARKER -> input.persona.description
             CHAR_DESCRIPTION_MARKER -> input.character.description
             CHAR_PERSONALITY_MARKER -> formatTemplate(
                 input.preset.controlSettings.personalityFormat,
@@ -1036,6 +1036,7 @@ class PromptCompiler(
 }
 
 private fun NormalGenerationInput.usesFirstIncludedMessageIdMacro(): Boolean = sequence {
+    yield(persona.description)
     yield(character.description)
     yield(character.personality)
     yield(character.scenario)

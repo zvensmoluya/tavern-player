@@ -32,7 +32,7 @@
 - Preset 引用的 Macro、Regex、Tools 和 Provider 特殊能力分别受对应领域的产品边界约束。
 - 当前只导入不超过 32 MiB、可识别的 ST OpenAI / Chat Completion JSON；不支持 Text Completion Preset、空白创建、Provider / 模型绑定或第三方脚本授权。
 - 内置“默认”Preset 使用 ST 默认 Prompt 骨架、中性 main prompt、模型 context 上限和 1024 回复上限。它不可删除或直接编辑，只能复制。
-- 导入保留定义池、全局 Prompt order、未使用定义、Prompt / Regex / 控制字段和未知扩展；连接 endpoint、代理密码、自定义 headers/body、账户标识等敏感数据在落盘前删除，原始未清理文件不会保存。
+- 导入保留完整解析后的 JSON，包括定义池、全局 Prompt order、未使用定义、Prompt / Regex / 控制字段、未知扩展，以及 Provider / 模型、endpoint、自定义 headers/body 和凭据形字段。后几类只作为惰性兼容内容落盘和导出，不会自动改变 Player 连接、触发网络访问或获得执行权；不额外保留原文件的空白与格式。
 - 名称大小写不敏感且唯一；重复内容复用已有资产，同名异内容自动编号。删除 active 项会原子回退到内置默认。
 - 编辑采用显式保存 / 取消。主界面只把普通 Prompt 与 Preset Regex 投影为快速开关，不建立通用 Context 管理器；Prompt 文本编辑位于单项详情，role、placement / depth、order 与控制格式位于更深的兼容入口。
 - 模型请求参数是低频 Preset 条目，位于独立次级面板并可逐项开启或关闭。关闭时保留本地值，但从兼容 Provider 请求和 ST 导出中移除；切换 Provider 不反向修改 Preset。Provider 协议必填值由播放器的安全预算补齐并进入诊断。
@@ -47,9 +47,9 @@
 
 ### Persona
 
-- Persona 是可复用的用户身份资产，只保留 name 与 avatar。name 是 `{{user}}` 和用户消息身份的数据来源，avatar 用于聊天展示。
+- Persona 是可复用的用户身份资产，保留 name、avatar 与可选 description。name 是 `{{user}}` 和用户消息身份的数据来源，description 是 `{{persona}}` 与 Preset `personaDescription` marker 的动态内容源，avatar 用于聊天展示；具体编排仍完全由当前 Preset 决定。
 - Conversation 直接选择当前 Persona / UserIdentity。切换 Persona 不改写已有历史消息，历史消息保留发送时的用户身份。
-- 不支持 Persona description 及其 placement / depth / role、Persona Lorebook、Persona 参与 World Book 扫描、Character → Persona 绑定，以及应用默认、Character 关联、Conversation 锁定或临时 Persona 等自动选择拓扑。
+- 当前默认 Persona 的 description 为空，尚无 Persona 管理界面；不另行实现 Persona 自有的 placement / depth / role，不支持 Persona Lorebook、Persona 参与 World Book 扫描、Character → Persona 绑定，以及应用默认、Character 关联、Conversation 锁定或临时 Persona 等自动选择拓扑。
 
 ## 3. Conversation 与剧情状态
 
