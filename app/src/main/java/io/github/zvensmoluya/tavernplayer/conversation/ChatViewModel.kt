@@ -27,6 +27,8 @@ import kotlinx.coroutines.withContext
 
 enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTED }
 
+enum class MessageEditMode { TEXT_ONLY, RESTART }
+
 data class AssistantGenerationMetadata(
     val presetId: String,
     val presetName: String,
@@ -45,6 +47,7 @@ data class ChatMessageState(
     val variantCount: Int = 1,
     val displayContent: String = message.content,
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
+    val edited: Boolean = false,
 )
 
 data class GenerationTraceState(
@@ -181,6 +184,7 @@ class ChatViewModel(
             try {
                 val generationId = idGenerator()
                 val historyBefore = record.selectedMessages()
+                val runtimeBeforeInput = record.runtimeState
                 val projected = compiler.projectUserInput(
                     text = inputText,
                     character = record.character,
@@ -196,6 +200,7 @@ class ChatViewModel(
                     id = idGenerator(),
                     role = MessageRole.USER,
                     content = projected.text,
+                    sourceText = inputText,
                     authorName = record.persona.name,
                     createdAtEpochMillis = now(),
                 )
@@ -217,7 +222,15 @@ class ChatViewModel(
                 val userTurn = ConversationTurn(
                     id = idGenerator(),
                     role = MessageRole.USER,
-                    variants = listOf(MessageVariant(idGenerator(), userMessage)),
+                    variants = listOf(
+                        MessageVariant(
+                            id = idGenerator(),
+                            message = userMessage,
+                            runtimeStateBefore = runtimeBeforeInput,
+                            projectionRuntimeStateBefore = runtimeBeforeInput,
+                            runtimeStateAfter = projected.runtimeState,
+                        ),
+                    ),
                 )
                 record = record.copy(turns = record.turns + userTurn, runtimeState = projected.runtimeState)
                 syncRecord(input = "", message = null, retryAvailable = false, running = true)
@@ -260,6 +273,173 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 generate(connection, idGenerator(), appendAssistantTurn = false, preset = capturedPreset)
+            } catch (cancelled: CancellationException) {
+                abortBeforeStreaming("已停止生成")
+                throw cancelled
+            } catch (error: Exception) {
+                abortBeforeStreaming(error.userMessage())
+            }
+        }
+    }
+
+    fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
+        val state = _uiState.value
+        if (state.running || sourceText.isBlank()) return
+        val turnIndex = record.turns.indexOfFirst { it.selected.message.id == messageId }
+        if (turnIndex < 0) return
+        val turn = record.turns[turnIndex]
+        val selected = turn.selected
+        if (selected.status == PersistedMessageStatus.STREAMING || turn.role == MessageRole.SYSTEM) return
+        val capturedPreset = presetSource.captureActive()
+        val connection = state.selectedConnection
+        val shouldGenerate = mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection != null
+        _uiState.update { it.copy(running = true, message = null) }
+        viewModelScope.launch {
+            try {
+                val generationId = idGenerator()
+                val historyBefore = record.turns.take(turnIndex).map { it.selected.message }
+                val runtimeBefore = selected.runtimeStateBefore
+                    ?: record.turns.getOrNull(turnIndex - 1)?.selected?.runtimeStateAfter
+                    ?: ConversationRuntimeState()
+                val modelId = connection?.selectedModel ?: selected.model.orEmpty()
+                val editedVariant = when (turn.role) {
+                    MessageRole.USER -> {
+                        val projected = compiler.projectUserInput(
+                            text = sourceText,
+                            character = record.character,
+                            persona = record.persona,
+                            preset = capturedPreset,
+                            runtimeState = runtimeBefore,
+                            history = historyBefore,
+                            conversationId = record.id,
+                            generationId = generationId,
+                            modelId = modelId,
+                        ) as TextExpansionResult.Success
+                        if (mode == MessageEditMode.TEXT_ONLY) {
+                            selected.copy(
+                                message = selected.message.copy(content = projected.text, sourceText = sourceText),
+                                edited = true,
+                            )
+                        } else {
+                            selected.copy(
+                                message = selected.message.copy(
+                                    content = projected.text,
+                                    sourceText = sourceText,
+                                    reasoning = emptyList(),
+                                    adapterId = null,
+                                ),
+                                status = PersistedMessageStatus.COMPLETE,
+                                presetId = null,
+                                presetName = null,
+                                presetContentSha256 = null,
+                                adapterId = null,
+                                model = null,
+                                finishReason = null,
+                                inputTokens = null,
+                                outputTokens = null,
+                                generationPlan = null,
+                                edited = true,
+                                runtimeStateBefore = runtimeBefore,
+                                projectionRuntimeStateBefore = runtimeBefore,
+                                runtimeStateAfter = projected.runtimeState,
+                            )
+                        }
+                    }
+                    MessageRole.ASSISTANT -> {
+                        val projectionRuntime = selected.projectionRuntimeStateBefore
+                            ?: selected.generationPlan?.runtimeState
+                            ?: runtimeBefore
+                        val projected = compiler.projectAssistantOutput(
+                            rawText = sourceText,
+                            rawReasoning = emptyList(),
+                            character = record.character,
+                            persona = record.persona,
+                            preset = capturedPreset,
+                            runtimeState = projectionRuntime,
+                            history = historyBefore,
+                            conversationId = record.id,
+                            generationId = generationId,
+                            modelId = modelId,
+                        )
+                        if (mode == MessageEditMode.TEXT_ONLY) {
+                            selected.copy(
+                                message = selected.message.copy(
+                                    content = projected.storageText,
+                                    sourceText = sourceText,
+                                ),
+                                edited = true,
+                            )
+                        } else {
+                            selected.copy(
+                                message = selected.message.copy(
+                                    content = projected.storageText,
+                                    sourceText = sourceText,
+                                    reasoning = emptyList(),
+                                    adapterId = null,
+                                ),
+                                status = PersistedMessageStatus.COMPLETE,
+                                presetId = capturedPreset.id,
+                                presetName = capturedPreset.name,
+                                presetContentSha256 = capturedPreset.contentSha256,
+                                adapterId = null,
+                                model = null,
+                                finishReason = null,
+                                inputTokens = null,
+                                outputTokens = null,
+                                generationPlan = null,
+                                edited = true,
+                                runtimeStateBefore = runtimeBefore,
+                                projectionRuntimeStateBefore = projectionRuntime,
+                                runtimeStateAfter = projected.runtimeState,
+                            )
+                        }
+                    }
+                    MessageRole.SYSTEM -> return@launch
+                }
+                val editedTurn = if (mode == MessageEditMode.TEXT_ONLY) {
+                    turn.copy(
+                        variants = turn.variants.mapIndexed { index, variant ->
+                            if (index == turn.selectedVariantIndex) editedVariant else variant
+                        },
+                    )
+                } else {
+                    turn.copy(variants = listOf(editedVariant), selectedVariantIndex = 0)
+                }
+                record = if (mode == MessageEditMode.TEXT_ONLY) {
+                    record.copy(
+                        turns = record.turns.mapIndexed { index, item -> if (index == turnIndex) editedTurn else item },
+                    )
+                } else {
+                    record.copy(
+                        turns = record.turns.take(turnIndex) + editedTurn,
+                        runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore,
+                    )
+                }
+                val retainedMessageIds = record.turns
+                    .flatMap { item -> item.variants.map { it.message.id } }
+                    .toSet()
+                displayCache.keys.retainAll(retainedMessageIds)
+                displayReasoningCache.keys.retainAll(retainedMessageIds)
+                displayCache.remove(editedVariant.message.id)
+                displayReasoningCache.remove(editedVariant.message.id)
+                val notice = if (mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection == null) {
+                    "修改已保存；请先配置可用模型"
+                } else null
+                syncRecord(
+                    running = shouldGenerate,
+                    retryAvailable = if (mode == MessageEditMode.TEXT_ONLY) {
+                        state.retryAvailable
+                    } else {
+                        turn.role == MessageRole.USER && !shouldGenerate
+                    },
+                    message = notice,
+                    trace = if (mode == MessageEditMode.TEXT_ONLY) state.lastTrace else null,
+                )
+                persistNow()
+                refreshDisplayCache(capturedPreset)
+                if (shouldGenerate) {
+                    generate(checkNotNull(connection), idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
+                }
             } catch (cancelled: CancellationException) {
                 abortBeforeStreaming("已停止生成")
                 throw cancelled
@@ -441,6 +621,7 @@ class ChatViewModel(
             id = idGenerator(),
             role = MessageRole.ASSISTANT,
             content = "",
+            sourceText = "",
             authorName = record.character.promptName,
             adapterId = adapterId,
             createdAtEpochMillis = now(),
@@ -456,6 +637,7 @@ class ChatViewModel(
             model = connection.selectedModel,
             generationPlan = finalPlan,
             runtimeStateBefore = runtimeBeforeGeneration,
+            projectionRuntimeStateBefore = finalPlan.runtimeState,
             runtimeStateAfter = finalPlan.runtimeState,
         )
         record = if (appendAssistantTurn) {
@@ -639,7 +821,11 @@ class ChatViewModel(
                 )
             }
             variant.copy(
-                message = variant.message.copy(content = projection.storageText, reasoning = reasoning),
+                message = variant.message.copy(
+                    content = projection.storageText,
+                    sourceText = rawAssistant,
+                    reasoning = reasoning,
+                ),
                 generationPlan = plan,
                 runtimeStateAfter = projection.runtimeState,
             )
@@ -900,12 +1086,14 @@ class ChatViewModel(
                     MessageRole.ASSISTANT,
                     expanded.text,
                     snapshot.promptName,
+                    sourceText = greeting,
                     createdAtEpochMillis = timestamp,
                 ),
                 presetId = preset.id,
                 presetName = preset.name,
                 presetContentSha256 = preset.contentSha256,
                 runtimeStateBefore = ConversationRuntimeState(),
+                projectionRuntimeStateBefore = ConversationRuntimeState(),
                 runtimeStateAfter = expanded.runtimeState,
             )
         }
@@ -988,6 +1176,7 @@ private fun ConversationRecord.toUiState(
             } else null,
             variantIndex = turn.selectedVariantIndex,
             variantCount = turn.variants.size,
+            edited = variant.edited,
         )
     },
     input = input,
@@ -1012,9 +1201,11 @@ private data class RenderedMessage(
 )
 
 private fun ConversationRecord.persistedTrace(): GenerationTraceState? {
-    val variant = turns.asReversed().firstNotNullOfOrNull { turn ->
-        turn.takeIf { it.role == MessageRole.ASSISTANT }?.selected?.takeIf { it.generationPlan != null }
-    } ?: return null
+    val variant = turns.lastOrNull()
+        ?.takeIf { it.role == MessageRole.ASSISTANT }
+        ?.selected
+        ?.takeIf { it.generationPlan != null }
+        ?: return null
     val plan = variant.generationPlan ?: return null
     return GenerationTraceState(
         plan = plan,

@@ -55,7 +55,7 @@
 ## 3. Conversation 与剧情状态
 
 - 一个 Character 可以创建多个独立 Conversation。
-- Conversation 当前实现 opening swipe、assistant regenerate / swipe 和进程恢复。edit、delete、continue、branch / checkpoint 留在后续 Conversation 工作；impersonate、quiet 和自动操作不作为 V1 核心要求。
+- Conversation 当前实现 opening swipe、assistant regenerate / swipe、进程恢复，以及用户 / assistant 历史消息的内联编辑。“保存文字”保留后续事实与既有运行状态，只让未来请求读取修正后的 canonical history；“从这里重新生成 / 继续”才从消息检查点恢复 Macro 与 World Book 状态，收敛当前候选并永久截断后续历史，它不是保留旧后缀的 branch。delete、continue、branch / checkpoint 留在后续 Conversation 工作；impersonate、quiet 和自动操作不作为 V1 核心要求。
 - 创建 Conversation 时，从当前 Character Asset 实例化 Character Snapshot：`Character Asset -> Character Snapshot -> Conversation`。
 - Character Asset 的后续修改不会隐式改变旧 Conversation。旧 Conversation 升级角色版本必须显式进行。
 - Conversation 不维护 ST 式的 scenario、system prompt、examples 等 Character override patch。未来若允许会话内修改角色设定，修改的是该 Conversation 自己的 Character Snapshot。

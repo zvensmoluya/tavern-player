@@ -98,6 +98,7 @@ class CharacterAndConversationRepositoryTest {
         assertEquals("Prompt Name", record.character.promptName)
         assertEquals(2, record.turns.single().variants.size)
         assertEquals("Hello Traveler", record.turns.single().variants.first().message.content)
+        assertEquals("{{setvar::route::main}}Hello {{user}}", record.turns.single().variants.first().message.sourceText)
         assertEquals("Prompt Name", record.turns.single().variants.first().message.authorName)
         assertEquals("main", record.runtimeState.localVariables["route"]?.text)
         assertEquals("main", record.turns.single().variants.first().runtimeStateAfter?.localVariables?.get("route")?.text)
@@ -105,6 +106,8 @@ class CharacterAndConversationRepositoryTest {
         assertEquals("preset", record.turns.single().variants.first().presetId)
         assertEquals("Preset", record.turns.single().variants.first().presetName)
         assertEquals("preset-content", record.turns.single().variants.first().presetContentSha256)
+        assertEquals(2, record.schemaVersion)
+        assertEquals(ConversationRuntimeState(), record.turns.single().variants.first().projectionRuntimeStateBefore)
         assertNotEquals(original.copy(description = "changed").description, record.character.description)
 
         val streaming = MessageVariant(

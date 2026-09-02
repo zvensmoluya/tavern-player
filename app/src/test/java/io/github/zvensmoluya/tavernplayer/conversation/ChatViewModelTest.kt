@@ -131,6 +131,115 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `editing a user message truncates the future restores runtime and regenerates`() = runTest {
+        var response = 0
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                response += 1
+                val text = when (response) {
+                    1 -> "{{setvar::answer::old}}one"
+                    2 -> "later"
+                    else -> "{{getvar::route}}/{{getvar::answer}}"
+                }
+                emit(GenerationEvent.TextDelta(text))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator)
+
+        viewModel.updateInput("{{setvar::route::old}}first")
+        viewModel.send()
+        val firstUserId = viewModel.uiState.value.messages[1].message.id
+        viewModel.updateInput("{{setvar::route::later}}second")
+        viewModel.send()
+
+        viewModel.editMessage(firstUserId, "{{setvar::route::new}}changed", MessageEditMode.RESTART)
+
+        val state = viewModel.uiState.value
+        assertEquals(3, state.messages.size)
+        assertEquals("changed", state.messages[1].message.content)
+        assertEquals("{{setvar::route::new}}changed", state.messages[1].message.sourceText)
+        assertTrue(state.messages[1].edited)
+        assertEquals("new/", state.messages.last().message.content)
+        assertEquals(3, generator.calls)
+    }
+
+    @Test
+    fun `text-only edit preserves the future and current runtime state`() = runTest {
+        var response = 0
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                response += 1
+                val text = when (response) {
+                    1 -> "first answer"
+                    2 -> "later answer"
+                    else -> "{{getvar::route}}"
+                }
+                emit(GenerationEvent.TextDelta(text))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator)
+
+        viewModel.updateInput("{{setvar::route::old}}first")
+        viewModel.send()
+        val firstUserId = viewModel.uiState.value.messages[1].message.id
+        viewModel.updateInput("{{setvar::route::later}}second")
+        viewModel.send()
+        val oldFutureIds = viewModel.uiState.value.messages.drop(2).map { it.message.id }
+
+        viewModel.editMessage(firstUserId, "{{setvar::route::corrected}}changed", MessageEditMode.TEXT_ONLY)
+
+        val edited = viewModel.uiState.value
+        assertEquals(5, edited.messages.size)
+        assertEquals("changed", edited.messages[1].message.content)
+        assertTrue(edited.messages[1].edited)
+        assertEquals(oldFutureIds, edited.messages.drop(2).map { it.message.id })
+
+        viewModel.updateInput("check")
+        viewModel.send()
+        assertEquals("later", viewModel.uiState.value.messages.last().message.content)
+    }
+
+    @Test
+    fun `editing an assistant message makes it the new fact and restores its projected state`() = runTest {
+        var response = 0
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                response += 1
+                val text = when (response) {
+                    1 -> "{{setvar::mood::old}}original"
+                    2 -> "later"
+                    else -> "{{getvar::mood}}"
+                }
+                emit(GenerationEvent.TextDelta(text))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator)
+
+        viewModel.updateInput("first")
+        viewModel.send()
+        val firstAssistantId = viewModel.uiState.value.messages[2].message.id
+        viewModel.updateInput("second")
+        viewModel.send()
+
+        viewModel.editMessage(firstAssistantId, "{{setvar::mood::manual}}修正", MessageEditMode.RESTART)
+
+        val edited = viewModel.uiState.value
+        assertEquals(3, edited.messages.size)
+        assertEquals("修正", edited.messages.last().message.content)
+        assertEquals("{{setvar::mood::manual}}修正", edited.messages.last().message.sourceText)
+        assertTrue(edited.messages.last().edited)
+        assertTrue(edited.messages.last().message.reasoning.isEmpty())
+        assertEquals(null, edited.lastTrace)
+
+        viewModel.updateInput("continue")
+        viewModel.send()
+        assertEquals("manual", viewModel.uiState.value.messages.last().message.content)
+    }
+
+    @Test
     fun `reasoning preserves raw storage and uses a safe display projection`() = runTest {
         val character = DemoConversationContent.character.copy(
             regexScripts = listOf(
@@ -240,7 +349,12 @@ class ChatViewModelTest {
             viewModel.updateInput("开始")
             viewModel.send()
 
-            assertEquals(null, conversations.get(created.id)?.runtimeState?.localVariables?.get("planned"))
+            val persisted = conversations.get(created.id)!!
+            val userVariant = persisted.turns.last().selected
+            assertEquals(null, persisted.runtimeState.localVariables["planned"])
+            assertEquals("开始", userVariant.message.sourceText)
+            assertNotNull(userVariant.runtimeStateBefore)
+            assertNotNull(userVariant.runtimeStateAfter)
             assertTrue(viewModel.uiState.value.toString(), viewModel.uiState.value.retryAvailable)
         } finally {
             directory.deleteRecursively()

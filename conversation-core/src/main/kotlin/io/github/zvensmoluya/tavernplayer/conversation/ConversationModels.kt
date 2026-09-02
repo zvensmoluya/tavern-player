@@ -84,6 +84,7 @@ data class ConversationMessage(
     val role: MessageRole,
     val content: String,
     val authorName: String,
+    val sourceText: String = content,
     val reasoning: List<ReasoningBlock> = emptyList(),
     val adapterId: String? = null,
     val createdAtEpochMillis: Long = 0,
@@ -231,7 +232,9 @@ data class MessageVariant(
     val inputTokens: Long? = null,
     val outputTokens: Long? = null,
     val generationPlan: GenerationPlan? = null,
+    val edited: Boolean = false,
     val runtimeStateBefore: ConversationRuntimeState? = null,
+    val projectionRuntimeStateBefore: ConversationRuntimeState? = null,
     val runtimeStateAfter: ConversationRuntimeState? = null,
 )
 
@@ -248,7 +251,7 @@ data class ConversationTurn(
 
 @Serializable
 data class ConversationRecord(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val id: String,
     val character: CharacterSnapshot,
     val persona: Persona,

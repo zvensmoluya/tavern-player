@@ -37,6 +37,7 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 - 在发送时执行卡片 World Book、Character Regex、Macro、Prompt 编排与 context 预算；
 - 将当前全局 Preset 捕获到单次生成，并向五种 OpenAI、Anthropic 或 Gemini 协议安全映射参数；
 - 在模型目录未声明能力时，按 Preset 声明的未验证预算运行，并允许按模型 ID 覆盖 context / output token 上限；
+- 在聊天气泡内修正用户或 AI 历史文字，或显式从修改处截断旧未来并恢复 Macro 与 World Book 运行状态；
 - 保存消息候选、角色快照和运行状态，并在进程重启后恢复。
 
 内置“默认”Preset 不可删除，但可以直接调整并随时恢复内置状态。导入或另存为的 Preset 也保留不可变初始版本。Preset 不绑定 Conversation：运行中的请求使用开始时的快照，切换只影响下一次生成；历史展示则使用当前 Preset 的 display Regex 与 `show_thoughts`。

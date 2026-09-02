@@ -74,6 +74,7 @@ class ConversationRepository(
                     id = idFactory(),
                     role = MessageRole.ASSISTANT,
                     content = projected.text,
+                    sourceText = greeting,
                     authorName = snapshot.promptName,
                     createdAtEpochMillis = timestamp,
                 )
@@ -84,6 +85,7 @@ class ConversationRepository(
                     presetName = capturedPreset.name,
                     presetContentSha256 = capturedPreset.contentSha256,
                     runtimeStateBefore = ConversationRuntimeState(),
+                    projectionRuntimeStateBefore = ConversationRuntimeState(),
                     runtimeStateAfter = projected.runtimeState,
                 )
             }

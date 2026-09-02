@@ -12,8 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,6 +64,7 @@ fun ChatRoute(
             cancel = viewModel::cancel,
             retry = viewModel::retry,
             regenerate = viewModel::regenerate,
+            editMessage = viewModel::editMessage,
             previousVariant = viewModel::previousVariant,
             nextVariant = viewModel::nextVariant,
             selectConnection = viewModel::selectConnection,
@@ -89,6 +91,15 @@ data class ChatScreenActions(
     val back: () -> Unit = {},
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
+    val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
+)
+
+private data class PendingMessageEdit(
+    val messageId: String,
+    val sourceText: String,
+    val regenerate: Boolean,
+    val removedMessageCount: Int,
+    val discardedVariantCount: Int,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -101,6 +112,9 @@ fun ChatScreen(
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
+    var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
+    var editingText by remember(state.conversationId) { mutableStateOf("") }
+    var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
     val messageListState = rememberLazyListState()
     val latestMessage = state.messages.lastOrNull()
     val scrollAnchorIndex = state.messages.size +
@@ -165,8 +179,42 @@ fun ChatScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(state.messages, key = { it.message.id }) { message ->
-                MessageBubble(message)
+            itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
+                MessageBubble(
+                    state = message,
+                    editable = !state.running,
+                    editingText = editingText.takeIf { editingMessageId == message.message.id },
+                    onStartEdit = {
+                        editingMessageId = message.message.id
+                        editingText = message.message.sourceText
+                    },
+                    onEditTextChange = { editingText = it },
+                    onCancelEdit = {
+                        editingMessageId = null
+                        editingText = ""
+                    },
+                    onSaveText = {
+                        actions.editMessage(message.message.id, editingText, MessageEditMode.TEXT_ONLY)
+                        editingMessageId = null
+                        editingText = ""
+                    },
+                    onRestart = {
+                        val edit = PendingMessageEdit(
+                            messageId = message.message.id,
+                            sourceText = editingText,
+                            regenerate = message.message.role == MessageRole.USER,
+                            removedMessageCount = state.messages.lastIndex - index,
+                            discardedVariantCount = message.variantCount - 1,
+                        )
+                        if (edit.removedMessageCount > 0 || edit.discardedVariantCount > 0) {
+                            pendingMessageEdit = edit
+                        } else {
+                            actions.editMessage(edit.messageId, edit.sourceText, MessageEditMode.RESTART)
+                            editingMessageId = null
+                            editingText = ""
+                        }
+                    },
+                )
             }
             state.message?.let { notice ->
                 item("notice") {
@@ -260,6 +308,32 @@ fun ChatScreen(
             TraceSheet(trace = trace, onDismiss = { traceVisible = false })
         }
     }
+    pendingMessageEdit?.let { edit ->
+        val consequences = buildList {
+            if (edit.removedMessageCount > 0) add("移除后续 ${edit.removedMessageCount} 条消息")
+            if (edit.discardedVariantCount > 0) add("丢弃当前消息的 ${edit.discardedVariantCount} 个其他候选")
+        }.joinToString("，")
+        AlertDialog(
+            modifier = Modifier.testTag("confirmMessageEdit"),
+            onDismissRequest = { pendingMessageEdit = null },
+            title = { Text("从这里重新开始？") },
+            text = { Text("保存修改将$consequences，且无法在当前对话中恢复。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        actions.editMessage(edit.messageId, edit.sourceText, MessageEditMode.RESTART)
+                        pendingMessageEdit = null
+                        editingMessageId = null
+                        editingText = ""
+                    },
+                    modifier = Modifier.testTag("confirmMessageEditAction"),
+                ) { Text(if (edit.regenerate) "确认并重新生成" else "确认修改") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingMessageEdit = null }) { Text("继续编辑") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -302,14 +376,28 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 }
 
 @Composable
-private fun MessageBubble(state: ChatMessageState) {
+private fun MessageBubble(
+    state: ChatMessageState,
+    editable: Boolean,
+    editingText: String?,
+    onStartEdit: () -> Unit,
+    onEditTextChange: (String) -> Unit,
+    onCancelEdit: () -> Unit,
+    onSaveText: () -> Unit,
+    onRestart: () -> Unit,
+) {
     val user = state.message.role == MessageRole.USER
     var reasoningVisible by remember(state.message.id) { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (user) Arrangement.End else Arrangement.Start,
     ) {
-        Card(modifier = Modifier.widthIn(max = 560.dp).testTag("message-${state.message.id}")) {
+        val cardModifier = if (editingText == null) {
+            Modifier.widthIn(max = 560.dp)
+        } else {
+            Modifier.fillMaxWidth(0.94f).widthIn(max = 560.dp)
+        }
+        Card(modifier = cardModifier.testTag("message-${state.message.id}")) {
             Column(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -320,7 +408,16 @@ private fun MessageBubble(state: ChatMessageState) {
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                if (state.displayContent.isNotEmpty()) {
+                if (editingText != null) {
+                    OutlinedTextField(
+                        value = editingText,
+                        onValueChange = onEditTextChange,
+                        modifier = Modifier.fillMaxWidth().testTag("messageEditInput-${state.message.id}"),
+                        label = { Text("消息内容") },
+                        minLines = 2,
+                        maxLines = 12,
+                    )
+                } else if (state.displayContent.isNotEmpty()) {
                     SafeMarkdownText(state.displayContent)
                 } else if (state.status == ChatMessageStatus.STREAMING) {
                     Text(
@@ -330,7 +427,7 @@ private fun MessageBubble(state: ChatMessageState) {
                     )
                 }
                 val reasoning = state.displayReasoning.joinToString("\n").trim()
-                if (reasoning.isNotEmpty()) {
+                if (editingText == null && reasoning.isNotEmpty()) {
                     TextButton(onClick = { reasoningVisible = !reasoningVisible }) {
                         Text(if (reasoningVisible) "收起思考" else "查看思考")
                     }
@@ -355,6 +452,53 @@ private fun MessageBubble(state: ChatMessageState) {
                         color = MaterialTheme.colorScheme.error,
                     )
                     else -> Unit
+                }
+                if (editingText != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = onCancelEdit,
+                            modifier = Modifier.testTag("cancelMessageEdit-${state.message.id}"),
+                        ) { Text("取消") }
+                        Button(
+                            onClick = onSaveText,
+                            enabled = editingText.isNotBlank() && editingText != state.message.sourceText,
+                            modifier = Modifier.testTag("saveMessageTextEdit-${state.message.id}"),
+                        ) { Text("保存文字") }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(
+                            onClick = onRestart,
+                            enabled = editingText.isNotBlank() && editingText != state.message.sourceText,
+                            modifier = Modifier.testTag("restartFromMessage-${state.message.id}"),
+                        ) { Text(if (user) "从这里重新生成" else "从这里继续") }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (state.edited) {
+                            Text(
+                                "已编辑",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (editable && state.status != ChatMessageStatus.STREAMING) {
+                            TextButton(
+                                onClick = onStartEdit,
+                                modifier = Modifier.testTag("editMessage-${state.message.id}"),
+                            ) { Text("编辑") }
+                        }
+                    }
                 }
             }
         }

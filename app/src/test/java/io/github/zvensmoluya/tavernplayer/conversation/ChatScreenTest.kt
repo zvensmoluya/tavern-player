@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.ModelProtocol
@@ -260,6 +261,53 @@ class ChatScreenTest {
         assertTrue(next)
     }
 
+    @Test
+    fun `editing a historical user message confirms truncation and requests regeneration`() {
+        var edited: Triple<String, String, MessageEditMode>? = null
+        val messages = listOf(
+            ChatMessageState(message(id = "opening", content = "开场")),
+            ChatMessageState(message(id = "user", content = "原问题", role = MessageRole.USER)),
+            ChatMessageState(message(id = "answer", content = "旧回复")),
+        )
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(messages = messages),
+                    actions = actions(editMessage = { id, text, mode -> edited = Triple(id, text, mode) }),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("editMessage-user").performClick()
+        compose.onNodeWithTag("messageEditInput-user").performTextReplacement("新问题")
+        compose.onNodeWithTag("restartFromMessage-user").performClick()
+
+        compose.onNodeWithTag("confirmMessageEdit").assertIsDisplayed()
+        assertEquals(null, edited)
+        compose.onNodeWithTag("confirmMessageEditAction").performClick()
+        assertEquals(Triple("user", "新问题", MessageEditMode.RESTART), edited)
+    }
+
+    @Test
+    fun `editing the latest assistant message saves inline without regeneration`() {
+        var edited: Triple<String, String, MessageEditMode>? = null
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(messages = listOf(ChatMessageState(message(id = "answer", content = "旧回复")))),
+                    actions = actions(editMessage = { id, text, mode -> edited = Triple(id, text, mode) }),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("editMessage-answer").performClick()
+        compose.onNodeWithTag("messageEditInput-answer").performTextReplacement("手动修正")
+        compose.onNodeWithTag("saveMessageTextEdit-answer").performClick()
+
+        compose.onAllNodesWithTag("confirmMessageEdit").assertCountEquals(0)
+        assertEquals(Triple("answer", "手动修正", MessageEditMode.TEXT_ONLY), edited)
+    }
+
     private fun state(
         input: String = "",
         running: Boolean = false,
@@ -282,11 +330,12 @@ class ChatScreenTest {
         id: String = "opening",
         content: String = "欢迎来到旅店。",
         reasoning: List<ReasoningBlock> = emptyList(),
+        role: MessageRole = MessageRole.ASSISTANT,
     ) = ConversationMessage(
         id = id,
-        role = MessageRole.ASSISTANT,
+        role = role,
         content = content,
-        authorName = "米拉",
+        authorName = if (role == MessageRole.USER) "旅人" else "米拉",
         reasoning = reasoning,
     )
 
@@ -321,6 +370,7 @@ class ChatScreenTest {
         nextVariant: () -> Unit = {},
         selectPreset: (String) -> Unit = {},
         openPresets: () -> Unit = {},
+        editMessage: (String, String, MessageEditMode) -> Unit = { _, _, _ -> },
     ) = ChatScreenActions(
         updateInput = updateInput,
         send = send,
@@ -333,5 +383,6 @@ class ChatScreenTest {
         nextVariant = nextVariant,
         selectPreset = selectPreset,
         openPresets = openPresets,
+        editMessage = editMessage,
     )
 }
