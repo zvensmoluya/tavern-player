@@ -19,6 +19,8 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
+`content-core` 也定义 Native 内容适配的导入边界。`ProgramViewExtractor` 从 Character 中只提取主动 markup、扩展脚本、opaque World Book handle 和程序引用，并在模型调用前删除凭据、本机路径、inline data 与 URL 私密部分。AI 候选产物使用受限 `AdaptationArtifact`；`AdaptationValidator` 独立验证 source hash、能力白名单、类型、引用和资源上限。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)。这套模型是可重建的内部产物，不写回原始角色卡。
+
 ## Tavern Shelf 接收
 
 `app` 中的 `ShelfTransferClient` 消费 Tavern Shelf Transfer Protocol v1。角色库首页通过系统二维码扫描器取得短期 URL；Android 17 在首次连接前请求本地网络权限。客户端读取 manifest 和原始 source，限制为现有 32 MiB 导入上限，并核对字节数与 SHA-256 后按 `kind` 路由到现有仓库：

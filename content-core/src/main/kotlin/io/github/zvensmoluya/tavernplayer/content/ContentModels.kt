@@ -192,6 +192,7 @@ data class CharacterAsset(
     val extensions: JsonObject = JsonObject(emptyMap()),
     val rawCard: JsonObject = JsonObject(emptyMap()),
     val diagnostics: List<CompatibilityDiagnostic> = emptyList(),
+    val adaptation: AdaptationArtifact? = null,
 ) {
     val promptName: String
         get() = nickname?.takeIf(String::isNotBlank) ?: name
@@ -233,6 +234,7 @@ data class CharacterAsset(
             )
         },
         diagnostics = diagnostics.toList(),
+        adaptation = adaptation,
     )
 }
 
@@ -257,6 +259,7 @@ data class CharacterSnapshot(
     val worldBooks: List<WorldBookDefinition>,
     val regexScripts: List<RegexDefinition>,
     val diagnostics: List<CompatibilityDiagnostic>,
+    val adaptation: AdaptationArtifact? = null,
 )
 
 enum class CharacterImportStatus {
