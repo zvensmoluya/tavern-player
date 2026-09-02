@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
             graph.conversationRepository,
             graph.defaultPersona,
             graph.presetRepository,
+            graph.shelfTransferClient,
         )
     }
     private val presetViewModel by viewModels<PresetViewModel> {

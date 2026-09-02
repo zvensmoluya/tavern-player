@@ -39,6 +39,8 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
+    implementation(libs.play.services.code.scanner)
 
     val composeBom = platform(libs.compose.bom)
     implementation(composeBom)
@@ -55,6 +57,7 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.mockwebserver)
     testImplementation(composeBom)
     testImplementation(libs.compose.ui.test.junit4)
 

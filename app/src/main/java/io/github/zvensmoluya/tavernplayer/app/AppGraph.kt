@@ -13,6 +13,7 @@ import io.github.zvensmoluya.tavernplayer.conversation.DemoConversationContent
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
+import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferClient
 
 private val Context.gatewayDataStore by preferencesDataStore(name = "model_gateway_connections")
 
@@ -30,6 +31,7 @@ class AppGraph(context: Context) {
     val defaultPersona = DemoConversationContent.persona
     val characterRepository = CharacterRepository(appContext.filesDir)
     val presetRepository = PresetRepository(appContext.filesDir)
+    val shelfTransferClient = ShelfTransferClient()
     val conversationRepository = ConversationRepository(
         filesDir = appContext.filesDir,
         compiler = promptCompiler,

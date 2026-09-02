@@ -29,6 +29,7 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 当前 Android 版本已经打通单角色 Character Card 对话闭环：
 
 - 导入并保存 V1 / V2 / V3 JSON 或 PNG / APNG 角色卡；
+- 扫描 Tavern Shelf 二维码，从同一局域网接收并校验角色卡或受支持的 Preset；
 - 浏览角色定义、creator notes 与兼容性报告；
 - 导入、查看、切换、复制、快速调整、删除和安全导出 ST OpenAI / Chat Completion Preset；
 - 使用卡片开场和备用开场创建独立 Conversation；
@@ -42,6 +43,8 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 Preset 详情以普通 Prompt 和 Regex 的开关为主，文本与兼容字段收在单项详情中。模型请求参数位于次级面板，可逐项关闭；关闭后保留本地值，但不再进入兼容 Provider 请求或 ST 导出。Provider 必填字段仍由播放器提供安全值。
 
 第三方脚本、远程资源和富 HTML 不会执行或联网加载。未知扩展会保留并显示兼容性告警；Preset 中的 endpoint、代理密码、自定义 headers/body 和账户标识会在落盘前删除。
+
+Shelf 接收入口位于角色库首页。Android 17 会在首次接收前请求本地网络权限；独立 World Book 当前只识别类型，不执行导入。
 
 SillyTavern 建立了这个生态。
 

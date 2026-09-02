@@ -8,7 +8,9 @@ import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
-import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
+import io.github.zvensmoluya.tavernplayer.presets.PresetLibraryImportResult
+import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
+import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +38,8 @@ class CharacterLibraryViewModel(
     private val characterRepository: CharacterRepository,
     private val conversationRepository: ConversationRepository,
     private val defaultPersona: Persona,
-    private val presetSource: ActivePresetSource,
+    private val presetRepository: PresetRepository,
+    private val shelfTransferReceiver: ShelfTransferReceiver,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
@@ -87,6 +90,76 @@ class CharacterLibraryViewModel(
         }
     }
 
+    fun importFromShelf(transferUrl: String) {
+        if (_uiState.value.importing) return
+        _uiState.update { it.copy(importing = true, message = "正在从 Tavern Shelf 接收…", importDiagnostics = emptyList()) }
+        viewModelScope.launch {
+            runCatching { shelfTransferReceiver.receive(transferUrl) }
+                .onSuccess { transfer ->
+                    when (transfer.manifest.kind) {
+                        "character" -> importShelfCharacter(transfer.sourceBytes, transfer.manifest.filename)
+                        "preset" -> importShelfPreset(transfer.sourceBytes, transfer.manifest.filename)
+                        "worldbook" -> _uiState.update {
+                            it.copy(importing = false, message = "已识别世界书；当前版本暂不支持独立世界书导入")
+                        }
+                        else -> _uiState.update {
+                            it.copy(importing = false, message = "未知的 Shelf 资源类型：${transfer.manifest.kind}")
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(importing = false, message = error.message ?: "Shelf 资源接收失败") }
+                }
+        }
+    }
+
+    private suspend fun importShelfCharacter(bytes: ByteArray, fileName: String) {
+        when (val result = characterRepository.import(bytes, fileName)) {
+            is CharacterSaveResult.Saved -> _uiState.update {
+                it.copy(
+                    importing = false,
+                    selectedCharacterId = result.character.id,
+                    importDiagnostics = result.diagnostics,
+                    message = if (result.duplicate) {
+                        "Shelf 中的这张角色卡已经导入"
+                    } else {
+                        "已从 Shelf 导入 ${result.character.name}"
+                    },
+                )
+            }
+            is CharacterSaveResult.Rejected -> _uiState.update {
+                it.copy(
+                    importing = false,
+                    importDiagnostics = result.diagnostics,
+                    message = result.diagnostics.firstOrNull()?.message ?: "Shelf 角色卡无法导入",
+                )
+            }
+        }
+    }
+
+    private suspend fun importShelfPreset(bytes: ByteArray, fileName: String) {
+        when (val result = presetRepository.importPreset(bytes, fileName)) {
+            is PresetLibraryImportResult.Saved -> _uiState.update {
+                it.copy(
+                    importing = false,
+                    importDiagnostics = result.diagnostics,
+                    message = if (result.duplicate) {
+                        "Shelf 中的这个 Preset 已经导入"
+                    } else {
+                        "已从 Shelf 导入 Preset：${result.preset.name}"
+                    },
+                )
+            }
+            is PresetLibraryImportResult.Rejected -> _uiState.update {
+                it.copy(
+                    importing = false,
+                    importDiagnostics = result.diagnostics,
+                    message = result.diagnostics.firstOrNull()?.message ?: "Shelf Preset 无法导入",
+                )
+            }
+        }
+    }
+
     fun selectCharacter(characterId: String?) {
         _uiState.update { it.copy(selectedCharacterId = characterId, message = null) }
     }
@@ -97,7 +170,7 @@ class CharacterLibraryViewModel(
 
     fun createConversation(characterId: String) {
         val character = characterRepository.get(characterId) ?: return
-        val preset = presetSource.captureActive()
+        val preset = presetRepository.captureActive()
         viewModelScope.launch {
             runCatching { conversationRepository.create(character, defaultPersona, preset) }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
@@ -121,10 +194,17 @@ class CharacterLibraryViewModel(
         private val characterRepository: CharacterRepository,
         private val conversationRepository: ConversationRepository,
         private val defaultPersona: Persona,
-        private val presetSource: ActivePresetSource,
+        private val presetRepository: PresetRepository,
+        private val shelfTransferReceiver: ShelfTransferReceiver,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            CharacterLibraryViewModel(characterRepository, conversationRepository, defaultPersona, presetSource) as T
+            CharacterLibraryViewModel(
+                characterRepository,
+                conversationRepository,
+                defaultPersona,
+                presetRepository,
+                shelfTransferReceiver,
+            ) as T
     }
 }

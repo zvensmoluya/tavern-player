@@ -1,8 +1,11 @@
 package io.github.zvensmoluya.tavernplayer.characters
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,8 +39,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +61,9 @@ import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.CompatibilitySeverity
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.SafeMarkdownText
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.io.ByteArrayOutputStream
 import java.time.Instant
 import java.time.ZoneId
@@ -73,6 +82,33 @@ fun CharacterLibraryRoute(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingShelfUrl by remember { mutableStateOf<String?>(null) }
+    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val url = pendingShelfUrl
+        pendingShelfUrl = null
+        if (granted && url != null) {
+            viewModel.importFromShelf(url)
+        } else if (!granted) {
+            viewModel.reportMessage("需要本地网络权限才能连接 Tavern Shelf")
+        }
+    }
+    fun receiveShelfUrl(url: String) {
+        if (
+            Build.VERSION.SDK_INT >= 37 &&
+            context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingShelfUrl = url
+            localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+        } else {
+            viewModel.importFromShelf(url)
+        }
+    }
+    val shelfScanner = remember(context) {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+        GmsBarcodeScanning.getClient(context, options)
+    }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -91,6 +127,16 @@ fun CharacterLibraryRoute(
         onImport = {
             launcher.launch(arrayOf("image/png", "application/json", "text/json", "application/octet-stream"))
         },
+        onImportFromShelf = {
+            shelfScanner.startScan()
+                .addOnSuccessListener { barcode ->
+                    barcode.rawValue?.takeIf(String::isNotBlank)?.let(::receiveShelfUrl)
+                        ?: viewModel.reportMessage("二维码中没有可用的 Shelf 地址")
+                }
+                .addOnFailureListener { error ->
+                    viewModel.reportMessage(error.message ?: "无法启动二维码扫描")
+                }
+        },
         onSelectCharacter = onSelectCharacter,
         onOpenModels = onOpenModels,
         onOpenPresets = onOpenPresets,
@@ -103,6 +149,7 @@ fun CharacterLibraryScreen(
     state: CharacterLibraryUiState,
     avatarPath: (String) -> String?,
     onImport: () -> Unit,
+    onImportFromShelf: () -> Unit,
     onSelectCharacter: (String) -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
@@ -118,6 +165,11 @@ fun CharacterLibraryScreen(
                     TextButton(onClick = onOpenModels, modifier = Modifier.testTag("openModelsFromLibrary")) {
                         Text("模型")
                     }
+                    TextButton(
+                        onClick = onImportFromShelf,
+                        enabled = !state.importing,
+                        modifier = Modifier.testTag("importFromShelf"),
+                    ) { Text("Shelf") }
                     TextButton(
                         onClick = onImport,
                         enabled = !state.importing,
@@ -143,6 +195,10 @@ fun CharacterLibraryScreen(
                 Button(onClick = onImport, enabled = !state.importing) {
                     if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     else Text("选择角色卡")
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = onImportFromShelf, enabled = !state.importing) {
+                    Text("扫描 Tavern Shelf")
                 }
                 state.message?.let {
                     Spacer(Modifier.height(12.dp))

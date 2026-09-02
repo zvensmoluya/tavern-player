@@ -19,6 +19,16 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
+## Tavern Shelf 接收
+
+`app` 中的 `ShelfTransferClient` 消费 Tavern Shelf Transfer Protocol v1。角色库首页通过系统二维码扫描器取得短期 URL；Android 17 在首次连接前请求本地网络权限。客户端读取 manifest 和原始 source，限制为现有 32 MiB 导入上限，并核对字节数与 SHA-256 后按 `kind` 路由到现有仓库：
+
+- `character` 进入 `CharacterRepository`；
+- `preset` 进入 `PresetRepository`，沿用现有 Preset 格式检测与清理；
+- `worldbook` 当前只识别并提示尚未支持独立导入。
+
+二维码 URL 只用于当前接收，不进入持久化状态。Shelf 使用局域网明文 HTTP，因此 Android 应用显式允许 cleartext；该能力只由 Shelf 接收入口触发。
+
 ## Character 内容层
 
 `CharacterCardImporter` 支持 V1、V2、V3 JSON 与带 `tEXt` metadata 的 PNG / APNG。它执行输入大小、PNG chunk / CRC、base64、UTF-8 和必选名称校验；同时存在 `ccv3` 与 `chara` 时采用 `ccv3`。
