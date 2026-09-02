@@ -93,11 +93,15 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source 和静态头像缩略图。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。
 
+经过校验的 `AdaptationArtifact` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，不会修改 `source.png` / `source.json`。新建 Conversation 捕获该适配快照及其初始状态，旧 Conversation 不会被后来重新编译的结果改写。
+
 `PresetRepository` 以一个原子 app-private manifest 保存当前 Preset、初始 source 树和全局 active ID；内置默认的初始版本由代码注入。它提供导入并激活、显式保存、恢复初始版本、从当前草稿另存为并激活、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
 `PersonaRepository` 原子保存一份全局默认 Persona。角色库中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
 
 `ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
+
+适配状态属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`AdaptationRuntime` 只执行校验后产物中的表单校验、模板投影和白名单状态动作；执行失败不会提交部分状态。Compose 根据不可变 `sourceText` marker 将原本的主动 HTML 消息替换或附加为 Native UI，表单提交当前只能修改 Conversation 状态和聊天草稿，不会自动发送或获得模型、网络和文件权限。
 
 每个消息候选同时保存投影前 `sourceText`、canonical storage content，以及消息处理前、内容投影前和处理后的 Conversation Runtime State。聊天气泡可以直接编辑已完成的用户或 assistant 消息。“保存文字”只重新产生该候选的 canonical content，保留 reasoning、生成 metadata、其他候选、后续 Turn 和当前运行状态；后续请求读取修正后的历史，但不会假装已经重新执行过去的 Macro 或 World Book 状态变化。“从这里重新生成 / 继续”才把该 Turn 收敛为一个手动候选、截断其后全部 Turn，并把当前运行状态恢复为编辑后结果。旧后缀不会作为隐藏分支保留。状态检查点不设历史窗口，未来 branch 是否以及如何建立仍是独立产品决定。
 

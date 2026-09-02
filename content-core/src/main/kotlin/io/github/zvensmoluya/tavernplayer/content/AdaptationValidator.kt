@@ -137,6 +137,14 @@ class AdaptationValidator {
                         }
                         if (!known) issue("$actionPath.template", "UNKNOWN_TEMPLATE_REFERENCE", "模板引用了未知值 $scope.$key")
                     }
+                    ANY_TEMPLATE_REFERENCE.findAll(template).forEach { match ->
+                        val reference = match.groupValues[1].trim()
+                        val allowed = reference == "user" || reference == "char" ||
+                            TEMPLATE_REFERENCE.matches(match.value)
+                        if (!allowed) {
+                            issue("$actionPath.template", "UNKNOWN_TEMPLATE_REFERENCE", "模板引用了不允许的值 $reference")
+                        }
+                    }
                 }
             }
         }
@@ -204,5 +212,6 @@ class AdaptationValidator {
         private val ID = Regex("[a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15}")
         private val EXTERNAL_IO = Regex("(?i)(?:https?://|data:|file:|content:)")
         private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})}}")
+        private val ANY_TEMPLATE_REFERENCE = Regex("\\{\\{([^{}]+)}}")
     }
 }

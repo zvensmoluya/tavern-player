@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,6 +19,17 @@ import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
+import io.github.zvensmoluya.tavernplayer.content.AdaptationAction
+import io.github.zvensmoluya.tavernplayer.content.AdaptationActionType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
+import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationFormOption
+import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNode
+import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNodeType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationView
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +66,55 @@ class ChatScreenTest {
 
         assertEquals("", input)
         assertTrue(sent)
+    }
+
+    @Test
+    fun `native opening form replaces marker and submits structured values`() {
+        var submitted: Pair<String, Map<String, List<String>>>? = null
+        val view = AdaptationView(
+            id = "opening-form",
+            title = "预约申请单",
+            placement = AdaptationViewPlacement.MESSAGE_REPLACEMENT,
+            trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_EXACT, "<GAMESTART/>"),
+            nodes = listOf(
+                AdaptationUiNode(
+                    id = "form",
+                    type = AdaptationUiNodeType.FORM,
+                    fields = listOf(
+                        AdaptationFormField("name", AdaptationFormFieldType.TEXT, "姓名"),
+                        AdaptationFormField(
+                            "reason",
+                            AdaptationFormFieldType.MULTI_SELECT,
+                            "预约理由",
+                            options = listOf(AdaptationFormOption("chat", "单纯想聊天")),
+                        ),
+                    ),
+                ),
+            ),
+            submitLabel = "确定预约",
+            submitActions = listOf(AdaptationAction(AdaptationActionType.CHAT_SET_DRAFT, template = "{{form.name}}")),
+        )
+        val opening = ChatMessageState(
+            message = message(content = "<GAMESTART/>"),
+            adaptationViews = listOf(view),
+        )
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(messages = listOf(opening)),
+                    actions = actions(submitAdaptation = { id, values -> submitted = id to values }),
+                )
+            }
+        }
+
+        compose.onNodeWithText("预约申请单").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("adaptation-field-name").performScrollTo().performTextReplacement("米拉")
+        compose.onNodeWithTag("adaptation-option-reason-chat").performScrollTo().performClick()
+        compose.onNodeWithTag("adaptation-submit-opening-form").performScrollTo().performClick()
+
+        assertEquals("opening-form", submitted?.first)
+        assertEquals(listOf("米拉"), submitted?.second?.get("name"))
+        assertEquals(listOf("chat"), submitted?.second?.get("reason"))
     }
 
     @Test
@@ -314,6 +375,8 @@ class ChatScreenTest {
         messages: List<ChatMessageState> = listOf(ChatMessageState(message())),
         readyConnections: List<StoredConnection> = listOf(connection()),
         lastTrace: GenerationTraceState? = null,
+        adaptationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+        headerAdaptationViews: List<AdaptationView> = emptyList(),
     ) = ChatUiState(
         character = DemoConversationContent.character.snapshot(),
         persona = DemoConversationContent.persona,
@@ -324,6 +387,8 @@ class ChatScreenTest {
         loadingConnections = false,
         running = running,
         lastTrace = lastTrace,
+        adaptationState = adaptationState,
+        headerAdaptationViews = headerAdaptationViews,
     )
 
     private fun message(
@@ -371,6 +436,7 @@ class ChatScreenTest {
         selectPreset: (String) -> Unit = {},
         openPresets: () -> Unit = {},
         editMessage: (String, String, MessageEditMode) -> Unit = { _, _, _ -> },
+        submitAdaptation: (String, Map<String, List<String>>) -> Unit = { _, _ -> },
     ) = ChatScreenActions(
         updateInput = updateInput,
         send = send,
@@ -384,5 +450,6 @@ class ChatScreenTest {
         selectPreset = selectPreset,
         openPresets = openPresets,
         editMessage = editMessage,
+        submitAdaptation = submitAdaptation,
     )
 }

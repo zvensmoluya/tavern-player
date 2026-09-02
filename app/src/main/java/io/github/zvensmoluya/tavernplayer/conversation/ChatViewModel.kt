@@ -8,6 +8,8 @@ import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.AdaptationView
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.time.Instant
 import java.time.ZoneId
@@ -48,6 +50,7 @@ data class ChatMessageState(
     val displayContent: String = message.content,
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
     val edited: Boolean = false,
+    val adaptationViews: List<AdaptationView> = emptyList(),
 )
 
 data class GenerationTraceState(
@@ -79,6 +82,8 @@ data class ChatUiState(
     val variantNavigationAvailable: Boolean = false,
     val message: String? = null,
     val lastTrace: GenerationTraceState? = null,
+    val adaptationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+    val headerAdaptationViews: List<AdaptationView> = emptyList(),
 ) {
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
@@ -95,6 +100,7 @@ class ChatViewModel(
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val now: () -> Long = System::currentTimeMillis,
     private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val adaptationRuntime: AdaptationRuntime = AdaptationRuntime(),
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -167,6 +173,26 @@ class ChatViewModel(
 
     fun updateInput(value: String) {
         _uiState.update { it.copy(input = value, message = null) }
+    }
+
+    fun submitAdaptation(viewId: String, values: Map<String, List<String>>) {
+        if (_uiState.value.running) return
+        val artifact = record.character.adaptation ?: return
+        when (
+            val result = adaptationRuntime.execute(
+                artifact = artifact,
+                submission = AdaptationFormSubmission(viewId, values),
+                runtimeState = record.runtimeState,
+            )
+        ) {
+            is AdaptationExecutionResult.Failure -> _uiState.update { it.copy(message = result.message) }
+            is AdaptationExecutionResult.Success -> {
+                record = record.copy(runtimeState = result.runtimeState)
+                val draft = result.effects.lastOrNull { it.type == AdaptationEffectType.CHAT_SET_DRAFT }?.value
+                syncRecord(input = draft ?: _uiState.value.input, message = null)
+                schedulePersist()
+            }
+        }
     }
 
     fun send() {
@@ -490,6 +516,7 @@ class ChatViewModel(
                 depthPrompt = record.character.depthPrompt,
                 worldBooks = record.character.worldBooks,
                 regexScripts = record.character.regexScripts,
+                adaptation = record.character.adaptation,
             ),
             record.persona,
             presetSource.captureActive(),
@@ -1065,6 +1092,7 @@ class ChatViewModel(
     ): ConversationRecord {
         val snapshot = characterAsset.snapshot()
         val timestamp = now()
+        val initialRuntime = adaptationRuntime.initialState(snapshot.adaptation)
         val variants = (listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages).mapIndexedNotNull { index, greeting ->
             if (greeting.isBlank()) return@mapIndexedNotNull null
             val expanded = compiler.projectAssistantText(
@@ -1073,7 +1101,7 @@ class ChatViewModel(
                 character = snapshot,
                 persona = persona,
                 preset = preset,
-                runtimeState = ConversationRuntimeState(),
+                runtimeState = initialRuntime,
                 history = emptyList(),
                 conversationId = "fallback",
                 generationId = "fallback-opening-$index",
@@ -1092,8 +1120,8 @@ class ChatViewModel(
                 presetId = preset.id,
                 presetName = preset.name,
                 presetContentSha256 = preset.contentSha256,
-                runtimeStateBefore = ConversationRuntimeState(),
-                projectionRuntimeStateBefore = ConversationRuntimeState(),
+                runtimeStateBefore = initialRuntime,
+                projectionRuntimeStateBefore = initialRuntime,
                 runtimeStateAfter = expanded.runtimeState,
             )
         }
@@ -1104,7 +1132,7 @@ class ChatViewModel(
             turns = variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
                 listOf(ConversationTurn(idGenerator(), MessageRole.ASSISTANT, it))
             }.orEmpty(),
-            runtimeState = variants.firstOrNull()?.runtimeStateAfter ?: ConversationRuntimeState(),
+            runtimeState = variants.firstOrNull()?.runtimeStateAfter ?: initialRuntime,
             createdAtEpochMillis = timestamp,
             updatedAtEpochMillis = timestamp,
         )
@@ -1177,6 +1205,10 @@ private fun ConversationRecord.toUiState(
             variantIndex = turn.selectedVariantIndex,
             variantCount = turn.variants.size,
             edited = variant.edited,
+            adaptationViews = character.adaptation?.views.orEmpty().filter { view ->
+                view.placement != AdaptationViewPlacement.CONVERSATION_HEADER &&
+                    view.matchesMessage(variant.message.sourceText)
+            },
         )
     },
     input = input,
@@ -1192,6 +1224,10 @@ private fun ConversationRecord.toUiState(
     variantNavigationAvailable = turns.lastOrNull()?.let { it.role == MessageRole.ASSISTANT && it.variants.size > 1 } == true,
     message = message,
     lastTrace = lastTrace ?: persistedTrace(),
+    adaptationState = runtimeState.adaptationState,
+    headerAdaptationViews = character.adaptation?.views.orEmpty().filter { view ->
+        view.placement == AdaptationViewPlacement.CONVERSATION_HEADER && view.matchesMessage("")
+    },
 )
 
 private data class RenderedMessage(

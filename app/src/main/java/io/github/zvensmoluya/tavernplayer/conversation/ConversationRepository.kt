@@ -53,7 +53,8 @@ class ConversationRepository(
             val capturedPreset = preset.snapshot()
             val snapshot = character.snapshot()
             val greetings = listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages
-            var committedRuntime = ConversationRuntimeState()
+            val initialRuntime = AdaptationRuntime().initialState(snapshot.adaptation)
+            var committedRuntime = initialRuntime
             val variants = greetings.mapIndexedNotNull { index, greeting ->
                 if (greeting.isBlank()) return@mapIndexedNotNull null
                 val projected = compiler.projectAssistantText(
@@ -62,7 +63,7 @@ class ConversationRepository(
                     character = snapshot,
                     persona = persona,
                     preset = capturedPreset,
-                    runtimeState = ConversationRuntimeState(),
+                    runtimeState = initialRuntime,
                     history = emptyList(),
                     conversationId = conversationId,
                     generationId = "$conversationId-opening-$index",
@@ -84,8 +85,8 @@ class ConversationRepository(
                     presetId = capturedPreset.id,
                     presetName = capturedPreset.name,
                     presetContentSha256 = capturedPreset.contentSha256,
-                    runtimeStateBefore = ConversationRuntimeState(),
-                    projectionRuntimeStateBefore = ConversationRuntimeState(),
+                    runtimeStateBefore = initialRuntime,
+                    projectionRuntimeStateBefore = initialRuntime,
                     runtimeStateAfter = projected.runtimeState,
                 )
             }

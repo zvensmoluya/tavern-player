@@ -7,6 +7,9 @@ import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CharacterImportResult
 import io.github.zvensmoluya.tavernplayer.content.CharacterSourceFormat
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
+import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
+import io.github.zvensmoluya.tavernplayer.content.AdaptationValidationIssue
+import io.github.zvensmoluya.tavernplayer.content.AdaptationValidator
 import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
 import java.io.File
 import java.util.Base64
@@ -41,9 +44,16 @@ sealed interface CharacterSaveResult {
     data class Rejected(val diagnostics: List<CompatibilityDiagnostic>) : CharacterSaveResult
 }
 
+sealed interface AdaptationInstallResult {
+    data class Installed(val character: CharacterAsset) : AdaptationInstallResult
+    data class Rejected(val issues: List<AdaptationValidationIssue>) : AdaptationInstallResult
+    data object SourceNotFound : AdaptationInstallResult
+}
+
 class CharacterRepository(
     filesDir: File,
     private val importer: CharacterCardImporter = CharacterCardImporter(),
+    private val adaptationValidator: AdaptationValidator = AdaptationValidator(),
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val root = File(filesDir, "tavern/characters")
@@ -109,6 +119,34 @@ class CharacterRepository(
     fun sourceFile(characterId: String): File? {
         val manifest = readManifest(File(root, characterId)) ?: return null
         return File(File(root, characterId), manifest.sourceFileName).takeIf(File::isFile)
+    }
+
+    suspend fun installAdaptation(bytes: ByteArray): AdaptationInstallResult = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (bytes.size > MAX_ADAPTATION_BYTES) {
+                return@withLock AdaptationInstallResult.Rejected(
+                    listOf(AdaptationValidationIssue("", "ARTIFACT_TOO_LARGE", "适配产物超过 2 MiB")),
+                )
+            }
+            val artifact = runCatching { json.decodeFromString<AdaptationArtifact>(bytes.toString(Charsets.UTF_8)) }
+                .getOrElse {
+                    return@withLock AdaptationInstallResult.Rejected(
+                        listOf(AdaptationValidationIssue("", "INVALID_ARTIFACT", "无法解析适配产物")),
+                    )
+                }
+            val structuralValidation = adaptationValidator.validate(artifact)
+            if (!structuralValidation.valid) return@withLock AdaptationInstallResult.Rejected(structuralValidation.issues)
+            val existing = _characters.value.firstOrNull { it.sourceSha256 == artifact.sourceSha256 }
+                ?: return@withLock AdaptationInstallResult.SourceNotFound
+            val validation = adaptationValidator.validate(artifact, existing.sourceSha256)
+            if (!validation.valid) return@withLock AdaptationInstallResult.Rejected(validation.issues)
+            val updated = existing.copy(adaptation = artifact)
+            val directory = File(root, existing.id)
+            val manifest = readManifest(directory) ?: return@withLock AdaptationInstallResult.SourceNotFound
+            writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(manifest.copy(character = updated)))
+            _characters.value = _characters.value.map { if (it.id == updated.id) updated else it }.sortedWith(CHARACTER_ORDER)
+            AdaptationInstallResult.Installed(updated)
+        }
     }
 
     private fun loadAll(): List<CharacterAsset> = root.listFiles()
@@ -179,6 +217,7 @@ class CharacterRepository(
         private const val AVATAR_FILE = "avatar.png"
         private const val AVATAR_MAX_SIZE = 512
         private const val MAX_INLINE_AVATAR_BASE64 = 6 * 1024 * 1024
+        private const val MAX_ADAPTATION_BYTES = 2 * 1024 * 1024
         private val CHARACTER_ORDER = compareBy<CharacterAsset> { it.name.lowercase() }.thenBy(CharacterAsset::id)
     }
 }

@@ -10,6 +10,7 @@ import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 typealias CharacterAsset = io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 typealias CharacterSnapshot = io.github.zvensmoluya.tavernplayer.content.CharacterSnapshot
@@ -106,6 +107,7 @@ data class WorldBookEntryRuntimeState(
 data class ConversationRuntimeState(
     val localVariables: Map<String, MacroValue> = emptyMap(),
     val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
+    val adaptationState: Map<String, JsonElement> = emptyMap(),
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
 )

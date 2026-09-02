@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
 @Composable
@@ -73,6 +74,7 @@ fun ChatRoute(
             openModels = onOpenModels,
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
+            submitAdaptation = viewModel::submitAdaptation,
         ),
     )
 }
@@ -92,6 +94,7 @@ data class ChatScreenActions(
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
+    val submitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit = { _, _ -> },
 )
 
 private data class PendingMessageEdit(
@@ -117,7 +120,7 @@ fun ChatScreen(
     var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
     val messageListState = rememberLazyListState()
     val latestMessage = state.messages.lastOrNull()
-    val scrollAnchorIndex = state.messages.size +
+    val scrollAnchorIndex = state.headerAdaptationViews.size + state.messages.size +
         (if (state.message != null) 1 else 0) +
         (if (state.retryAvailable) 1 else 0) +
         (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) 1 else 0)
@@ -179,9 +182,21 @@ fun ChatScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            state.headerAdaptationViews.forEach { view ->
+                item("adaptation-header-${view.id}") {
+                    NativeAdaptationView(
+                        view = view,
+                        state = state.adaptationState,
+                        enabled = !state.running,
+                        onSubmit = { values -> actions.submitAdaptation(view.id, values) },
+                    )
+                }
+            }
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
                 MessageBubble(
                     state = message,
+                    adaptationState = state.adaptationState,
+                    onSubmitAdaptation = actions.submitAdaptation,
                     editable = !state.running,
                     editingText = editingText.takeIf { editingMessageId == message.message.id },
                     onStartEdit = {
@@ -378,6 +393,8 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 @Composable
 private fun MessageBubble(
     state: ChatMessageState,
+    adaptationState: Map<String, kotlinx.serialization.json.JsonElement>,
+    onSubmitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit,
     editable: Boolean,
     editingText: String?,
     onStartEdit: () -> Unit,
@@ -387,6 +404,8 @@ private fun MessageBubble(
     onRestart: () -> Unit,
 ) {
     val user = state.message.role == MessageRole.USER
+    val replacementViews = state.adaptationViews.filter { it.placement == AdaptationViewPlacement.MESSAGE_REPLACEMENT }
+    val attachedViews = state.adaptationViews.filter { it.placement == AdaptationViewPlacement.MESSAGE_ATTACHMENT }
     var reasoningVisible by remember(state.message.id) { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -417,6 +436,15 @@ private fun MessageBubble(
                         minLines = 2,
                         maxLines = 12,
                     )
+                } else if (replacementViews.isNotEmpty()) {
+                    replacementViews.forEach { view ->
+                        NativeAdaptationView(
+                            view = view,
+                            state = adaptationState,
+                            enabled = editable,
+                            onSubmit = { values -> onSubmitAdaptation(view.id, values) },
+                        )
+                    }
                 } else if (state.displayContent.isNotEmpty()) {
                     SafeMarkdownText(state.displayContent)
                 } else if (state.status == ChatMessageStatus.STREAMING) {
@@ -425,6 +453,16 @@ private fun MessageBubble(
                         modifier = Modifier.testTag("generationStatus"),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (editingText == null) {
+                    attachedViews.forEach { view ->
+                        NativeAdaptationView(
+                            view = view,
+                            state = adaptationState,
+                            enabled = editable,
+                            onSubmit = { values -> onSubmitAdaptation(view.id, values) },
+                        )
+                    }
                 }
                 val reasoning = state.displayReasoning.joinToString("\n").trim()
                 if (editingText == null && reasoning.isNotEmpty()) {

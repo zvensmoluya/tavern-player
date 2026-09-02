@@ -108,6 +108,7 @@
 - Provider 的 function / tool calling 协议表达可以独立存在或预留，但不表示产品支持 Tools。只有未来明确增加原生工具时，才建立执行语义。
 - Preset 中依赖 ST Tool runtime 的 `function_calling`、tool recursion 和相关字段当前不产生能力。
 - 不运行第三方脚本、扩展事件系统或任意扩展 Macro。未来是否把某项扩展能力重新实现为原生能力，必须另行明确决定。
+- 已明确加入的第一组 Native 适配能力是有界 Compose UI、Conversation 状态写入与聊天草稿写入。它们只能来自匹配原件 SHA-256 且通过 capability/type/size/reference 校验的 `AdaptationArtifact`；这不代表运行原脚本或开放通用工具执行。
 
 ## 7. 当前交付边界
 
@@ -115,4 +116,5 @@
 - 单一默认 Persona 已可编辑并持久化；多身份资产管理、选择与绑定仍不进入当前阶段。
 - 全局 Preset 资产库、ST OpenAI Preset 导入 / 导出、受控编辑、五协议参数映射和聊天快捷切换已经形成实现契约。
 - 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
+- 复杂卡可以旁挂不改写原件的 Native 适配产物。当前 Player 已具备开场消息 marker → Native 表单 → 受控状态事务 / 草稿写入的运行闭环；自动生成产物、Shelf 派生存储与状态栏变量提取仍在后续实现中。
 - 后续工作集中在 Conversation 编辑能力与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。

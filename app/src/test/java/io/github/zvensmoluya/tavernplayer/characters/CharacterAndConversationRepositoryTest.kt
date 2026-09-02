@@ -2,6 +2,21 @@ package io.github.zvensmoluya.tavernplayer.characters
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
+import io.github.zvensmoluya.tavernplayer.content.AdaptationAction
+import io.github.zvensmoluya.tavernplayer.content.AdaptationActionType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
+import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
+import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
+import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
+import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNode
+import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNodeType
+import io.github.zvensmoluya.tavernplayer.content.AdaptationView
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
+import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
@@ -24,6 +39,10 @@ import io.github.zvensmoluya.tavernplayer.conversation.PromptDefinition
 import io.github.zvensmoluya.tavernplayer.conversation.PromptOrderEntry
 import java.io.File
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -60,6 +79,31 @@ class CharacterAndConversationRepositoryTest {
 
         val restored = CharacterRepository(root)
         assertEquals(repository.characters.value.map { it.sourceSha256 }, restored.characters.value.map { it.sourceSha256 })
+    }
+
+    @Test
+    fun `adaptation installs beside immutable source and is captured by new conversations`() = runTest {
+        val root = temporary.newFolder("adaptation")
+        val characters = CharacterRepository(root)
+        val source = """
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Form","first_mes":"<GAMESTART/>"}}
+        """.trimIndent().encodeToByteArray()
+        val saved = characters.import(source, "native-form.json") as CharacterSaveResult.Saved
+        val artifact = adaptation(saved.character.sourceSha256)
+
+        val installed = characters.installAdaptation(
+            Json { encodeDefaults = true }.encodeToString(artifact).encodeToByteArray(),
+        ) as AdaptationInstallResult.Installed
+
+        assertEquals(artifact, installed.character.adaptation)
+        assertArrayEquals(source, characters.sourceFile(saved.character.id)?.readBytes())
+        val restoredCharacters = CharacterRepository(root)
+        assertEquals(artifact, restoredCharacters.get(saved.character.id)?.adaptation)
+
+        val conversations = ConversationRepository(root, PromptCompiler(), idFactory = { "adapted-conversation" })
+        val conversation = conversations.create(installed.character, Persona("persona", "Traveler"), preset())
+        assertEquals(artifact, conversation.character.adaptation)
+        assertEquals("ready", conversation.runtimeState.adaptationState["phase"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -140,6 +184,31 @@ class CharacterAndConversationRepositoryTest {
     private fun cardJson(name: String, description: String) = """
         {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"$name","description":"$description"}}
     """.trimIndent().encodeToByteArray()
+
+    private fun adaptation(sourceSha256: String) = AdaptationArtifact(
+        sourceSha256 = sourceSha256,
+        compiler = AdaptationCompiler("fixture", "1"),
+        status = AdaptationStatus.FULL,
+        requiredCapabilities = listOf("ui.native", "chat.setDraft", "state.write"),
+        state = listOf(AdaptationStateDefinition("phase", AdaptationStateType.STRING, JsonPrimitive("ready"))),
+        views = listOf(
+            AdaptationView(
+                id = "opening-form",
+                placement = AdaptationViewPlacement.MESSAGE_REPLACEMENT,
+                trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_EXACT, "<GAMESTART/>"),
+                nodes = listOf(
+                    AdaptationUiNode(
+                        id = "form",
+                        type = AdaptationUiNodeType.FORM,
+                        fields = listOf(AdaptationFormField("name", AdaptationFormFieldType.TEXT, "Name")),
+                    ),
+                ),
+                submitActions = listOf(
+                    AdaptationAction(AdaptationActionType.CHAT_SET_DRAFT, template = "Name: {{form.name}}"),
+                ),
+            ),
+        ),
+    )
 
     private fun preset() = PresetAsset(
         id = "preset",
