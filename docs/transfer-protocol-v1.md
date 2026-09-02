@@ -2,7 +2,7 @@
 
 Tavern Shelf uses a short-lived HTTP URL as its QR payload. The receiving app scans the QR code, fetches the transfer manifest, downloads the original source, verifies its SHA-256 digest, and then imports it using its own parser.
 
-The protocol transfers one source file per session. It does not expose the Shelf library API or a filesystem path.
+The protocol transfers one source file per session. A character manifest may additionally advertise one source-bound, validated native adaptation. It does not expose the Shelf library API or a filesystem path.
 
 ## QR payload
 
@@ -35,6 +35,14 @@ Example response:
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "mediaType": "image/png",
   "sourceUrl": "http://192.168.1.20:49152/v1/transfers/<opaque-token>/source",
+  "adaptation": {
+    "schemaVersion": 1,
+    "filename": "adaptation-v1.json",
+    "size": 4199,
+    "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "mediaType": "application/vnd.tavern-player.adaptation+json",
+    "url": "http://192.168.1.20:49152/v1/transfers/<opaque-token>/adaptation"
+  },
   "expiresAt": "2026-09-01T12:10:00+08:00"
 }
 ```
@@ -53,6 +61,7 @@ Fields:
 | `sha256` | Lowercase SHA-256 digest of the source bytes. |
 | `mediaType` | Source MIME type. Treat it as a hint and still parse safely. |
 | `sourceUrl` | Absolute URL for the original source bytes. Its authority is selected from the addresses advertised by the session, never from an untrusted HTTP `Host` value. |
+| `adaptation` | Optional character-only adaptation attachment. Receivers that do not understand it can ignore it. |
 | `expiresAt` | RFC 3339 session expiry. |
 
 ## Download and import
@@ -71,6 +80,8 @@ The source response includes `Content-Type` and an attachment `Content-Dispositi
 5. Keep the temporary/source data when parsing or import fails, according to the receiver's recovery policy.
 
 Do not execute HTML, JavaScript, regex, or extension content while inspecting or importing a source.
+
+When `adaptation` is present, the receiver downloads `/adaptation` with a separate 2 MiB limit, verifies its byte count and SHA-256, imports the original first, then validates the artifact schema and its `sourceSha256` against the imported original. A failure to validate the optional attachment must not mutate the original card. Both download URLs must have the same origin as the scanned manifest URL.
 
 ## Errors and lifetime
 

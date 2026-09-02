@@ -62,6 +62,10 @@ class CharacterRepository(
         encodeDefaults = true
         ignoreUnknownKeys = true
     }
+    private val adaptationJson = Json {
+        encodeDefaults = true
+        ignoreUnknownKeys = false
+    }
     private val _characters = MutableStateFlow<List<CharacterAsset>>(emptyList())
     val characters: StateFlow<List<CharacterAsset>> = _characters.asStateFlow()
 
@@ -128,7 +132,7 @@ class CharacterRepository(
                     listOf(AdaptationValidationIssue("", "ARTIFACT_TOO_LARGE", "适配产物超过 2 MiB")),
                 )
             }
-            val artifact = runCatching { json.decodeFromString<AdaptationArtifact>(bytes.toString(Charsets.UTF_8)) }
+            val artifact = runCatching { adaptationJson.decodeFromString<AdaptationArtifact>(bytes.toString(Charsets.UTF_8)) }
                 .getOrElse {
                     return@withLock AdaptationInstallResult.Rejected(
                         listOf(AdaptationValidationIssue("", "INVALID_ARTIFACT", "无法解析适配产物")),

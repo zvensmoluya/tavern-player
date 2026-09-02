@@ -34,6 +34,8 @@ AI 负责提出语义映射。确定性代码负责格式、能力、资源消�
 - Player 创建 Conversation 时捕获当时采用的 Character 与 Adaptation snapshot，之后重新编译不改写已有对话。
 - Shelf 可以为同一原件缓存不同 compiler/runtime 版本的派生产物，但运行时状态不属于 Shelf。
 
+当前 Shelf 实现把 `program-view-v1.json` 与 `adaptation-v1.json` 保存在原件目录的 `derived/` 下，通过 SQLite 记录原件/派生物哈希与编译状态。角色卡传输 manifest 可携带可选 adaptation；Player 分别校验附件长度、哈希、严格 JSON schema 和 `sourceSha256` 后才挂载。
+
 ## ProgramView v1
 
 `ProgramView` 只包含理解程序行为所需的信息：

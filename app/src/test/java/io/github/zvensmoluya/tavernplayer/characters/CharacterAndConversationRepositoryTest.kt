@@ -107,6 +107,22 @@ class CharacterAndConversationRepositoryTest {
     }
 
     @Test
+    fun `adaptation rejects unknown executable surface`() = runTest {
+        val root = temporary.newFolder("strict-adaptation")
+        val characters = CharacterRepository(root)
+        val source = cardJson("Strict", "source")
+        val saved = characters.import(source, "strict.json") as CharacterSaveResult.Saved
+        val encoded = Json { encodeDefaults = true }.encodeToString(adaptation(saved.character.sourceSha256))
+        val unknown = encoded.dropLast(1) + ",\"script\":\"alert(1)\"}"
+
+        val result = characters.installAdaptation(unknown.encodeToByteArray())
+
+        assertTrue(result is AdaptationInstallResult.Rejected)
+        assertEquals("INVALID_ARTIFACT", (result as AdaptationInstallResult.Rejected).issues.single().code)
+        assertEquals(null, characters.get(saved.character.id)?.adaptation)
+    }
+
+    @Test
     fun `conversation restores snapshot variants runtime and interrupted streams`() = runTest {
         val root = temporary.newFolder("conversations")
         var id = 0

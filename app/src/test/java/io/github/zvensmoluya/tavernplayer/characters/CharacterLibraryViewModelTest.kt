@@ -9,6 +9,7 @@ import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransfer
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferManifest
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
+import java.security.MessageDigest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -40,6 +41,38 @@ class CharacterLibraryViewModelTest {
         assertEquals(1, harness.characterRepository.characters.value.size)
         assertNotNull(harness.viewModel.uiState.value.selectedCharacterId)
         assertEquals("已从 Shelf 导入 Lantern", harness.viewModel.uiState.value.message)
+    }
+
+    @Test
+    fun `Shelf character installs a source-bound native adaptation`() = runTest {
+        val source = """
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Lantern","first_mes":"<OPENING/>"}}
+        """.trimIndent().encodeToByteArray()
+        val hash = MessageDigest.getInstance("SHA-256").digest(source).joinToString("") { "%02x".format(it) }
+        val adaptation = """
+            {
+              "schemaVersion":1,
+              "sourceSha256":"$hash",
+              "compiler":{"id":"tavern-shelf-ai","version":"1","model":"fixture"},
+              "status":"FULL",
+              "requiredCapabilities":["ui.native","chat.setDraft"],
+              "views":[{
+                "id":"opening","placement":"MESSAGE_REPLACEMENT",
+                "trigger":{"type":"MESSAGE_EXACT","value":"<OPENING/>"},
+                "nodes":[{"id":"form","type":"FORM","fields":[
+                  {"id":"name","type":"TEXT","label":"姓名"}
+                ]}],
+                "submitActions":[{"type":"CHAT_SET_DRAFT","template":"{{form.name}}"}]
+              }]
+            }
+        """.trimIndent().encodeToByteArray()
+        val harness = harness(fixture("character", source, "native-lantern.json", adaptationBytes = adaptation))
+
+        harness.viewModel.importFromShelf("http://shelf/transfer")
+        harness.awaitImport()
+
+        assertEquals("opening", harness.characterRepository.characters.value.single().adaptation?.views?.single()?.id)
+        assertEquals("已从 Shelf 导入 Native Lantern，并启用原生适配", harness.viewModel.uiState.value.message)
     }
 
     @Test
@@ -113,7 +146,13 @@ class CharacterLibraryViewModelTest {
         )
     }
 
-    private fun fixture(kind: String, bytes: ByteArray, filename: String, subtype: String? = null) = ShelfTransfer(
+    private fun fixture(
+        kind: String,
+        bytes: ByteArray,
+        filename: String,
+        subtype: String? = null,
+        adaptationBytes: ByteArray? = null,
+    ) = ShelfTransfer(
         manifest = ShelfTransferManifest(
             protocol = "tavern-shelf-transfer",
             version = 1,
@@ -128,6 +167,7 @@ class CharacterLibraryViewModelTest {
             expiresAt = "2026-09-02T12:10:00+08:00",
         ),
         sourceBytes = bytes,
+        adaptationBytes = adaptationBytes,
     )
 
     private data class Harness(
