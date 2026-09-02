@@ -47,9 +47,9 @@
 
 ### Persona
 
-- Persona 是可复用的用户身份资产，保留 name、avatar 与可选 description。name 是 `{{user}}` 和用户消息身份的数据来源，description 是 `{{persona}}` 与 Preset `personaDescription` marker 的动态内容源，avatar 用于聊天展示；具体编排仍完全由当前 Preset 决定。
-- Conversation 直接选择当前 Persona / UserIdentity。切换 Persona 不改写已有历史消息，历史消息保留发送时的用户身份。
-- 当前默认 Persona 的 description 为空，尚无 Persona 管理界面；不另行实现 Persona 自有的 placement / depth / role，不支持 Persona Lorebook、Persona 参与 World Book 扫描、Character → Persona 绑定，以及应用默认、Character 关联、Conversation 锁定或临时 Persona 等自动选择拓扑。
+- 当前只维护一份全局默认 Persona，保留 name、avatar 与可选 description，并在角色库提供显式编辑入口。默认值仍是 name 为“旅人”、description 为空。
+- name 是 `{{user}}` 和用户消息身份的数据来源，description 是 `{{persona}}` 与 Preset `personaDescription` marker 的动态内容源；具体编排完全由当前 Preset 决定，不另行实现 Persona 自有的 placement / depth / role。
+- 新建 Conversation 捕获当时的默认 Persona 快照；之后修改默认身份不改写已有 Conversation 及其历史消息。当前不提供多 Persona 列表或创建对话时的选择器，也不支持 Persona Lorebook、Persona 参与 World Book 扫描、Character → Persona 绑定、Conversation 临时 Persona 等拓扑。
 
 ## 3. Conversation 与剧情状态
 
@@ -111,7 +111,7 @@
 ## 7. 当前交付边界
 
 - Character Card 导入、不可变 Character Snapshot、Macro / Regex / World Book 编排、token accounting、流式发送和 Conversation 恢复已经形成实现契约。
-- 默认 Persona 暂时固定为“旅人”；Persona 管理器仍未进入当前阶段。
+- 单一默认 Persona 已可编辑并持久化；多身份资产管理、选择与绑定仍不进入当前阶段。
 - 全局 Preset 资产库、ST OpenAI Preset 导入 / 导出、受控编辑、五协议参数映射和聊天快捷切换已经形成实现契约。
 - 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
-- 后续工作集中在 Conversation 编辑能力、Persona 产品化与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。
+- 后续工作集中在 Conversation 编辑能力与更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。

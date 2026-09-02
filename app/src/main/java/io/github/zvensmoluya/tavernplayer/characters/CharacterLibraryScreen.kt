@@ -60,6 +60,7 @@ import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.CompatibilitySeverity
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
+import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.SafeMarkdownText
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -79,6 +80,7 @@ fun CharacterLibraryRoute(
     onSelectCharacter: (String) -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
+    onOpenPersona: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -140,6 +142,7 @@ fun CharacterLibraryRoute(
         onSelectCharacter = onSelectCharacter,
         onOpenModels = onOpenModels,
         onOpenPresets = onOpenPresets,
+        onOpenPersona = onOpenPersona,
     )
 }
 
@@ -153,6 +156,7 @@ fun CharacterLibraryScreen(
     onSelectCharacter: (String) -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
+    onOpenPersona: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -200,6 +204,10 @@ fun CharacterLibraryScreen(
                 OutlinedButton(onClick = onImportFromShelf, enabled = !state.importing) {
                     Text("扫描 Tavern Shelf")
                 }
+                Spacer(Modifier.height(10.dp))
+                TextButton(onClick = onOpenPersona, modifier = Modifier.testTag("openPersona")) {
+                    Text("编辑我的身份 · ${state.persona.name}")
+                }
                 state.message?.let {
                     Spacer(Modifier.height(12.dp))
                     Text(it, modifier = Modifier.testTag("libraryNotice"), color = MaterialTheme.colorScheme.error)
@@ -211,6 +219,9 @@ fun CharacterLibraryScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                item("persona") {
+                    PersonaSummaryCard(state.persona, onOpenPersona)
+                }
                 state.message?.let { notice ->
                     item("notice") {
                         Text(
@@ -229,6 +240,39 @@ fun CharacterLibraryScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PersonaSummaryCard(persona: Persona, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("openPersona"),
+        onClick = onClick,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.tertiaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(persona.name.trim().take(1).ifBlank { "我" }, fontWeight = FontWeight.Bold)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("我的身份 · ${persona.name}", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    persona.description.trim().takeIf(String::isNotEmpty) ?: "还没有填写身份描述",
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text("编辑", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

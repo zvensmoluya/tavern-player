@@ -7,6 +7,7 @@ import androidx.activity.viewModels
 import io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryViewModel
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
+import io.github.zvensmoluya.tavernplayer.personas.PersonaViewModel
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
         CharacterLibraryViewModel.Factory(
             graph.characterRepository,
             graph.conversationRepository,
-            graph.defaultPersona,
+            graph.personaRepository,
             graph.presetRepository,
             graph.shelfTransferClient,
         )
@@ -36,12 +37,21 @@ class MainActivity : ComponentActivity() {
     private val presetViewModel by viewModels<PresetViewModel> {
         PresetViewModel.Factory(graph.presetRepository)
     }
+    private val personaViewModel by viewModels<PersonaViewModel> {
+        PersonaViewModel.Factory(graph.personaRepository)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             TavernPlayerTheme {
-                TavernPlayerApp(chatViewModel, modelConnectionsViewModel, characterLibraryViewModel, presetViewModel)
+                TavernPlayerApp(
+                    chatViewModel,
+                    modelConnectionsViewModel,
+                    characterLibraryViewModel,
+                    presetViewModel,
+                    personaViewModel,
+                )
             }
         }
     }

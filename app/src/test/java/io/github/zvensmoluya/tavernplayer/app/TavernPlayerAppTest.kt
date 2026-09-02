@@ -42,5 +42,9 @@ class TavernPlayerAppTest {
             AppSurface.PRESET_CENTER,
             selectAppSurface(AppSurface.PRESET_CENTER, hasSelectedCharacter = true),
         )
+        assertEquals(
+            AppSurface.PERSONA,
+            selectAppSurface(AppSurface.PERSONA, hasSelectedCharacter = false),
+        )
     }
 }

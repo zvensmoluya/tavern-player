@@ -14,6 +14,8 @@ import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsRoute
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ChatRoute
 import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
+import io.github.zvensmoluya.tavernplayer.personas.PersonaRoute
+import io.github.zvensmoluya.tavernplayer.personas.PersonaViewModel
 import io.github.zvensmoluya.tavernplayer.presets.PresetRoute
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
@@ -23,11 +25,13 @@ fun TavernPlayerApp(
     connectionsViewModel: ModelConnectionsViewModel,
     characterLibraryViewModel: CharacterLibraryViewModel,
     presetViewModel: PresetViewModel,
+    personaViewModel: PersonaViewModel,
 ) {
     val libraryState by characterLibraryViewModel.uiState.collectAsState()
     var surface by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
     var returnFromModels by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
     var returnFromPresets by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
+    var returnFromPersona by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
 
     fun openModels() {
         returnFromModels = surface
@@ -37,6 +41,12 @@ fun TavernPlayerApp(
     fun openPresets() {
         returnFromPresets = surface
         surface = AppSurface.PRESET_CENTER
+    }
+
+    fun openPersona() {
+        returnFromPersona = surface
+        personaViewModel.startEditing()
+        surface = AppSurface.PERSONA
     }
 
     LaunchedEffect(libraryState.openConversationId) {
@@ -70,6 +80,7 @@ fun TavernPlayerApp(
             },
             onOpenModels = ::openModels,
             onOpenPresets = ::openPresets,
+            onOpenPersona = ::openPersona,
         )
         AppSurface.CHARACTER_DETAIL -> {
             val character = libraryState.selectedCharacter
@@ -105,6 +116,13 @@ fun TavernPlayerApp(
                 surface = returnFromPresets
             },
         )
+        AppSurface.PERSONA -> PersonaRoute(
+            viewModel = personaViewModel,
+            onBack = {
+                personaViewModel.cancelEditing()
+                surface = returnFromPersona
+            },
+        )
     }
 }
 
@@ -114,6 +132,7 @@ internal enum class AppSurface {
     CHAT,
     MODEL_CONFIGURATION,
     PRESET_CENTER,
+    PERSONA,
 }
 
 internal fun selectAppSurface(

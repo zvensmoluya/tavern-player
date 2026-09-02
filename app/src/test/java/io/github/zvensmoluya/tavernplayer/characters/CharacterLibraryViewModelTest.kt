@@ -4,11 +4,13 @@ import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.MainDispatcherRule
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.personas.DefaultPersonaSource
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransfer
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferManifest
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -68,22 +70,46 @@ class CharacterLibraryViewModelTest {
         assertEquals(1, harness.presetRepository.library.value.presets.size)
     }
 
+    @Test
+    fun `new conversation captures the latest default persona`() = runTest {
+        val source = """
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Lantern"}}
+        """.trimIndent().encodeToByteArray()
+        val harness = harness(fixture("character", source, "lantern.json"))
+        harness.viewModel.importFromShelf("http://shelf/transfer")
+        harness.awaitImport()
+        harness.personaSource.persona.value = Persona(
+            id = "default-persona",
+            name = "小舟",
+            description = "喜欢雨夜。",
+        )
+
+        harness.viewModel.createConversation(harness.characterRepository.characters.value.single().id)
+        val conversation = harness.conversationRepository.conversations.first { it.isNotEmpty() }.single()
+
+        assertEquals("小舟", conversation.persona.name)
+        assertEquals("喜欢雨夜。", conversation.persona.description)
+    }
+
     private fun harness(transfer: ShelfTransfer): Harness {
         val root = temporary.newFolder()
         val characters = CharacterRepository(root)
         val presets = PresetRepository(root, ioDispatcher = mainDispatcher.dispatcher)
         val conversations = ConversationRepository(root, PromptCompiler())
         val receiver = ShelfTransferReceiver { transfer }
+        val personaSource = MutablePersonaSource(Persona("default-persona", "旅人"))
         return Harness(
             viewModel = CharacterLibraryViewModel(
                 characters,
                 conversations,
-                Persona("default", "旅人"),
+                personaSource,
                 presets,
                 receiver,
             ),
             characterRepository = characters,
+            conversationRepository = conversations,
             presetRepository = presets,
+            personaSource = personaSource,
         )
     }
 
@@ -107,10 +133,16 @@ class CharacterLibraryViewModelTest {
     private data class Harness(
         val viewModel: CharacterLibraryViewModel,
         val characterRepository: CharacterRepository,
+        val conversationRepository: ConversationRepository,
         val presetRepository: PresetRepository,
+        val personaSource: MutablePersonaSource,
     ) {
         suspend fun awaitImport() {
             viewModel.uiState.first { !it.importing }
         }
+    }
+
+    private class MutablePersonaSource(initial: Persona) : DefaultPersonaSource {
+        override val persona = MutableStateFlow(initial)
     }
 }

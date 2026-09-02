@@ -8,6 +8,8 @@ import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
+import io.github.zvensmoluya.tavernplayer.personas.DefaultPersonaSource
+import io.github.zvensmoluya.tavernplayer.personas.PersonaRepository
 import io.github.zvensmoluya.tavernplayer.presets.PresetLibraryImportResult
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 data class CharacterLibraryUiState(
     val characters: List<CharacterAsset> = emptyList(),
     val conversations: List<ConversationRecord> = emptyList(),
+    val persona: Persona = PersonaRepository.defaultPersona(),
     val selectedCharacterId: String? = null,
     val importing: Boolean = false,
     val importDiagnostics: List<CompatibilityDiagnostic> = emptyList(),
@@ -37,7 +40,7 @@ data class CharacterLibraryUiState(
 class CharacterLibraryViewModel(
     private val characterRepository: CharacterRepository,
     private val conversationRepository: ConversationRepository,
-    private val defaultPersona: Persona,
+    private val defaultPersonaSource: DefaultPersonaSource,
     private val presetRepository: PresetRepository,
     private val shelfTransferReceiver: ShelfTransferReceiver,
 ) : ViewModel() {
@@ -46,17 +49,23 @@ class CharacterLibraryViewModel(
 
     init {
         viewModelScope.launch {
-            combine(characterRepository.characters, conversationRepository.conversations) { characters, conversations ->
-                characters to conversations
-            }.collect { (characters, conversations) ->
-                _uiState.update { current ->
-                    current.copy(
-                        characters = characters,
-                        conversations = conversations,
-                        selectedCharacterId = current.selectedCharacterId.takeIf { id -> characters.any { it.id == id } },
-                    )
+            combine(
+                characterRepository.characters,
+                conversationRepository.conversations,
+                defaultPersonaSource.persona,
+            ) { characters, conversations, persona -> Triple(characters, conversations, persona) }
+                .collect { (characters, conversations, persona) ->
+                    _uiState.update { current ->
+                        current.copy(
+                            characters = characters,
+                            conversations = conversations,
+                            persona = persona,
+                            selectedCharacterId = current.selectedCharacterId.takeIf { id ->
+                                characters.any { it.id == id }
+                            },
+                        )
+                    }
                 }
-            }
         }
     }
 
@@ -172,7 +181,8 @@ class CharacterLibraryViewModel(
         val character = characterRepository.get(characterId) ?: return
         val preset = presetRepository.captureActive()
         viewModelScope.launch {
-            runCatching { conversationRepository.create(character, defaultPersona, preset) }
+            val persona = defaultPersonaSource.captureDefault()
+            runCatching { conversationRepository.create(character, persona, preset) }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "无法创建对话") } }
         }
@@ -193,7 +203,7 @@ class CharacterLibraryViewModel(
     class Factory(
         private val characterRepository: CharacterRepository,
         private val conversationRepository: ConversationRepository,
-        private val defaultPersona: Persona,
+        private val defaultPersonaSource: DefaultPersonaSource,
         private val presetRepository: PresetRepository,
         private val shelfTransferReceiver: ShelfTransferReceiver,
     ) : ViewModelProvider.Factory {
@@ -202,7 +212,7 @@ class CharacterLibraryViewModel(
             CharacterLibraryViewModel(
                 characterRepository,
                 conversationRepository,
-                defaultPersona,
+                defaultPersonaSource,
                 presetRepository,
                 shelfTransferReceiver,
             ) as T

@@ -9,9 +9,9 @@ import io.github.zvensmoluya.tavernplayer.connections.JsonConnectionDataStore
 import io.github.zvensmoluya.tavernplayer.connections.ProbeService
 import io.github.zvensmoluya.tavernplayer.characters.CharacterRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
-import io.github.zvensmoluya.tavernplayer.conversation.DemoConversationContent
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.personas.PersonaRepository
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferClient
 
@@ -28,7 +28,7 @@ class AppGraph(context: Context) {
     )
     val probeService = ProbeService(gateway, connectionRepository)
     val promptCompiler = PromptCompiler()
-    val defaultPersona = DemoConversationContent.persona
+    val personaRepository = PersonaRepository(appContext.filesDir)
     val characterRepository = CharacterRepository(appContext.filesDir)
     val presetRepository = PresetRepository(appContext.filesDir)
     val shelfTransferClient = ShelfTransferClient()

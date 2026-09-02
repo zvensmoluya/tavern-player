@@ -93,14 +93,16 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `PresetRepository` 以一个原子 app-private manifest 保存用户 Preset、完整 source 树和全局 active ID，内置默认由代码注入。它提供导入、激活、显式保存、重命名、复制、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
+`PersonaRepository` 原子保存一份全局默认 Persona。角色库中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
+
 `ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
 
 模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 
-界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库和 Chat 都可以进入 Preset 中心；Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出，详情默认只展示普通 Prompt 与 Regex 快速开关；单项内容、兼容字段和结构设置位于逐层次级入口，请求参数使用独立 bottom sheet 并逐项拔插。全部修改仍显式保存或取消，不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
+界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库可进入单一默认身份编辑器；角色库和 Chat 都可以进入 Preset 中心，Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出，详情默认只展示普通 Prompt 与 Regex 快速开关；单项内容、兼容字段和结构设置位于逐层次级入口，请求参数使用独立 bottom sheet 并逐项拔插。全部修改仍显式保存或取消，不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
 聊天正文不使用 WebView。渲染前删除 `script` / `style` 块、剥离其他 HTML 标签并解码实体，只把基础 Markdown 交给 Compose 展示。
 
 ## 当前明确不做
 
-当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、Persona 管理、Character 编辑 / 导出、独立 World Book / Regex 管理、第三方脚本运行、富 HTML WebView，以及 Conversation edit、delete、continue、branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话，但依赖 TavernHelper 的状态面板、变量玩法和脚本不会被伪装为兼容。
+当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 World Book / Regex 管理、第三方脚本运行、富 HTML WebView，以及 Conversation edit、delete、continue、branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话，但依赖 TavernHelper 的状态面板、变量玩法和脚本不会被伪装为兼容。
