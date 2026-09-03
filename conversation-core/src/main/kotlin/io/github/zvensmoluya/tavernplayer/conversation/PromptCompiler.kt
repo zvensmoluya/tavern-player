@@ -28,6 +28,7 @@ class PromptCompiler(
     private val regexEngine: CharacterRegexEngine = CharacterRegexEngine(macroEngine),
     private val worldBookEngine: WorldBookEngine = WorldBookEngine(macroEngine, regexEngine),
     private val contextBudgeter: ContextBudgeter = ContextBudgeter(),
+    private val statePromptProjector: ConversationStatePromptProjector = ConversationStatePromptProjector(),
 ) : GenerationPlanner {
     fun expandConversationText(
         text: String,
@@ -471,6 +472,26 @@ class PromptCompiler(
                     }
                 }
             }
+        }.toMutableList()
+        statePromptProjector.project(input.runtimeState.conversationState)?.let { content ->
+            val insertionIndex = compiled.indexOfFirst { it.role != MessageRole.SYSTEM }
+                .takeIf { it >= 0 }
+                ?: compiled.size
+            compiled.add(
+                insertionIndex,
+                PreparedMessage(
+                    role = MessageRole.SYSTEM,
+                    content = content,
+                    origin = PromptOrigin("conversation-state", listOf(CONVERSATION_STATE_SOURCE)),
+                ),
+            )
+            trace += CompilationTraceEntry(
+                stage = "conversation-state",
+                sourceIds = listOf(CONVERSATION_STATE_SOURCE),
+                decision = "projected ${input.runtimeState.conversationState.values.size} scalar values",
+                role = MessageRole.SYSTEM,
+                content = content,
+            )
         }
         val preparedForTransport = applyNamesBehavior(compiled, input.preset.controlSettings.namesBehavior, trace)
             .let { messages ->
@@ -1037,6 +1058,7 @@ class PromptCompiler(
         private const val NEW_CHAT_SOURCE = "newChatPrompt"
         private const val NEW_EXAMPLE_SOURCE = "newExampleChatPrompt"
         private const val ASSISTANT_PREFILL_SOURCE = "assistantPrefill"
+        private const val CONVERSATION_STATE_SOURCE = "conversationState"
         private val SUPPORTED_MARKERS = setOf(
             WORLD_INFO_BEFORE_MARKER,
             WORLD_INFO_AFTER_MARKER,

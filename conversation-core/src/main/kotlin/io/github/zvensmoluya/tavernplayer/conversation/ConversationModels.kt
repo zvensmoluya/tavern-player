@@ -10,7 +10,7 @@ import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 
 typealias CharacterAsset = io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 typealias CharacterSnapshot = io.github.zvensmoluya.tavernplayer.content.CharacterSnapshot
@@ -104,10 +104,22 @@ data class WorldBookEntryRuntimeState(
 )
 
 @Serializable
+data class ConversationStateSnapshot(
+    val values: Map<String, JsonPrimitive> = emptyMap(),
+) {
+    fun applying(patch: ConversationStatePatch): ConversationStateSnapshot =
+        if (patch.assignments.isEmpty()) this else copy(values = values + patch.assignments)
+}
+
+data class ConversationStatePatch(
+    val assignments: Map<String, JsonPrimitive> = emptyMap(),
+)
+
+@Serializable
 data class ConversationRuntimeState(
     val localVariables: Map<String, MacroValue> = emptyMap(),
     val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
-    val adaptationState: Map<String, JsonElement> = emptyMap(),
+    val conversationState: ConversationStateSnapshot = ConversationStateSnapshot(),
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
 )
@@ -253,7 +265,7 @@ data class ConversationTurn(
 
 @Serializable
 data class ConversationRecord(
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val id: String,
     val character: CharacterSnapshot,
     val persona: Persona,

@@ -1,6 +1,6 @@
 # Native 内容适配边界 v1
 
-> 状态：已开始实现的内部契约。它不是角色卡公共格式或创作者 SDK。
+> 状态：现有过渡实现契约。它不是角色卡公共格式或创作者 SDK；后续收敛方向见 [`Tavern Player Native Adaptation 设计原则0903.md`](Tavern%20Player%20Native%20Adaptation%20设计原则0903.md)。
 
 ## 目标
 
@@ -69,7 +69,6 @@ AI 负责提出语义映射。确定性代码负责格式、能力、资源消�
 | --- | --- |
 | `ui.native` | 渲染有界 Native 组件树 |
 | `chat.setDraft` | 由用户提交 Native 表单后设置聊天草稿 |
-| `state.write` | 在 Conversation transaction 内修改声明过的适配状态 |
 | `state.ingest` | 从 assistant 原始回复中的受限操作方言写入声明过的适配状态 |
 
 当前 UI 节点：
@@ -91,9 +90,8 @@ AI 负责提出语义映射。确定性代码负责格式、能力、资源消�
 当前动作：
 
 - `CHAT_SET_DRAFT`
-- `STATE_SET`
-- `STATE_INCREMENT`
-- `STATE_TOGGLE`
+
+旧 schema 中的 `STATE_SET`、`STATE_INCREMENT`、`STATE_TOGGLE` 枚举值仍可被解码，但校验与执行都会拒绝。Native Form 默认只生成待用户确认的聊天草稿，不能脱离消息时间线直接修改状态。
 
 模板只能读取当前表单和已声明状态：
 
@@ -104,7 +102,9 @@ AI 负责提出语义映射。确定性代码负责格式、能力、资源消�
 {{char}}
 ```
 
-首个消息状态方言为 `UPDATE_VARIABLE_SET_V1`。Artifact 必须逐项声明 `sourcePath -> target state key` 映射；Player 只在完整 `<UpdateVariable>...</UpdateVariable>` 块内接受单行 `_.set('点分路径', oldScalar, newScalar)`，并且 new value 只能是字符串、有限数字或布尔值。这里的 `_.set` 只是沿用社区卡已有文本协议的语法外形：Player 不解释 JavaScript，也不执行函数、对象、数组、表达式、未知路径或块外文本。
+首个消息状态方言为 `UPDATE_VARIABLE_SET_V1`。Artifact 必须逐项声明 `sourcePath -> target state key` 映射；专用 `UpdateVariableSetV1Adapter` 只在完整 `<UpdateVariable>...</UpdateVariable>` 块内接受单行 `_.set('点分路径', oldScalar, newScalar)`，并且 new value 只能是字符串、有限数字或布尔值。Adapter 输出受控 `ConversationStatePatch`，由 Conversation Runtime 一次应用。这里的 `_.set` 只是沿用社区卡已有文本协议的语法外形：Player 不解释 JavaScript，也不执行函数、对象、数组、表达式、未知路径或块外文本。
+
+当前选中候选的 scalar Conversation State 会由 Player 按 key 排序、编码为固定 JSON system projection，并进入下一轮 Prompt。Artifact 不能提供 Prompt 模板、role、插入位置或条件表达式。
 
 不支持任意表达式、函数、循环、递归、动态 capability、文件、网络、DOM、WebView、反射或代码加载。
 

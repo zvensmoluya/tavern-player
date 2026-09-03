@@ -66,6 +66,28 @@ class AdaptationValidatorTest {
     }
 
     @Test
+    fun `rejects form actions that write state outside the message timeline`() {
+        val original = openingFormArtifact()
+        val artifact = original.copy(
+            requiredCapabilities = listOf("ui.native", "state.write"),
+            state = listOf(AdaptationStateDefinition("visits", AdaptationStateType.NUMBER, JsonPrimitive(0))),
+            views = original.views.map { view ->
+                view.copy(
+                    submitActions = listOf(
+                        AdaptationAction(AdaptationActionType.STATE_INCREMENT, target = "visits", value = "1"),
+                    ),
+                )
+            },
+        )
+
+        val result = AdaptationValidator().validate(artifact)
+
+        assertFalse(result.valid)
+        assertTrue(result.issues.any { it.code == "FORM_STATE_WRITE_UNSUPPORTED" })
+        assertTrue(result.issues.any { it.code == "UNSUPPORTED_CAPABILITY" })
+    }
+
+    @Test
     fun `rejects quoted and non-finite typed state values`() {
         val artifact = openingFormArtifact().copy(
             state = listOf(

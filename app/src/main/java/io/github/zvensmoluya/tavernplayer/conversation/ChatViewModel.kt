@@ -82,7 +82,7 @@ data class ChatUiState(
     val variantNavigationAvailable: Boolean = false,
     val message: String? = null,
     val lastTrace: GenerationTraceState? = null,
-    val adaptationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+    val conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
     val headerAdaptationViews: List<AdaptationView> = emptyList(),
 ) {
     val selectedConnection: StoredConnection?
@@ -189,10 +189,8 @@ class ChatViewModel(
         ) {
             is AdaptationExecutionResult.Failure -> _uiState.update { it.copy(message = result.message) }
             is AdaptationExecutionResult.Success -> {
-                record = record.copy(runtimeState = result.runtimeState)
                 val draft = result.effects.lastOrNull { it.type == AdaptationEffectType.CHAT_SET_DRAFT }?.value
                 syncRecord(input = draft ?: _uiState.value.input, message = null)
-                schedulePersist()
             }
         }
     }
@@ -1235,7 +1233,7 @@ private fun ConversationRecord.toUiState(
     variantNavigationAvailable = turns.lastOrNull()?.let { it.role == MessageRole.ASSISTANT && it.variants.size > 1 } == true,
     message = message,
     lastTrace = lastTrace ?: persistedTrace(),
-    adaptationState = runtimeState.adaptationState,
+    conversationState = runtimeState.conversationState.values,
     headerAdaptationViews = character.adaptation?.views.orEmpty().filter { view ->
         view.placement == AdaptationViewPlacement.CONVERSATION_HEADER && view.matchesMessage("")
     },

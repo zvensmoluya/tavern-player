@@ -30,6 +30,7 @@ import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationMessage
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRuntimeState
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationStateSnapshot
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationTurn
 import io.github.zvensmoluya.tavernplayer.conversation.InjectionPosition
 import io.github.zvensmoluya.tavernplayer.conversation.MacroValue
@@ -45,7 +46,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -106,7 +106,7 @@ class CharacterAndConversationRepositoryTest {
         val conversations = ConversationRepository(root, PromptCompiler(), idFactory = { "adapted-conversation" })
         val conversation = conversations.create(installed.character, Persona("persona", "Traveler"), preset())
         assertEquals(artifact, conversation.character.adaptation)
-        assertEquals("ready", conversation.runtimeState.adaptationState["phase"]?.jsonPrimitive?.content)
+        assertEquals("ready", conversation.runtimeState.conversationState.values["phase"]?.content)
     }
 
     @Test
@@ -136,8 +136,8 @@ class CharacterAndConversationRepositoryTest {
 
         val conversation = repository.create(character, Persona("persona", "Traveler"), preset())
 
-        assertEquals("started", conversation.runtimeState.adaptationState["phase"]?.jsonPrimitive?.content)
-        assertEquals("started", conversation.turns.single().selected.runtimeStateAfter?.adaptationState?.get("phase")?.jsonPrimitive?.content)
+        assertEquals("started", conversation.runtimeState.conversationState.values["phase"]?.content)
+        assertEquals("started", conversation.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase")?.content)
     }
 
     @Test
@@ -154,6 +154,50 @@ class CharacterAndConversationRepositoryTest {
         assertTrue(result is AdaptationInstallResult.Rejected)
         assertEquals("INVALID_ARTIFACT", (result as AdaptationInstallResult.Rejected).issues.single().code)
         assertEquals(null, characters.get(saved.character.id)?.adaptation)
+    }
+
+    @Test
+    fun `selected conversation state candidate survives process restore`() = runTest {
+        val root = temporary.newFolder("conversation-state-restore")
+        val stateful = adaptation("a".repeat(64)).copy(
+            requiredCapabilities = listOf("state.ingest"),
+            views = emptyList(),
+            state = listOf(AdaptationStateDefinition("phase", AdaptationStateType.STRING, JsonPrimitive("ready"))),
+            messageStateRules = listOf(
+                AdaptationMessageStateRule(
+                    AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
+                    listOf(AdaptationMessageStateMapping("game.phase", "phase")),
+                ),
+            ),
+        )
+        val repository = ConversationRepository(root, PromptCompiler())
+        var record = repository.create(
+            CharacterAsset(
+                id = "stateful",
+                name = "Stateful",
+                firstMessage = "<UpdateVariable>\n_.set('game.phase', 'ready', 'first');\n</UpdateVariable>",
+                alternateFirstMessages = listOf(
+                    "<UpdateVariable>\n_.set('game.phase', 'ready', 'alternate');\n</UpdateVariable>",
+                ),
+                adaptation = stateful,
+            ),
+            Persona("persona", "Traveler"),
+            preset(),
+        )
+        val opening = record.turns.single()
+        val alternate = opening.variants[1]
+        record = repository.save(
+            record.copy(
+                turns = listOf(opening.copy(selectedVariantIndex = 1)),
+                runtimeState = requireNotNull(alternate.runtimeStateAfter),
+            ),
+        )
+
+        val restored = ConversationRepository(root, PromptCompiler()).get(record.id)!!
+
+        assertEquals(1, restored.turns.single().selectedVariantIndex)
+        assertEquals("alternate", restored.runtimeState.conversationState.values["phase"]?.content)
+        assertEquals("alternate", restored.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase")?.content)
     }
 
     @Test
@@ -200,7 +244,7 @@ class CharacterAndConversationRepositoryTest {
         assertEquals("preset", record.turns.single().variants.first().presetId)
         assertEquals("Preset", record.turns.single().variants.first().presetName)
         assertEquals("preset-content", record.turns.single().variants.first().presetContentSha256)
-        assertEquals(2, record.schemaVersion)
+        assertEquals(3, record.schemaVersion)
         assertEquals(ConversationRuntimeState(), record.turns.single().variants.first().projectionRuntimeStateBefore)
         assertNotEquals(original.copy(description = "changed").description, record.character.description)
 
@@ -212,7 +256,10 @@ class CharacterAndConversationRepositoryTest {
         record = repository.save(
             record.copy(
                 turns = record.turns + ConversationTurn("turn", MessageRole.ASSISTANT, listOf(streaming)),
-                runtimeState = ConversationRuntimeState(localVariables = mapOf("mood" to MacroValue("warm"))),
+                runtimeState = ConversationRuntimeState(
+                    localVariables = mapOf("mood" to MacroValue("warm")),
+                    conversationState = ConversationStateSnapshot(mapOf("affection" to JsonPrimitive(30))),
+                ),
             ),
         )
         assertEquals(PersistedMessageStatus.STREAMING, record.turns.last().selected.status)
@@ -227,6 +274,7 @@ class CharacterAndConversationRepositoryTest {
         assertEquals(2, loaded.turns.size)
         assertEquals(PersistedMessageStatus.INTERRUPTED, loaded.turns.last().selected.status)
         assertEquals("warm", loaded.runtimeState.localVariables["mood"]?.text)
+        assertEquals(JsonPrimitive(30), loaded.runtimeState.conversationState.values["affection"])
         assertEquals("lore", loaded.character.worldBooks.single().entries.single().content)
         assertEquals("regex", loaded.character.regexScripts.single().id)
     }

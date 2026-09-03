@@ -138,7 +138,7 @@ class ChatScreenTest {
                 ChatScreen(
                     state = state(
                         messages = listOf(opening),
-                        adaptationState = mapOf("world-day" to JsonPrimitive(3)),
+                        conversationState = mapOf("world-day" to JsonPrimitive(3)),
                     ),
                     actions = actions(),
                 )
@@ -406,7 +406,7 @@ class ChatScreenTest {
         messages: List<ChatMessageState> = listOf(ChatMessageState(message())),
         readyConnections: List<StoredConnection> = listOf(connection()),
         lastTrace: GenerationTraceState? = null,
-        adaptationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+        conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
         headerAdaptationViews: List<AdaptationView> = emptyList(),
     ) = ChatUiState(
         character = DemoConversationContent.character.snapshot(),
@@ -418,7 +418,7 @@ class ChatScreenTest {
         loadingConnections = false,
         running = running,
         lastTrace = lastTrace,
-        adaptationState = adaptationState,
+        conversationState = conversationState,
         headerAdaptationViews = headerAdaptationViews,
     )
 

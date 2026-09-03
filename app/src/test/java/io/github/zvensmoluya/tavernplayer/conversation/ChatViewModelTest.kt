@@ -75,20 +75,8 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `completed assistant update dialect commits adaptation state`() = runTest {
-        val adaptation = AdaptationArtifact(
-            sourceSha256 = "a".repeat(64),
-            compiler = AdaptationCompiler("fixture", "1"),
-            status = AdaptationStatus.FULL,
-            requiredCapabilities = listOf("state.ingest"),
-            state = listOf(AdaptationStateDefinition("world-day", AdaptationStateType.NUMBER, JsonPrimitive(1))),
-            messageStateRules = listOf(
-                AdaptationMessageStateRule(
-                    AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
-                    listOf(AdaptationMessageStateMapping("世界.日期", "world-day")),
-                ),
-            ),
-        )
+    fun `completed assistant update dialect commits conversation state`() = runTest {
+        val adaptation = dayAdaptation()
         val generator = FakeGenerator { _, _ ->
             flow {
                 emit(GenerationEvent.TextDelta("正文\n<UpdateVariable>\n_.set('世界.日期', 1, 2);"))
@@ -101,7 +89,62 @@ class ChatViewModelTest {
         viewModel.updateInput("继续")
         viewModel.send()
 
-        assertEquals(2.0, (viewModel.uiState.value.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
+        assertEquals(2.0, (viewModel.uiState.value.conversationState["world-day"] as JsonPrimitive).double, 0.0)
+    }
+
+    @Test
+    fun `failed assistant response does not commit its conversation state patch`() = runTest {
+        val adaptation = dayAdaptation()
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                emit(GenerationEvent.TextDelta("正文\n<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"))
+                error("stream failed")
+            }
+        }
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+
+        assertEquals(1.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+        assertEquals(ChatMessageStatus.ERROR, viewModel.uiState.value.messages.last().status)
+    }
+
+    @Test
+    fun `swipe restores conversation state and the selected snapshot reaches the next prompt`() = runTest {
+        val adaptation = dayAdaptation()
+        val plans = mutableListOf<GenerationPlan>()
+        val generator = FakeGenerator { _, plan ->
+            plans += plan
+            val nextDay = plans.size + 1
+            flow {
+                emit(GenerationEvent.TextDelta("回复$nextDay\n<UpdateVariable>\n_.set('世界.日期', 1, $nextDay);\n</UpdateVariable>"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+        assertEquals(1, plans.size)
+        assertTrue(plans[0].projectedConversationState().contains("\"world-day\":1"))
+        assertEquals(2.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+
+        viewModel.regenerate()
+        assertEquals(2, plans.size)
+        assertTrue(plans[1].projectedConversationState().contains("\"world-day\":1"))
+        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+
+        viewModel.previousVariant()
+        assertEquals(2.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+        viewModel.nextVariant()
+        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+        viewModel.previousVariant()
+
+        viewModel.updateInput("下一轮")
+        viewModel.send()
+        assertEquals(3, plans.size)
+        assertTrue(plans[2].projectedConversationState().contains("\"world-day\":2"))
     }
 
     @Test
@@ -177,21 +220,22 @@ class ChatViewModelTest {
             flow {
                 response += 1
                 val text = when (response) {
-                    1 -> "{{setvar::answer::old}}one"
-                    2 -> "later"
+                    1 -> "{{setvar::answer::old}}one\n<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"
+                    2 -> "later\n<UpdateVariable>\n_.set('世界.日期', 2, 3);\n</UpdateVariable>"
                     else -> "{{getvar::route}}/{{getvar::answer}}"
                 }
                 emit(GenerationEvent.TextDelta(text))
                 emit(GenerationEvent.Finished("stop"))
             }
         }
-        val viewModel = viewModel(generator)
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = dayAdaptation()))
 
         viewModel.updateInput("{{setvar::route::old}}first")
         viewModel.send()
         val firstUserId = viewModel.uiState.value.messages[1].message.id
         viewModel.updateInput("{{setvar::route::later}}second")
         viewModel.send()
+        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
 
         viewModel.editMessage(firstUserId, "{{setvar::route::new}}changed", MessageEditMode.RESTART)
 
@@ -201,6 +245,7 @@ class ChatViewModelTest {
         assertEquals("{{setvar::route::new}}changed", state.messages[1].message.sourceText)
         assertTrue(state.messages[1].edited)
         assertEquals("new/", state.messages.last().message.content)
+        assertEquals(1.0, (state.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
         assertEquals(3, generator.calls)
     }
 
@@ -600,6 +645,20 @@ class ChatViewModelTest {
         )
     }
 
+    private fun dayAdaptation() = AdaptationArtifact(
+        sourceSha256 = "a".repeat(64),
+        compiler = AdaptationCompiler("fixture", "1"),
+        status = AdaptationStatus.FULL,
+        requiredCapabilities = listOf("state.ingest"),
+        state = listOf(AdaptationStateDefinition("world-day", AdaptationStateType.NUMBER, JsonPrimitive(1))),
+        messageStateRules = listOf(
+            AdaptationMessageStateRule(
+                AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
+                listOf(AdaptationMessageStateMapping("世界.日期", "world-day")),
+            ),
+        ),
+    )
+
     private class FixedPresetSource(initial: PresetAsset = DemoConversationContent.preset) : ActivePresetSource {
         private val state = MutableStateFlow(initial)
         override val activePreset = state
@@ -644,6 +703,9 @@ class ChatViewModelTest {
         assistantPrefillApplied = false,
     )
 }
+
+private fun GenerationPlan.projectedConversationState(): String =
+    messages.single { it.origin.sourceIds == listOf("conversationState") }.content
 
 private class FakeGenerator(
     private val block: (StoredConnection, GenerationPlan) -> Flow<GenerationEvent>,

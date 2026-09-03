@@ -4,17 +4,11 @@ import io.github.zvensmoluya.tavernplayer.content.AdaptationActionType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
 import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
 import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNode
 import io.github.zvensmoluya.tavernplayer.content.AdaptationView
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.doubleOrNull
 
 data class AdaptationFormSubmission(
     val viewId: String,
@@ -37,7 +31,6 @@ data class AdaptationMessageIngestionResult(
 
 sealed interface AdaptationExecutionResult {
     data class Success(
-        val runtimeState: ConversationRuntimeState,
         val effects: List<AdaptationEffect>,
     ) : AdaptationExecutionResult
 
@@ -47,9 +40,17 @@ sealed interface AdaptationExecutionResult {
     ) : AdaptationExecutionResult
 }
 
-class AdaptationRuntime {
+class AdaptationRuntime(
+    legacyStateAdapters: List<LegacyStateAdapter> = listOf(UpdateVariableSetV1Adapter()),
+) {
+    private val legacyStateAdapters = legacyStateAdapters.associateBy(LegacyStateAdapter::dialect)
+
     fun initialState(artifact: AdaptationArtifact?): ConversationRuntimeState = ConversationRuntimeState(
-        adaptationState = artifact?.state.orEmpty().associate { it.key to it.initialValue },
+        conversationState = ConversationStateSnapshot(
+            artifact?.state.orEmpty().mapNotNull { definition ->
+                (definition.initialValue as? JsonPrimitive)?.let { definition.key to it }
+            }.toMap(),
+        ),
     )
 
     fun execute(
@@ -72,8 +73,7 @@ class AdaptationRuntime {
             validateField(field, values)?.let { return it }
         }
 
-        val definitions = artifact.state.associateBy(AdaptationStateDefinition::key)
-        val state = runtimeState.adaptationState.toMutableMap()
+        val state = runtimeState.conversationState.values
         val effects = mutableListOf<AdaptationEffect>()
         for (action in view.submitActions) {
             when (action.type) {
@@ -86,37 +86,16 @@ class AdaptationRuntime {
                     }
                     effects += AdaptationEffect(AdaptationEffectType.CHAT_SET_DRAFT, rendered)
                 }
-                AdaptationActionType.STATE_SET -> {
-                    val definition = definitions[action.target]
-                        ?: return AdaptationExecutionResult.Failure("UNKNOWN_STATE", "动作引用了未知状态")
-                    val raw = action.template?.let { renderTemplate(it, submission.values, state, userName, characterName) } ?: action.value
-                    state[definition.key] = parseStateValue(definition, raw)
-                        ?: return AdaptationExecutionResult.Failure("INVALID_STATE_VALUE", "状态 ${definition.key} 的值类型不正确")
-                }
-                AdaptationActionType.STATE_INCREMENT -> {
-                    val definition = definitions[action.target]
-                        ?: return AdaptationExecutionResult.Failure("UNKNOWN_STATE", "动作引用了未知状态")
-                    if (definition.type != AdaptationStateType.NUMBER) {
-                        return AdaptationExecutionResult.Failure("INVALID_STATE_TYPE", "increment 只能修改数值状态")
-                    }
-                    val raw = action.template?.let { renderTemplate(it, submission.values, state, userName, characterName) } ?: action.value
-                    val delta = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
-                        ?: return AdaptationExecutionResult.Failure("INVALID_STATE_VALUE", "increment 需要有限数值")
-                    val current = (state[definition.key] as? JsonPrimitive)?.doubleOrNull ?: 0.0
-                    state[definition.key] = JsonPrimitive(current + delta)
-                }
-                AdaptationActionType.STATE_TOGGLE -> {
-                    val definition = definitions[action.target]
-                        ?: return AdaptationExecutionResult.Failure("UNKNOWN_STATE", "动作引用了未知状态")
-                    if (definition.type != AdaptationStateType.BOOLEAN) {
-                        return AdaptationExecutionResult.Failure("INVALID_STATE_TYPE", "toggle 只能修改布尔状态")
-                    }
-                    val current = (state[definition.key] as? JsonPrimitive)?.booleanOrNull ?: false
-                    state[definition.key] = JsonPrimitive(!current)
-                }
+                AdaptationActionType.STATE_SET,
+                AdaptationActionType.STATE_INCREMENT,
+                AdaptationActionType.STATE_TOGGLE,
+                -> return AdaptationExecutionResult.Failure(
+                    "FORM_STATE_WRITE_UNSUPPORTED",
+                    "Native 表单只能生成待确认草稿，不能脱离消息时间线直接修改状态",
+                )
             }
         }
-        return AdaptationExecutionResult.Success(runtimeState.copy(adaptationState = state.toMap()), effects)
+        return AdaptationExecutionResult.Success(effects)
     }
 
     fun ingestAssistantMessage(
@@ -127,24 +106,19 @@ class AdaptationRuntime {
         if (artifact.messageStateRules.isEmpty() || sourceText.isEmpty()) {
             return AdaptationMessageIngestionResult(runtimeState, 0)
         }
-        val definitions = artifact.state.associateBy(AdaptationStateDefinition::key)
-        val state = runtimeState.adaptationState.toMutableMap()
+        val definitions = artifact.state.associateBy { it.key }
+        val assignments = linkedMapOf<String, JsonPrimitive>()
         var applied = 0
         artifact.messageStateRules.forEach { rule ->
-            val mappings = rule.mappings.associateBy { it.sourcePath }
-            val updates = when (rule.dialect) {
-                AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1 -> parseUpdateVariableBlocks(sourceText)
-            }
-            updates.forEach { update ->
-                if (applied >= MAX_MESSAGE_UPDATES) return@forEach
-                val mapping = mappings[update.path] ?: return@forEach
-                val definition = definitions[mapping.target] ?: return@forEach
-                val value = coerceMessageValue(definition, update.value) ?: return@forEach
-                state[definition.key] = value
-                applied += 1
-            }
+            val remaining = MAX_MESSAGE_UPDATES - applied
+            if (remaining <= 0) return@forEach
+            val adapter = legacyStateAdapters[rule.dialect] ?: return@forEach
+            val decoded = adapter.decode(sourceText, rule.mappings, definitions, remaining)
+            assignments.putAll(decoded.patch.assignments)
+            applied += decoded.appliedUpdates
         }
-        return AdaptationMessageIngestionResult(runtimeState.copy(adaptationState = state.toMap()), applied)
+        val nextState = runtimeState.conversationState.applying(ConversationStatePatch(assignments))
+        return AdaptationMessageIngestionResult(runtimeState.copy(conversationState = nextState), applied)
     }
 
     private fun collectFields(node: AdaptationUiNode): List<AdaptationFormField> =
@@ -201,156 +175,13 @@ class AdaptationRuntime {
         return renderAdaptationText(scoped, state, userName, characterName)
     }
 
-    private fun parseStateValue(definition: AdaptationStateDefinition, raw: String?): JsonPrimitive? = when (definition.type) {
-        AdaptationStateType.STRING -> JsonPrimitive(raw.orEmpty())
-        AdaptationStateType.NUMBER -> raw?.toDoubleOrNull()?.takeIf(Double::isFinite)?.let(::JsonPrimitive)
-        AdaptationStateType.BOOLEAN -> raw?.toBooleanStrictOrNull()?.let(::JsonPrimitive)
-    }
-
-    private fun coerceMessageValue(definition: AdaptationStateDefinition, value: JsonPrimitive): JsonPrimitive? =
-        when (definition.type) {
-            AdaptationStateType.STRING -> value.takeIf(JsonPrimitive::isString)?.let { JsonPrimitive(it.content) }
-            AdaptationStateType.NUMBER -> value.takeUnless(JsonPrimitive::isString)
-                ?.takeIf { it.booleanOrNull == null }
-                ?.doubleOrNull
-                ?.takeIf(Double::isFinite)
-                ?.let(::JsonPrimitive)
-            AdaptationStateType.BOOLEAN -> value.takeUnless(JsonPrimitive::isString)?.booleanOrNull?.let(::JsonPrimitive)
-        }
-
-    private fun parseUpdateVariableBlocks(source: String): List<DialectUpdate> {
-        val bounded = source.takeLast(MAX_MESSAGE_SOURCE_CHARS)
-        val result = mutableListOf<DialectUpdate>()
-        var offset = 0
-        while (result.size < MAX_MESSAGE_UPDATES) {
-            val start = bounded.indexOf(UPDATE_BLOCK_OPEN, offset)
-            if (start < 0) break
-            val contentStart = start + UPDATE_BLOCK_OPEN.length
-            val end = bounded.indexOf(UPDATE_BLOCK_CLOSE, contentStart)
-            if (end < 0) break
-            bounded.substring(contentStart, end).lineSequence().forEach { line ->
-                if (result.size < MAX_MESSAGE_UPDATES) parseUpdateLine(line)?.let(result::add)
-            }
-            offset = end + UPDATE_BLOCK_CLOSE.length
-        }
-        return result
-    }
-
-    private fun parseUpdateLine(line: String): DialectUpdate? {
-        val trimmed = line.trim()
-        if (!trimmed.startsWith(UPDATE_CALL_PREFIX)) return null
-        val open = UPDATE_CALL_PREFIX.length
-        var quote: Char? = null
-        var escaped = false
-        var close = -1
-        for (index in open until trimmed.length) {
-            val char = trimmed[index]
-            if (escaped) {
-                escaped = false
-            } else if (char == '\\' && quote != null) {
-                escaped = true
-            } else if (quote != null) {
-                if (char == quote) quote = null
-            } else if (char == '\'' || char == '"') {
-                quote = char
-            } else if (char == ')') {
-                close = index
-                break
-            }
-        }
-        if (close < 0 || quote != null) return null
-        val suffix = trimmed.substring(close + 1).trim().removePrefix(";").trim()
-        if (suffix.isNotEmpty() && !suffix.startsWith("//")) return null
-        val arguments = splitScalarArguments(trimmed.substring(open, close)) ?: return null
-        if (arguments.size != 3) return null
-        val path = parseQuoted(arguments[0]) ?: return null
-        if (!STATE_PATH.matches(path)) return null
-        if (parseDialectScalar(arguments[1]) == null) return null
-        val value = parseDialectScalar(arguments[2]) ?: return null
-        return DialectUpdate(path, value)
-    }
-
-    private fun splitScalarArguments(source: String): List<String>? {
-        val result = mutableListOf<String>()
-        var quote: Char? = null
-        var escaped = false
-        var start = 0
-        source.forEachIndexed { index, char ->
-            if (escaped) {
-                escaped = false
-            } else if (char == '\\' && quote != null) {
-                escaped = true
-            } else if (quote != null) {
-                if (char == quote) quote = null
-            } else if (char == '\'' || char == '"') {
-                quote = char
-            } else if (char == ',') {
-                result += source.substring(start, index).trim()
-                start = index + 1
-            } else if (char in "()[]{}") {
-                return null
-            }
-        }
-        if (quote != null || escaped) return null
-        result += source.substring(start).trim()
-        return result
-    }
-
-    private fun parseDialectScalar(source: String): JsonPrimitive? {
-        if (source.length > MAX_DIALECT_SCALAR_CHARS) return null
-        parseQuoted(source)?.let { return JsonPrimitive(it) }
-        if (source == "true") return JsonPrimitive(true)
-        if (source == "false") return JsonPrimitive(false)
-        if (!DIALECT_NUMBER.matches(source)) return null
-        return runCatching { Json.parseToJsonElement(source) as? JsonPrimitive }.getOrNull()
-    }
-
-    private fun parseQuoted(source: String): String? {
-        if (source.length < 2) return null
-        val quote = source.first()
-        if ((quote != '\'' && quote != '"') || source.last() != quote) return null
-        if (quote == '"') {
-            return runCatching { (Json.parseToJsonElement(source) as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content }
-                .getOrNull()
-        }
-        val result = StringBuilder(source.length - 2)
-        var index = 1
-        while (index < source.lastIndex) {
-            val char = source[index]
-            if (char != '\\') {
-                result.append(char)
-                index += 1
-                continue
-            }
-            if (index + 1 >= source.lastIndex) return null
-            when (val escaped = source[index + 1]) {
-                '\\', '\'' -> result.append(escaped)
-                'n' -> result.append('\n')
-                'r' -> result.append('\r')
-                't' -> result.append('\t')
-                else -> return null
-            }
-            index += 2
-        }
-        return result.toString()
-    }
-
     companion object {
         private const val MAX_FIELD_CHARS = 8_192
         private const val MAX_DRAFT_CHARS = 16_384
-        private const val MAX_MESSAGE_SOURCE_CHARS = 128 * 1024
         private const val MAX_MESSAGE_UPDATES = 128
-        private const val MAX_DIALECT_SCALAR_CHARS = 8_192
-        private const val UPDATE_BLOCK_OPEN = "<UpdateVariable>"
-        private const val UPDATE_BLOCK_CLOSE = "</UpdateVariable>"
-        private const val UPDATE_CALL_PREFIX = "_.set("
         private val TEMPLATE_REFERENCE = Regex("\\{\\{(form|state)\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})\\}\\}")
-        private val STATE_PATH = Regex("[^.\\s'\"(){}\\[\\]\$]+(?:\\.[^.\\s'\"(){}\\[\\]\$]+){0,15}")
-        private val DIALECT_NUMBER = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
     }
 }
-
-private data class DialectUpdate(val path: String, val value: JsonPrimitive)
 
 fun renderAdaptationText(
     template: String,

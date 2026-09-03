@@ -186,7 +186,7 @@ fun ChatScreen(
                 item("adaptation-header-${view.id}") {
                     NativeAdaptationView(
                         view = view,
-                        state = state.adaptationState,
+                        state = state.conversationState,
                         userName = state.persona.name,
                         characterName = state.character.promptName,
                         enabled = !state.running,
@@ -197,7 +197,7 @@ fun ChatScreen(
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
                 MessageBubble(
                     state = message,
-                    adaptationState = state.adaptationState,
+                    conversationState = state.conversationState,
                     userName = state.persona.name,
                     characterName = state.character.promptName,
                     onSubmitAdaptation = actions.submitAdaptation,
@@ -397,7 +397,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 @Composable
 private fun MessageBubble(
     state: ChatMessageState,
-    adaptationState: Map<String, kotlinx.serialization.json.JsonElement>,
+    conversationState: Map<String, kotlinx.serialization.json.JsonElement>,
     userName: String,
     characterName: String,
     onSubmitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit,
@@ -446,7 +446,7 @@ private fun MessageBubble(
                     replacementViews.forEach { view ->
                         NativeAdaptationView(
                             view = view,
-                            state = adaptationState,
+                            state = conversationState,
                             userName = userName,
                             characterName = characterName,
                             enabled = editable,
@@ -466,7 +466,7 @@ private fun MessageBubble(
                     attachedViews.forEach { view ->
                         NativeAdaptationView(
                             view = view,
-                            state = adaptationState,
+                            state = conversationState,
                             userName = userName,
                             characterName = characterName,
                             enabled = editable,

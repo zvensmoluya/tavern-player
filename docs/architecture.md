@@ -63,7 +63,7 @@ app ───────────────> model-gateway
 2. prompt-side 历史投影；
 3. World Book 激活、WORLD_INFO Regex 与 Macro；
 4. examples、角色 / Preset overrides、模板、generation trigger、names behavior、system squash、depth prompt 和各 placement 注入；
-5. assistant prefill 与 context 预算 / 裁剪；
+5. Player 固定的 Conversation State system projection、assistant prefill 与 context 预算 / 裁剪；
 6. Provider 最终计数与必要的重新裁剪。
 
 Macro 采用固定 ST 1.18.0 行为基线的新 Macro Engine 子集。local variables 的变更、稳定随机数和 World Book timed state 都属于求值事务：编排预览不会重复提交；请求成功准备后才提交 prompt runtime，完整回复的 AI_OUTPUT 投影在结束时提交。
@@ -99,9 +99,9 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `PersonaRepository` 原子保存一份全局默认 Persona。角色库中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
 
-`ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。
+`ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state、scalar `ConversationStateSnapshot` 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。Conversation record schema v3 不兼容旧的 `adaptationState` 存储名。
 
-适配状态属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`AdaptationRuntime` 只执行校验后产物中的表单校验、模板投影、白名单状态动作，以及完整 assistant update block 中逐路径声明的 primitive 更新；执行失败不会提交部分状态。Compose 根据不可变 `sourceText` marker 将原本的主动 HTML 消息替换或附加为 Native UI，并解析 `TEXT` 中的状态/身份模板；当 Native attachment 声明接管某个 marker 时，显示投影会跳过 Character 中以同一字面 marker 为入口的旧 HTML replacement，再删除 marker，避免安全清洗后的旧界面与 Native UI 重复出现。表单提交当前只能修改 Conversation 状态和聊天草稿，不会自动发送或获得模型、网络和文件权限。
+Conversation State 属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`UpdateVariableSetV1Adapter` 只把完整 assistant update block 中白名单路径的 primitive 更新解码为 `ConversationStatePatch`，`AdaptationRuntime` 在消息候选完成时一次应用；Adapter 不负责 UI 或 Prompt。`PromptCompiler` 把当前选中状态按 key 排序为固定 JSON，并插入 leading system context；该投影不经过卡片模板、Macro 或 Regex，也不允许 Adaptation 指定 role、位置或格式。Compose 根据不可变 `sourceText` marker 将原本的主动 HTML 消息替换或附加为 Native UI，并解析 `TEXT` 中的状态/身份模板；当 Native attachment 声明接管某个 marker 时，显示投影会跳过 Character 中以同一字面 marker 为入口的旧 HTML replacement，再删除 marker，避免安全清洗后的旧界面与 Native UI 重复出现。Native Form 当前只能生成聊天草稿；旧 `STATE_SET`、`STATE_INCREMENT`、`STATE_TOGGLE` 动作会被校验器和 Runtime 拒绝。
 
 每个消息候选同时保存投影前 `sourceText`、canonical storage content，以及消息处理前、内容投影前和处理后的 Conversation Runtime State。聊天气泡可以直接编辑已完成的用户或 assistant 消息。“保存文字”只重新产生该候选的 canonical content，保留 reasoning、生成 metadata、其他候选、后续 Turn 和当前运行状态；后续请求读取修正后的历史，但不会假装已经重新执行过去的 Macro 或 World Book 状态变化。“从这里重新生成 / 继续”才把该 Turn 收敛为一个手动候选、截断其后全部 Turn，并把当前运行状态恢复为编辑后结果。旧后缀不会作为隐藏分支保留。状态检查点不设历史窗口，未来 branch 是否以及如何建立仍是独立产品决定。
 

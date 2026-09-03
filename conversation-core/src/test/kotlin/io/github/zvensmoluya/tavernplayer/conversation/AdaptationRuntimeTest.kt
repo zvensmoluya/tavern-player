@@ -27,7 +27,7 @@ import org.junit.Test
 
 class AdaptationRuntimeTest {
     @Test
-    fun `form submission applies state transaction and returns draft effect`() {
+    fun `form submission returns draft effect without changing conversation state`() {
         val runtime = AdaptationRuntime()
         val artifact = artifact()
         val initial = runtime.initialState(artifact)
@@ -41,9 +41,8 @@ class AdaptationRuntimeTest {
             initial,
         ) as AdaptationExecutionResult.Success
 
-        assertEquals(1.0, (result.runtimeState.adaptationState["submissions"] as JsonPrimitive).double, 0.0)
         assertEquals("Name: Mira\nReasons: family、chat", result.effects.single().value)
-        assertEquals(0.0, (initial.adaptationState["submissions"] as JsonPrimitive).double, 0.0)
+        assertEquals(0.0, initial.conversationState.values.getValue("submissions").double, 0.0)
     }
 
     @Test
@@ -59,7 +58,32 @@ class AdaptationRuntimeTest {
         )
 
         assertTrue(result is AdaptationExecutionResult.Failure)
-        assertEquals(0.0, (initial.adaptationState["submissions"] as JsonPrimitive).double, 0.0)
+        assertEquals(0.0, initial.conversationState.values.getValue("submissions").double, 0.0)
+    }
+
+    @Test
+    fun `form state action is rejected without changing the timeline state`() {
+        val runtime = AdaptationRuntime()
+        val original = artifact()
+        val artifact = original.copy(
+            views = original.views.map { view ->
+                view.copy(
+                    submitActions = listOf(
+                        AdaptationAction(AdaptationActionType.STATE_INCREMENT, target = "submissions", value = "1"),
+                    ),
+                )
+            },
+        )
+        val initial = runtime.initialState(artifact)
+
+        val result = runtime.execute(
+            artifact,
+            AdaptationFormSubmission("opening-form", mapOf("name" to listOf("Mira"))),
+            initial,
+        ) as AdaptationExecutionResult.Failure
+
+        assertEquals("FORM_STATE_WRITE_UNSUPPORTED", result.code)
+        assertEquals(0.0, initial.conversationState.values.getValue("submissions").double, 0.0)
     }
 
     @Test
@@ -135,9 +159,9 @@ class AdaptationRuntimeTest {
         val result = AdaptationRuntime().ingestAssistantMessage(stateful, source, initial)
 
         assertEquals(2, result.appliedUpdates)
-        assertEquals(2.0, (result.runtimeState.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
-        assertEquals("客厅, 东侧", (result.runtimeState.adaptationState["world-location"] as JsonPrimitive).content)
-        assertEquals(1.0, (initial.adaptationState["world-day"] as JsonPrimitive).double, 0.0)
+        assertEquals(2.0, result.runtimeState.conversationState.values.getValue("world-day").double, 0.0)
+        assertEquals("客厅, 东侧", result.runtimeState.conversationState.values.getValue("world-location").content)
+        assertEquals(1.0, initial.conversationState.values.getValue("world-day").double, 0.0)
     }
 
     @Test
@@ -156,7 +180,7 @@ class AdaptationRuntimeTest {
         sourceSha256 = "a".repeat(64),
         compiler = AdaptationCompiler("fixture", "1"),
         status = AdaptationStatus.FULL,
-        requiredCapabilities = listOf("ui.native", "chat.setDraft", "state.write"),
+        requiredCapabilities = listOf("ui.native", "chat.setDraft"),
         state = listOf(AdaptationStateDefinition("submissions", AdaptationStateType.NUMBER, JsonPrimitive(0))),
         views = listOf(
             AdaptationView(
@@ -182,7 +206,6 @@ class AdaptationRuntimeTest {
                     ),
                 ),
                 submitActions = listOf(
-                    AdaptationAction(AdaptationActionType.STATE_INCREMENT, target = "submissions", value = "1"),
                     AdaptationAction(
                         AdaptationActionType.CHAT_SET_DRAFT,
                         template = "Name: {{form.name}}\nReasons: {{form.reasons}}",

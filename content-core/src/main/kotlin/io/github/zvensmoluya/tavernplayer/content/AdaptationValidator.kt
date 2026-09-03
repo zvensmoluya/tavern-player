@@ -163,15 +163,12 @@ class AdaptationValidator {
                     }
                     AdaptationActionType.STATE_SET,
                     AdaptationActionType.STATE_INCREMENT,
-                    -> {
-                        if (action.target !in stateKeys) issue("$actionPath.target", "UNKNOWN_STATE", "动作引用了未知状态")
-                        if (action.value == null && action.template == null) issue(actionPath, "MISSING_VALUE", "状态动作需要 value 或 template")
-                    }
-                    AdaptationActionType.STATE_TOGGLE -> {
-                        val target = artifact.state.firstOrNull { it.key == action.target }
-                        if (target?.type != AdaptationStateType.BOOLEAN) issue("$actionPath.target", "STATE_TYPE_MISMATCH", "toggle 只能用于布尔状态")
-                        if (action.value != null || action.template != null) issue(actionPath, "UNUSED_VALUE", "toggle 不接受 value/template")
-                    }
+                    AdaptationActionType.STATE_TOGGLE,
+                    -> issue(
+                        actionPath,
+                        "FORM_STATE_WRITE_UNSUPPORTED",
+                        "Native 表单只能生成待确认草稿，不能脱离消息时间线直接修改状态",
+                    )
                 }
                 action.template?.let { template ->
                     validateText("$actionPath.template", template, MAX_TEMPLATE_CHARS, issues)
@@ -306,7 +303,7 @@ class AdaptationValidator {
     }
 
     companion object {
-        val SUPPORTED_CAPABILITIES: Set<String> = setOf("ui.native", "chat.setDraft", "state.write", "state.ingest")
+        val SUPPORTED_CAPABILITIES: Set<String> = setOf("ui.native", "chat.setDraft", "state.ingest")
         private const val MAX_VIEWS = 16
         private const val MAX_STATE_VALUES = 128
         private const val MAX_MESSAGE_STATE_RULES = 4

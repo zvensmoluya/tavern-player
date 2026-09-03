@@ -9,7 +9,6 @@ import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
 import io.github.zvensmoluya.tavernplayer.content.ProgramViewExtractor
 import io.github.zvensmoluya.tavernplayer.conversation.AdaptationRuntime
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -56,12 +55,12 @@ class ShelfAdaptationAndroidSmokeTest {
         assertEquals(2, ingested.appliedUpdates)
         assertEquals(
             321.0,
-            requireNotNull((ingested.runtimeState.adaptationState[numberMapping.target] as JsonPrimitive).doubleOrNull),
+            requireNotNull(ingested.runtimeState.conversationState.values[numberMapping.target]?.doubleOrNull),
             0.0,
         )
         assertEquals(
             "设备验证地点",
-            (ingested.runtimeState.adaptationState[stringMapping.target] as JsonPrimitive).content,
+            ingested.runtimeState.conversationState.values.getValue(stringMapping.target).content,
         )
     }
 
