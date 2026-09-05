@@ -1,5 +1,7 @@
 # Native 内容适配边界 v1
 
+> 社区素材使用中性编号，见 [样本编号约定](community-samples.md)。
+
 > 状态：开发期内部契约，不是角色卡公共格式或创作者 SDK。产品方向见 [`Tavern Player Native Adaptation 设计原则0903.md`](Tavern%20Player%20Native%20Adaptation%20设计原则0903.md)，运行行为边界见 [`Tavern Player Native Domain Operations 设计草案.md`](Tavern%20Player%20Native%20Domain%20Operations%20设计草案.md)。
 
 ## 当前方法
@@ -228,7 +230,7 @@ Setup 表单也可使用 `openingIndices` 绑定原卡开场：0 为 first messa
 
 该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。
 
-`doctor-manual.json` 对应 `source/古茗医生.png`，保留五项预约输入、多选合并、全部空值默认文案及原始草稿结构。这张卡没有需要迁移的持久变量协议，因此没有新增模型状态契约。
+`doctor-manual.json` 对应简单表单样本 C-03，保留五项预约输入、多选合并、全部空值默认文案及原始草稿结构。这张卡没有需要迁移的持久变量协议，因此没有新增模型状态契约。
 
 角色详情提供严格 JSON 的手工适配导入入口，校验原件哈希、资产和世界书引用。只影响后续创建的对话，旧对话保留快照。
 
