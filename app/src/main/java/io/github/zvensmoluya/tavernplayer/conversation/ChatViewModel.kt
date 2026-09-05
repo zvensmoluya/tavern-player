@@ -58,6 +58,7 @@ data class ChatMessageState(
     val stateUnconfirmed: Boolean = false,
     val nativePanels: List<NativeMessagePanelContent> = emptyList(),
     val openingSourceIndex: Int? = null,
+    val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
 )
 
 data class NativeOpeningChoice(val sourceIndex: Int, val title: String, val selected: Boolean)
@@ -87,6 +88,9 @@ data class ChatUiState(
     val loadingConversation: Boolean = false,
     val running: Boolean = false,
     val setupSaving: Boolean = false,
+    val choiceSaving: Boolean = false,
+    val choicePreview: NativePlayerChoicePreview? = null,
+    val nativeChoices: List<NativePlayerChoiceOption> = emptyList(),
     val retryAvailable: Boolean = false,
     val regenerateAvailable: Boolean = false,
     val variantNavigationAvailable: Boolean = false,
@@ -97,7 +101,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving || loadingConversation
+    val busy: Boolean get() = running || setupSaving || choiceSaving || loadingConversation
     val openingChoices: List<NativeOpeningChoice> get() {
         val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
         return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
@@ -176,7 +180,7 @@ class ChatViewModel(
     }
 
     fun loadConversation(conversationId: String) {
-        if (_uiState.value.setupSaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.loadingConversation) return
         if (conversationRepository?.get(conversationId) == null) return
         if (generationJob != null || persistenceJob != null || persistenceDirty) {
             _uiState.update { it.copy(loadingConversation = true) }
@@ -214,9 +218,9 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
-        if (_uiState.value.setupSaving || _uiState.value.loadingConversation) return
-        record = record.copy(draft = value)
-        _uiState.update { it.copy(input = value, message = null) }
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.loadingConversation) return
+        record = record.withDraft(value)
+        _uiState.update { it.copy(input = value, message = null, nativeChoices = NativePlayerChoiceController().options(record)) }
         schedulePersist()
     }
 
@@ -262,6 +266,43 @@ class ChatViewModel(
             is NativeFormSubmissionResult.Draft -> {
                 syncRecord(input = result.text, message = null)
                 schedulePersist()
+            }
+        }
+    }
+
+    fun previewPlayerChoice(choiceId: String) {
+        if (_uiState.value.busy) return
+        when (val prepared = NativePlayerChoiceController().prepare(record, choiceId)) {
+            is NativePlayerChoicePreparation.Ready -> _uiState.update { it.copy(choicePreview = prepared.preview, message = null) }
+            is NativePlayerChoicePreparation.Rejected -> _uiState.update { it.copy(message = prepared.message) }
+        }
+    }
+
+    fun cancelPlayerChoice() { _uiState.update { it.copy(choicePreview = null) } }
+
+    fun confirmPlayerChoice() {
+        if (_uiState.value.busy) return
+        val preview = _uiState.value.choicePreview ?: return
+        val result = NativePlayerChoiceController().commit(record, preview)
+        if (result is NativePlayerChoiceResult.Rejected) {
+            _uiState.update { it.copy(choicePreview = null, message = result.message) }
+            return
+        }
+        val prepared = (result as NativePlayerChoiceResult.Committed).record
+        _uiState.update { it.copy(choicePreview = null, choiceSaving = true) }
+        viewModelScope.launch {
+            try {
+                persistenceJob?.cancelAndJoin()
+                persistenceJob = null
+                persistenceDirty = false
+                val saved = conversationRepository?.save(prepared) ?: prepared
+                record = saved
+                syncRecord(input = saved.draft, message = "选择已保存，草稿可修改后发送")
+                refreshDisplayCache()
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "选择未保存：${error.userMessage()}") }
+            } finally {
+                _uiState.update { it.copy(choiceSaving = false) }
             }
         }
     }
@@ -494,6 +535,7 @@ class ChatViewModel(
                                 runtimeStateBefore = runtimeBefore,
                                 projectionRuntimeStateBefore = projectionRuntime,
                                 runtimeStateAfter = projectedRuntime,
+                                playerChoiceCommits = emptyList(),
                             )
                         }
                     }
@@ -579,7 +621,7 @@ class ChatViewModel(
     }
 
     fun resetConversation() {
-        if (_uiState.value.setupSaving) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving) return
         generationJob?.cancel()
         val previous = record
         record = fallbackRecord(
@@ -1081,9 +1123,9 @@ class ChatViewModel(
         trace: GenerationTraceState? = _uiState.value.lastTrace,
     ) {
         val current = _uiState.value
-        record = record.copy(draft = input)
+        record = record.withDraft(input).reconcileChoiceDraft()
         _uiState.value = record.toUiState(
-            input = input,
+            input = record.draft,
             loadingConnections = current.loadingConnections,
             activePreset = currentPreset,
             readyConnections = current.readyConnections,
@@ -1095,7 +1137,7 @@ class ChatViewModel(
             lastTrace = trace,
             displayContents = displayCache,
             displayReasoning = displayReasoningCache,
-        ).copy(loadingConversation = current.loadingConversation)
+        ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving)
     }
 
     private fun showCompilationFailure(
@@ -1344,6 +1386,7 @@ private fun ConversationRecord.toUiState(
             setupClosed = runtimeState.setupCommit != null || turns.any { it.role == MessageRole.USER },
             nativePanels = NativeMessagePanels.project(character.nativeAdaptation, variant.message.sourceText).panels,
             openingSourceIndex = variant.openingSourceIndex,
+            playerChoiceCommits = variant.playerChoiceCommits,
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
                 NativeAdaptationRuntime().projectAssistantMessage(
@@ -1369,6 +1412,7 @@ private fun ConversationRecord.toUiState(
     nativeStatus = character.nativeAdaptation?.status,
     nativeScenes = character.nativeAdaptation?.scenes.orEmpty(),
     nativeCollections = character.nativeAdaptation?.collections.orEmpty(),
+    nativeChoices = NativePlayerChoiceController().options(this),
 )
 
 private data class RenderedMessage(

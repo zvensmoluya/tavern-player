@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -78,6 +81,9 @@ fun ChatRoute(
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
             submitNativeForm = viewModel::submitNativeForm,
+            previewPlayerChoice = viewModel::previewPlayerChoice,
+            confirmPlayerChoice = viewModel::confirmPlayerChoice,
+            cancelPlayerChoice = viewModel::cancelPlayerChoice,
         ),
     )
 }
@@ -99,6 +105,9 @@ data class ChatScreenActions(
     val openPresets: () -> Unit = {},
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
     val submitNativeForm: (formId: String, values: Map<String, List<String>>) -> Unit = { _, _ -> },
+    val previewPlayerChoice: (String) -> Unit = {},
+    val confirmPlayerChoice: () -> Unit = {},
+    val cancelPlayerChoice: () -> Unit = {},
 )
 
 private data class PendingMessageEdit(
@@ -183,7 +192,7 @@ fun ChatScreen(
         },
         bottomBar = {
             Column {
-                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty()) {
+                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty()) {
                     TextButton(
                         onClick = { nativeDetailsVisible = true },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("openNativeDetails"),
@@ -192,7 +201,7 @@ fun ChatScreen(
                             state.nativeStatus?.items?.take(3)?.joinToString("  ·  ") { item ->
                                 val value = state.conversationState[item.stateKey] as? kotlinx.serialization.json.JsonPrimitive
                                 "${item.label} ${value?.content.orEmpty()}"
-                            }.orEmpty().ifBlank { "查看场景与资料" },
+                            }.orEmpty().ifBlank { "查看场景、资料与选择" },
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -316,6 +325,12 @@ fun ChatScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (state.nativeChoices.isNotEmpty()) item {
+                    NativePlayerChoicesCard(state.nativeChoices, !state.busy) { id ->
+                        nativeDetailsVisible = false
+                        actions.previewPlayerChoice(id)
+                    }
+                }
                 state.nativeStatus?.let { status -> item { NativeStatusCard(status, state.conversationState) } }
                 state.nativeScenes.forEach { scene -> item {
                     NativeSceneCard(scene, state.conversationState) { resolveAssetPath(state.character.assetId, it) }
@@ -323,6 +338,23 @@ fun ChatScreen(
                 state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.conversationState) } }
             }
         }
+    }
+
+    state.choicePreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = actions.cancelPlayerChoice,
+            title = { Text(preview.choice.title) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()).testTag("native-choice-preview")) {
+                    Text(preview.choice.description)
+                    Text("${preview.stateLabel}：${preview.previousValue} → ${preview.choice.stateValue}", fontWeight = FontWeight.SemiBold)
+                    Text(preview.choice.draft)
+                    Text("确认后设定立即生效，草稿由你发送。", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = actions.confirmPlayerChoice, enabled = !state.busy, modifier = Modifier.testTag("native-choice-confirm")) { Text("保存选择并填入草稿") } },
+            dismissButton = { TextButton(onClick = actions.cancelPlayerChoice, modifier = Modifier.testTag("native-choice-cancel")) { Text("取消") } },
+        )
     }
 
     if (modelPickerVisible) {
@@ -484,6 +516,10 @@ private fun MessageBubble(
                     )
                 }
                 if (editingText == null) {
+                    state.playerChoiceCommits.lastOrNull()?.let { choice ->
+                        Text("已选择：${choice.title}（${choice.value}）", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("native-choice-receipt-${choice.choiceId}"))
+                    }
                     state.nativePanels.forEach { panel -> NativeMessagePanelCard(panel) }
                     state.nativeForms.forEach { form ->
                         NativeFormCard(

@@ -273,6 +273,7 @@ data class MessageVariant(
     val runtimeStateAfter: ConversationRuntimeState? = null,
     // 原件中的开场位置：0 为 firstMessage，后续为 alternateFirstMessages；普通生成没有此值。
     val openingSourceIndex: Int? = null,
+    val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
 )
 
 @Serializable
@@ -297,7 +298,35 @@ data class ConversationRecord(
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
     val draft: String = "",
+    val choiceDraft: ConversationChoiceDraft? = null,
 )
+
+@Serializable
+data class ConversationPlayerChoiceCommit(
+    val id: String,
+    val choiceId: String,
+    val title: String,
+    val stateKey: String,
+    val previousValue: String,
+    val value: String,
+    val draft: String,
+)
+
+@Serializable
+data class ConversationChoiceDraft(val variantId: String, val commitId: String, val text: String)
+
+/** 用户改写草稿后，它成为普通输入；未改写的选择草稿不能悄悄带到另一候选。 */
+fun ConversationRecord.withDraft(value: String): ConversationRecord =
+    copy(draft = value, choiceDraft = choiceDraft?.takeIf { it.text == value })
+
+fun ConversationRecord.reconcileChoiceDraft(): ConversationRecord {
+    val origin = choiceDraft ?: return this
+    if (draft != origin.text) return copy(choiceDraft = null)
+    val stillSelected = turns.any { turn ->
+        turn.selected.id == origin.variantId && turn.selected.playerChoiceCommits.any { it.id == origin.commitId }
+    }
+    return if (stillSelected) this else copy(draft = "", choiceDraft = null)
+}
 
 fun ContentRole.toMessageRole(): MessageRole = when (this) {
     ContentRole.SYSTEM -> MessageRole.SYSTEM

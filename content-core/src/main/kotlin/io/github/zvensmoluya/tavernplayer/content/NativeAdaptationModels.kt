@@ -25,7 +25,22 @@ data class NativeAdaptation(
     val progressions: List<NativeProgressionDefinition> = emptyList(),
     val messagePanels: List<NativeMessagePanelView> = emptyList(),
     val worldBookTextSelections: List<NativeWorldBookTextSelection> = emptyList(),
+    val playerChoices: List<NativePlayerChoice> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
+)
+
+/** Player 的显式确认流程：一个枚举门槛、一个枚举事实和一份普通聊天草稿。 */
+@Serializable
+data class NativePlayerChoice(
+    val id: String,
+    val title: String,
+    val description: String,
+    val availabilityStateKey: String,
+    val availableValues: List<String>,
+    val unavailableLabel: String,
+    val stateKey: String,
+    val stateValue: String,
+    val draft: String,
 )
 
 /** 世界书原文的有限分支：只读取一个枚举状态，不改变条目的启用、位置、角色或预算。 */

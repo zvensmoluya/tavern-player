@@ -36,6 +36,7 @@ import kotlinx.serialization.json.double
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +44,104 @@ import org.junit.Test
 class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
+
+    private fun choiceAdaptation() = NativeAdaptation(sourceSha256 = "a".repeat(64), state = listOf(
+        ConversationStateDefinition("phase", "阶段", ConversationStateValueType.STRING, initialValue = JsonPrimitive("探索中"), allowedStrings = listOf("探索中", "营地")),
+        ConversationStateDefinition("outcome", "结果", ConversationStateValueType.STRING, initialValue = JsonPrimitive("进行中"), allowedStrings = listOf("进行中", "已撤离"))),
+        playerChoices = listOf(io.github.zvensmoluya.tavernplayer.content.NativePlayerChoice("retreat", "返回营地", "结束探索。", "phase", listOf("探索中"), "尚未出发", "outcome", "已撤离", "我决定返回营地。")))
+
+    @Test fun `player choice cancellation persistence retry and branch switching retain explicit facts`() = runTest {
+        val directory = Files.createTempDirectory("native-choice-lifecycle").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val record = conversations.create(DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation(),
+                firstMessage = "探索一条林间小路。", alternateFirstMessages = listOf("沿着溪流前进。")), DemoConversationContent.persona, DemoConversationContent.preset)
+            var attempts = 0
+            val generator = FakeGenerator { _, plan -> flow {
+                assertTrue(plan.projectedConversationState().contains("\"outcome\":\"已撤离\""))
+                if (++attempts == 1) throw IOException("offline")
+                emit(GenerationEvent.TextDelta("你回到营地，开始整理记录。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            fun newViewModel() = ChatViewModel(repository(), PromptCompiler(), generator,
+                ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher), FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            var vm = newViewModel().also { it.loadConversation(record.id) }
+            vm.previewPlayerChoice("retreat")
+            assertNotNull(vm.uiState.value.choicePreview)
+            vm.cancelPlayerChoice()
+            assertEquals("", vm.uiState.value.input)
+            assertTrue(ConversationRepository(directory, PromptCompiler()).get(record.id)!!.turns.single().selected.playerChoiceCommits.isEmpty())
+            vm.previewPlayerChoice("retreat")
+            vm.confirmPlayerChoice()
+            assertEquals(0, generator.calls)
+            val saved = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
+            assertEquals(1, saved.turns.single().selected.playerChoiceCommits.size)
+            assertEquals("我决定返回营地。", saved.draft)
+            vm = newViewModel().also { it.loadConversation(record.id) }
+            assertEquals(saved.draft, vm.uiState.value.input)
+            vm.nextVariant()
+            assertEquals("", vm.uiState.value.input)
+            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
+            vm.previousVariant()
+            assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
+            assertEquals("", vm.uiState.value.input)
+            vm.updateInput(saved.draft)
+            vm.send()
+            assertTrue(vm.uiState.value.retryAvailable)
+            vm.retry()
+            assertEquals(2, attempts)
+            val restored = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
+            assertEquals(JsonPrimitive("已撤离"), restored.runtimeState.conversationState.values["outcome"])
+            assertEquals(1, restored.turns.first().selected.playerChoiceCommits.size)
+            assertNull(restored.choiceDraft)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `regenerating a chosen reply starts before that choice and preserves the old candidate`() = runTest {
+        val generator = FakeGenerator { _, plan -> flow {
+            assertTrue(plan.projectedConversationState().contains("\"outcome\":\"进行中\""))
+            emit(GenerationEvent.TextDelta("你继续观察林间的足迹。"))
+            emit(GenerationEvent.Finished("stop"))
+        } }
+        val vm = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation()))
+        vm.updateInput("继续探索")
+        vm.send()
+        vm.previewPlayerChoice("retreat")
+        vm.confirmPlayerChoice()
+        assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
+        vm.regenerate()
+        assertEquals(2, generator.calls)
+        assertEquals("", vm.uiState.value.input)
+        assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
+        vm.previousVariant()
+        assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
+        assertEquals(1, vm.uiState.value.messages.last().playerChoiceCommits.size)
+        val message = vm.uiState.value.messages.last().message
+        vm.editMessage(message.id, "修改过的林间描述。", MessageEditMode.RESTART)
+        assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
+        assertTrue(vm.uiState.value.messages.last().playerChoiceCommits.isEmpty())
+    }
+
+    @Test fun `player choice disk failure exposes neither changed facts nor a new draft`() = runTest {
+        val directory = Files.createTempDirectory("native-choice-disk-failure").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val created = conversations.create(DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation()), DemoConversationContent.persona, DemoConversationContent.preset)
+            val target = java.io.File(directory, "tavern/conversations/${created.id}.json")
+            check(target.delete()); check(target.mkdir())
+            java.io.File(target, "prevent-replacement").writeText("test")
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow { error("must not generate") } }, conversations,
+                FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(created.id)
+            vm.previewPlayerChoice("retreat")
+            vm.confirmPlayerChoice()
+            assertEquals("", vm.uiState.value.input)
+            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
+            assertTrue(vm.uiState.value.message.orEmpty().contains("选择未保存"))
+            assertFalse(vm.uiState.value.choiceSaving)
+            assertTrue(vm.uiState.value.messages.last().playerChoiceCommits.isEmpty())
+        } finally { directory.deleteRecursively() }
+    }
 
     @Test
     fun `switching immediately after editing preserves each conversation draft on disk`() = runTest {

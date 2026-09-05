@@ -240,6 +240,27 @@ class PressureCardManualAdaptationTest {
         assertTrue("Original entry remains immutable", originalEntry.content.contains("<%"))
     }
 
+    @Test
+    fun `real card player choice preserves source battle mutation and transformation gate`() = runTest {
+        val source = pressureCardOrNull()
+        assumeTrue("held-back pressure card is not present", source != null)
+        val imported = (CharacterCardImporter().import(checkNotNull(source).readBytes(), source.name) as CharacterImportResult.Ready).character
+        val native = manualAdaptation()
+        val record = io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(temporary.newFolder("player-choice"), PromptCompiler())
+            .create(imported.copy(nativeAdaptation = native), Persona("p", "旅人"), BuiltInPresets.default)
+        val controller = io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoiceController()
+        val choice = native.playerChoices.single()
+        val preview = (controller.prepare(record, choice.id) as io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoicePreparation.Ready).preview
+        val saved = (controller.commit(record, preview) as io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoiceResult.Committed).record
+        assertEquals(record.runtimeState.conversationState.values + ("protagonist-battle" to JsonPrimitive("战败")), saved.runtimeState.conversationState.values)
+        assertEquals(record.turns.single().selected.message, saved.turns.single().selected.message)
+        assertEquals(record.runtimeState.worldBookActivationOverrides, saved.runtimeState.worldBookActivationOverrides)
+        val untransformed = record.copy(runtimeState = NativeAdaptationRuntime().ingestAssistantMessage(native,
+            patch("/主角/变身", "\"未变身\""), record.runtimeState).runtimeState)
+        assertTrue(controller.prepare(untransformed, choice.id) is io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoicePreparation.Rejected)
+        assertTrue(controller.commit(untransformed, preview) is io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoiceResult.Rejected)
+    }
+
     private fun patch(path: String, value: String): String =
         "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"$path\",\"value\":$value}]</JSONPatch></UpdateVariable>"
 

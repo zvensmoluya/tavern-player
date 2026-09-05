@@ -55,6 +55,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
+internal fun NativePlayerChoicesCard(choices: List<NativePlayerChoiceOption>, enabled: Boolean, onPreview: (String) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().testTag("native-player-choices"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("你的选择", style = MaterialTheme.typography.titleMedium)
+            choices.forEach { option ->
+                Button(onClick = { onPreview(option.choice.id) }, enabled = enabled && option.unavailableReason == null,
+                    modifier = Modifier.fillMaxWidth().testTag("native-choice-${option.choice.id}")) { Text(option.choice.title) }
+                Text(option.unavailableReason ?: option.choice.description, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
 internal fun NativeStatusCard(
     view: NativeStatusView,
     state: Map<String, JsonElement>,
