@@ -48,7 +48,8 @@ class ChatViewModelTest {
     private fun choiceAdaptation() = NativeAdaptation(sourceSha256 = "a".repeat(64), state = listOf(
         ConversationStateDefinition("phase", "阶段", ConversationStateValueType.STRING, initialValue = JsonPrimitive("探索中"), allowedStrings = listOf("探索中", "营地")),
         ConversationStateDefinition("outcome", "结果", ConversationStateValueType.STRING, initialValue = JsonPrimitive("进行中"), allowedStrings = listOf("进行中", "已撤离"))),
-        playerChoices = listOf(io.github.zvensmoluya.tavernplayer.content.NativePlayerChoice("retreat", "返回营地", "结束探索。", "phase", listOf("探索中"), "尚未出发", "outcome", "已撤离", "我决定返回营地。")))
+        playerChoices = listOf(io.github.zvensmoluya.tavernplayer.content.NativePlayerChoice("retreat", "返回营地", "结束探索。", "phase", listOf("探索中"), "尚未出发", "outcome", "已撤离", "我决定返回营地。")),
+        status = io.github.zvensmoluya.tavernplayer.content.NativeStatusView(items = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStatusItem("outcome", "结果"))))
 
     @Test fun `player choice cancellation persistence retry and branch switching retain explicit facts`() = runTest {
         val directory = Files.createTempDirectory("native-choice-lifecycle").toFile()
@@ -79,11 +80,14 @@ class ChatViewModelTest {
             assertEquals("我决定返回营地。", saved.draft)
             vm = newViewModel().also { it.loadConversation(record.id) }
             assertEquals(saved.draft, vm.uiState.value.input)
+            assertEquals(saved.turns.single().selected.runtimeStateAfter!!.conversationState.values, vm.uiState.value.messages.single().nativeStateAfter)
             vm.nextVariant()
             assertEquals("", vm.uiState.value.input)
             assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
+            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.messages.single().nativeStateAfter!!["outcome"])
             vm.previousVariant()
             assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
+            assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.messages.single().nativeStateAfter!!["outcome"])
             assertEquals("", vm.uiState.value.input)
             vm.updateInput(saved.draft)
             vm.send()

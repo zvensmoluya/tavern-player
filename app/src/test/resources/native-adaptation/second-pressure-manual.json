@@ -28,10 +28,14 @@
     {"minValue":85,"label":"清醒接纳","unlockStateKey":"reconciliation","lockedLabel":"心防动摇(锁中)"}
   ]}],
   "status":{"title":"沛宁城 · 当前状态","items":[
-    {"stateKey":"date","label":"日期"},{"stateKey":"time","label":"时间"},{"stateKey":"weather","label":"天气"},
-    {"stateKey":"lin-affinity","label":"林纾璃·好感","min":0,"max":100},{"stateKey":"lin-mood","label":"林纾璃·心情"},
-    {"stateKey":"yun-affinity","label":"云知意·好感","min":0,"max":100},{"stateKey":"yun-mood","label":"云知意·心情"},
-    {"stateKey":"relationship-stage","label":"关系阶段"}
+    {"stateKey":"date","label":"日期","group":"世界"},
+    {"stateKey":"time","label":"时间","group":"世界"},
+    {"stateKey":"weather","label":"天气","group":"世界"},
+    {"stateKey":"lin-affinity","label":"好感","min":0,"max":100,"group":"林纾璃"},
+    {"stateKey":"lin-mood","label":"心情","group":"林纾璃"},
+    {"stateKey":"yun-affinity","label":"好感","min":0,"max":100,"group":"云知意"},
+    {"stateKey":"yun-mood","label":"心情","group":"云知意"},
+    {"stateKey":"relationship-stage","label":"关系阶段","group":"云知意"}
   ]},
   "messagePanels":[{"id":"scene-notes","title":"本幕纪事","sourceTag":"suihan_panel","fields":[
     {"tag":"状态","label":"氛围"},{"tag":"日历简述","label":"日历"},{"tag":"日历折叠","label":"时节与起居"},

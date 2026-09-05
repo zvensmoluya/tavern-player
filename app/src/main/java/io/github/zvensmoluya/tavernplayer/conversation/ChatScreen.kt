@@ -25,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -47,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.NativeGuideReader
+import io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
@@ -132,6 +134,7 @@ fun ChatScreen(
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
     var nativeGuideVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var historicalStateMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val hasNativeGuide = state.character.nativeAdaptation?.guide != null
     val nativeGuide = remember(state.character) {
         NativeGuideReader.read(state.character.nativeAdaptation, state.character.regexScripts, state.character.sourceSha256)
@@ -205,8 +208,7 @@ fun ChatScreen(
                     ) {
                         Text(
                             state.nativeStatus?.items?.take(3)?.joinToString("  ·  ") { item ->
-                                val value = state.conversationState[item.stateKey] as? kotlinx.serialization.json.JsonPrimitive
-                                "${item.label} ${value?.content.orEmpty()}"
+                                "${item.label} ${NativeStatusDisplay.value(item, state.conversationState).text}"
                             }.orEmpty().ifBlank { "查看场景、资料与选择" },
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
@@ -236,6 +238,7 @@ fun ChatScreen(
                 MessageBubble(
                     state = message,
                     onSubmitNativeForm = actions.submitNativeForm,
+                    onViewState = { historicalStateMessageId = message.message.id },
                     editable = !state.busy,
                     editingText = editingText.takeIf { editingMessageId == message.message.id },
                     onStartEdit = {
@@ -326,7 +329,8 @@ fun ChatScreen(
         }
     }
     if (nativeDetailsVisible) {
-        ModalBottomSheet(onDismissRequest = { nativeDetailsVisible = false }) {
+        ModalBottomSheet(onDismissRequest = { nativeDetailsVisible = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = state.nativeStatus != null)) {
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().testTag("nativeDetails"),
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
@@ -354,6 +358,23 @@ fun ChatScreen(
 
     if (nativeGuideVisible) {
         NativeGuideSheet(nativeGuide, state.persona.name, state.character.name) { nativeGuideVisible = false }
+    }
+
+    state.messages.firstOrNull { it.message.id == historicalStateMessageId }?.let { historical ->
+        val status = state.nativeStatus
+        val values = historical.nativeStateAfter
+        if (status != null && values != null) ModalBottomSheet(onDismissRequest = { historicalStateMessageId = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+            LazyColumn(Modifier.fillMaxWidth().testTag("historicalNativeState"), contentPadding = PaddingValues(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    Text("此条回复后的状态", style = MaterialTheme.typography.titleLarge)
+                    if (historical.stateUnconfirmed) Text("本轮状态未确认，显示保留下来的记录", color = MaterialTheme.colorScheme.error)
+                    if (historical.playerChoiceCommits.isNotEmpty()) Text("包含你在此候选中确认的选择", style = MaterialTheme.typography.bodySmall)
+                }
+                item { NativeStatusCard(status.copy(title = ""), values) }
+            }
+        }
     }
 
     state.choicePreview?.let { preview ->
@@ -480,6 +501,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 private fun MessageBubble(
     state: ChatMessageState,
     onSubmitNativeForm: (formId: String, values: Map<String, List<String>>) -> Unit,
+    onViewState: () -> Unit,
     editable: Boolean,
     editingText: String?,
     onStartEdit: () -> Unit,
@@ -608,6 +630,9 @@ private fun MessageBubble(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        if (state.nativeStateAfter != null) {
+                            TextButton(onClick = onViewState, modifier = Modifier.testTag("viewNativeState-${state.message.id}")) { Text("状态") }
+                        }
                         if (state.edited) {
                             Text(
                                 "已编辑",

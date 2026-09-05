@@ -180,6 +180,15 @@ data class NativeStatusItem(
     val label: String,
     val min: Double? = null,
     val max: Double? = null,
+    val group: String = "",
+    val enumDisplay: NativeStatusEnumDisplay? = null,
+)
+
+/** 两个枚举的完整显示查表，只影响 Status，不产生派生事实。 */
+@Serializable
+data class NativeStatusEnumDisplay(
+    val gateStateKey: String,
+    val values: Map<String, Map<String, String>>,
 )
 
 /** A fixed Player scene surface selected by one scalar Conversation State value. */

@@ -1,6 +1,10 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.*
@@ -57,7 +61,11 @@ class NativePlayerChoiceAndroidTest {
             lateinit var active: ChatViewModel
             lateinit var route: MutableState<ChatViewModel>
             compose.runOnUiThread { active = newViewModel().also { it.loadConversation(record.id) }; route = mutableStateOf(active) }
-            compose.setContent { TavernPlayerTheme { ChatRoute(route.value, remember { PresetViewModel(graph.presetRepository) }, {}, {}, {}) } }
+            compose.setContent { TavernPlayerTheme {
+                Box(Modifier.widthIn(max = 320.dp)) {
+                    ChatRoute(route.value, remember { PresetViewModel(graph.presetRepository) }, {}, {}, {})
+                }
+            } }
             fun awaitLoaded() = compose.waitUntil(15_000) { active.uiState.value.conversationId == record.id && !active.uiState.value.busy }
             fun screenshot(name: String) {
                 compose.mainClock.advanceTimeBy(500)
@@ -99,14 +107,33 @@ class NativePlayerChoiceAndroidTest {
             compose.onNodeWithTag("native-choice-receipt-voluntary-defeat").assertIsDisplayed()
             screenshot("restored")
             // A real adapter update supplies the disabled fixture; no model response is fabricated as live evidence.
-            val untransformed = NativeAdaptationRuntime().ingestAssistantMessage(native,
-                "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"/主角/变身\",\"value\":\"未变身\"}]</JSONPatch></UpdateVariable>", saved.runtimeState).runtimeState
-            runBlocking { conversations.save(saved.copy(runtimeState = untransformed)) }
+            val thought = "训练已经结束。".repeat(16) + "现在可以安心整理巡逻笔记。"
+            val laterSource = "训练结束，她解除变身。<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"/主角/变身\",\"value\":\"未变身\"},{\"op\":\"replace\",\"path\":\"/关系/新井晴/心里话\",\"value\":\"$thought\"}]</JSONPatch></UpdateVariable>"
+            val untransformed = NativeAdaptationRuntime().ingestAssistantMessage(native, laterSource, saved.runtimeState).runtimeState
+            val later = saved.withDraft("").copy(runtimeState = untransformed, turns = saved.turns + listOf(
+                ConversationTurn("status-user-turn", MessageRole.USER, listOf(MessageVariant("status-user-v", ConversationMessage("status-user", MessageRole.USER, "结束训练。", "旅人")))),
+                ConversationTurn("status-later-turn", MessageRole.ASSISTANT, listOf(MessageVariant("status-later-v", ConversationMessage("status-later", MessageRole.ASSISTANT, "训练结束，她解除变身。", "向导", sourceText = laterSource), runtimeStateBefore = saved.runtimeState, runtimeStateAfter = untransformed)))))
+            runBlocking { conversations.save(later) }
             compose.runOnUiThread { active = newViewModel().also { it.loadConversation(record.id) }; route.value = active }
             awaitLoaded()
             compose.onNodeWithTag("openNativeDetails").performClick()
             compose.onNodeWithTag("native-choice-voluntary-defeat").assertIsNotEnabled()
+            compose.onNodeWithTag("native-state-protagonist-battle").performScrollTo().assertTextEquals("无战斗")
+            compose.onNodeWithTag("native-recorded-protagonist-battle").assertTextEquals("记录值：战败")
             screenshot("unavailable")
+            compose.onNodeWithTag("native-recorded-protagonist-battle").assertIsDisplayed()
+            compose.onNodeWithTag("native-state-arai-thought").performScrollTo().assertTextEquals(thought)
+            screenshot("long-status-320dp")
+            compose.onNodeWithTag("native-state-arai-thought").assertIsDisplayed()
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            compose.onNodeWithTag("chatContent").performScrollToIndex(0)
+            compose.onNodeWithTag("viewNativeState-${saved.turns.first().selected.message.id}").performScrollTo().performClick()
+            compose.onNodeWithTag("native-state-protagonist-transformation").performScrollTo().assertTextEquals("已变身")
+            compose.onNodeWithTag("native-state-protagonist-battle").assertTextEquals("战败")
+            screenshot("historical-state-320dp")
+            compose.onNodeWithTag("native-state-protagonist-battle").assertIsDisplayed()
+            assertEquals(JsonPrimitive("未变身"), active.uiState.value.conversationState["protagonist-transformation"])
+            assertEquals(later.runtimeState, ConversationRepository(root, graph.promptCompiler).get(record.id)!!.runtimeState)
         } finally { root.deleteRecursively() }
     }
 }

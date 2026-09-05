@@ -59,6 +59,7 @@ data class ChatMessageState(
     val nativePanels: List<NativeMessagePanelContent> = emptyList(),
     val openingSourceIndex: Int? = null,
     val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
+    val nativeStateAfter: Map<String, kotlinx.serialization.json.JsonElement>? = null,
 )
 
 data class NativeOpeningChoice(val sourceIndex: Int, val title: String, val selected: Boolean)
@@ -1387,6 +1388,8 @@ private fun ConversationRecord.toUiState(
             nativePanels = NativeMessagePanels.project(character.nativeAdaptation, variant.message.sourceText).panels,
             openingSourceIndex = variant.openingSourceIndex,
             playerChoiceCommits = variant.playerChoiceCommits,
+            nativeStateAfter = if (turn.role == MessageRole.ASSISTANT && variant.status != PersistedMessageStatus.STREAMING &&
+                character.nativeAdaptation?.status != null) variant.runtimeStateAfter?.conversationState?.values else null,
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
                 NativeAdaptationRuntime().projectAssistantMessage(

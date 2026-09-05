@@ -43,6 +43,16 @@ class ChatScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Test fun `historical status reads the chosen message snapshot rather than current state`() {
+        val older = ChatMessageState(message = message(id = "past", content = "昨日抵达。"), nativeStateAfter = mapOf("day" to JsonPrimitive(2)))
+        val later = ChatMessageState(message = message(id = "now", content = "今天启程。"), nativeStateAfter = mapOf("day" to JsonPrimitive(5)))
+        compose.setContent { TavernPlayerTheme { ChatScreen(state = state(messages = listOf(older, later),
+            conversationState = mapOf("day" to JsonPrimitive(5)), nativeStatus = NativeStatusView(items = listOf(NativeStatusItem("day", "天数")))), actions = actions()) } }
+        compose.onNodeWithTag("viewNativeState-past").performScrollTo().performClick()
+        compose.onNodeWithText("此条回复后的状态").assertIsDisplayed()
+        compose.onNodeWithTag("native-state-day").assertTextEquals("2")
+    }
+
     @Test
     fun `chat renders opening message and sends composer input`() {
         var input = ""

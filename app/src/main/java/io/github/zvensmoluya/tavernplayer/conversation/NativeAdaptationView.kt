@@ -45,6 +45,7 @@ import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
 import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
 import io.github.zvensmoluya.tavernplayer.content.NativeStatusView
+import io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -83,11 +84,20 @@ internal fun NativeStatusCard(
             if (view.title.isNotBlank()) {
                 Text(view.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
-            view.items.forEach { item ->
+            view.items.forEachIndexed { index, item ->
+                if (item.group.isNotBlank() && (index == 0 || view.items[index - 1].group != item.group)) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text(item.group, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
                 val primitive = state[item.stateKey] as? JsonPrimitive
-                val displayed = primitive?.contentOrNull.orEmpty()
+                val value = NativeStatusDisplay.value(item, state)
+                val displayed = value.text
                 Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(
+                    if (displayed.length > 24 || '\n' in displayed) {
+                        Text(item.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(displayed, style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.fillMaxWidth().testTag("native-state-${item.stateKey}"))
+                    } else Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
@@ -99,6 +109,9 @@ internal fun NativeStatusCard(
                             modifier = Modifier.weight(1.3f).testTag("native-state-${item.stateKey}"),
                         )
                     }
+                    if (value.adjusted) Text("记录值：${value.recorded}", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("native-recorded-${item.stateKey}"))
+                    if (value.unavailable) Text("显示规则无法匹配，保留记录值", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     val number = primitive?.doubleOrNull
                     val min = item.min
                     val max = item.max

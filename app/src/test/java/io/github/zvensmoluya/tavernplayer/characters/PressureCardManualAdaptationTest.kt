@@ -46,6 +46,24 @@ class PressureCardManualAdaptationTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun `battle display matches every valid source pair while leaving facts unchanged`() {
+        val adaptation = manualAdaptation()
+        val runtime = NativeAdaptationRuntime()
+        val item = adaptation.status!!.items.single { it.stateKey == "protagonist-battle" }
+        assertEquals(6, adaptation.status!!.items.map { it.group }.distinct().size)
+        listOf("未变身", "已变身").forEach { transformation ->
+            listOf("上风", "对等", "下风", "战败", "无战斗").forEach { battle ->
+                val state = runtime.ingestAssistantMessage(adaptation,
+                    "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"/主角/变身\",\"value\":\"$transformation\"},{\"op\":\"replace\",\"path\":\"/主角/战局\",\"value\":\"$battle\"}]</JSONPatch></UpdateVariable>",
+                    runtime.initialState(adaptation)).runtimeState
+                val value = io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay.value(item, state.conversationState.values)
+                assertEquals(if (transformation == "未变身") "无战斗" else if (battle == "无战斗") "对等" else battle, value.text)
+                assertEquals(battle, value.recorded)
+                assertEquals(JsonPrimitive(battle), state.conversationState.values["protagonist-battle"])
+            }
+        }
+    }
+
     @Test fun `source guide restores navigation information without changing prompt or saved facts`() = runTest {
         val source = pressureCardOrNull()
         assumeTrue("held-back pressure card is not present", source != null)
