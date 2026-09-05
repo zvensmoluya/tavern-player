@@ -46,6 +46,19 @@ class NativeAdaptationValidator {
                 issue("$path.initialValue", "STATE_TYPE_MISMATCH", "初始值与状态类型或字段定义不匹配")
             }
             val fieldKeys = mutableSetOf<String>()
+            definition.numberRange?.let { range ->
+                val initial = (definition.initialValue as? JsonPrimitive)?.doubleOrNull
+                if (definition.type != ConversationStateValueType.NUMBER || !range.min.isFinite() || !range.max.isFinite() ||
+                    range.min >= range.max || initial == null || initial !in range.min..range.max) {
+                    issue("$path.numberRange", "INVALID_STATE_RANGE", "数值范围必须有限、有序且包含初始数值")
+                }
+            }
+            if (definition.allowedStrings.isNotEmpty() && (definition.type != ConversationStateValueType.STRING ||
+                definition.allowedStrings.size > 128 || definition.allowedStrings.distinct().size != definition.allowedStrings.size ||
+                (definition.initialValue as? JsonPrimitive)?.content !in definition.allowedStrings)) {
+                issue("$path.allowedStrings", "INVALID_STATE_OPTIONS", "状态选项只适用于字符串，必须唯一并包含初始值")
+            }
+            definition.allowedStrings.forEach { validateText("$path.allowedStrings", it, MAX_INPUT_CHARS, issues) }
             if (definition.type in SCALAR_TYPES && definition.fields.isNotEmpty()) {
                 issue("$path.fields", "UNEXPECTED_FIELDS", "标量状态不能定义 Record 字段")
             }
@@ -64,6 +77,7 @@ class NativeAdaptationValidator {
         if (adaptation.assistantStateAdapters.size > MAX_STATE_ADAPTERS) {
             issue("assistantStateAdapters", "TOO_MANY_STATE_ADAPTERS", "消息状态 Adapter 超过 $MAX_STATE_ADAPTERS")
         }
+        val stageTargets = adaptation.progressions.mapTo(mutableSetOf()) { it.stageStateKey }
         val adapterDialects = mutableSetOf<LegacyStateDialect>()
         adaptation.assistantStateAdapters.forEachIndexed { adapterIndex, adapter ->
             val path = "assistantStateAdapters[$adapterIndex]"
@@ -90,6 +104,9 @@ class NativeAdaptationValidator {
                     issue("$mappingPath.sourcePath", "DUPLICATE_STATE_PATH", "同一 Adapter 中的来源路径重复")
                 }
                 val target = definitions[mapping.targetStateKey]
+                if (mapping.writable && mapping.targetStateKey in stageTargets) {
+                    issue(mappingPath, "DERIVED_STATE_IS_READ_ONLY", "阶段由 Player 判定，不能由模型直接写入")
+                }
                 if (target == null) {
                     issue("$mappingPath.targetStateKey", "UNKNOWN_STATE", "消息状态映射引用了未知状态")
                 } else if (target.type !in SCALAR_TYPES) {
@@ -130,6 +147,54 @@ class NativeAdaptationValidator {
             issue("collections", "TOO_MANY_COLLECTIONS", "Collection View 数量超过 $MAX_COLLECTION_VIEWS")
         }
         val viewIds = mutableSetOf<String>()
+        if (adaptation.progressions.size > 16) issue("progressions", "TOO_MANY_PROGRESSIONS", "阶段表过多")
+        val progressionTargets = mutableSetOf<String>()
+        adaptation.progressions.forEachIndexed { index, progression ->
+            val path = "progressions[$index]"
+            val source = definitions[progression.valueStateKey]
+            val target = definitions[progression.stageStateKey]
+            if (source?.type != ConversationStateValueType.NUMBER || source.numberRange == null || target?.type != ConversationStateValueType.STRING ||
+                !progressionTargets.add(progression.stageStateKey)) {
+                issue(path, "INVALID_PROGRESSION_STATE", "阶段表必须从数值映射到唯一的字符串状态")
+            }
+            if (progression.levels.isEmpty() || progression.levels.size > 32 ||
+                progression.levels.any { !it.minValue.isFinite() } ||
+                progression.levels.zipWithNext().any { (left, right) -> left.minValue >= right.minValue }) {
+                issue(path, "INVALID_PROGRESSION_LEVELS", "阶段必须按有限阈值严格递增排列")
+            }
+            progression.levels.forEachIndexed { levelIndex, level ->
+                validateText("$path.levels[$levelIndex].label", level.label, MAX_LABEL_CHARS, issues)
+                validateText("$path.levels[$levelIndex].lockedLabel", level.lockedLabel, MAX_LABEL_CHARS, issues)
+                if (level.label.isBlank() || (level.unlockStateKey != null &&
+                    (definitions[level.unlockStateKey]?.type != ConversationStateValueType.BOOLEAN || level.lockedLabel.isBlank()))) {
+                    issue(path, "INVALID_PROGRESSION_UNLOCK", "解锁阶段只可引用布尔事件标记，并提供已锁定与解锁文案")
+                }
+                if (target?.allowedStrings?.isNotEmpty() == true &&
+                    (level.label !in target.allowedStrings || (level.unlockStateKey != null && level.lockedLabel !in target.allowedStrings))) {
+                    issue(path, "INVALID_PROGRESSION_LABEL", "阶段输出必须属于目标状态声明的选项")
+                }
+            }
+            val lowest = progression.levels.firstOrNull()?.minValue
+            val initial = (source?.initialValue as? JsonPrimitive)?.doubleOrNull
+            if (lowest != null && (initial == null || initial < lowest || source.numberRange?.min?.let { it < lowest } == true)) {
+                issue(path, "INCOMPLETE_PROGRESSION_RANGE", "阶段表必须覆盖初始值与声明范围")
+            }
+        }
+        if (adaptation.messagePanels.size > 8) issue("messagePanels", "TOO_MANY_MESSAGE_PANELS", "消息资料面板过多")
+        val panelTags = mutableSetOf<String>()
+        val panelTagPattern = Regex("[\\p{L}][\\p{L}\\p{N}_-]{0,31}")
+        adaptation.messagePanels.forEachIndexed { index, panel ->
+            val path = "messagePanels[$index]"
+            validateViewId(path, panel.id, viewIds, issues)
+            validateText("$path.title", panel.title, MAX_LABEL_CHARS, issues)
+            if (!panelTagPattern.matches(panel.sourceTag) || !panelTags.add(panel.sourceTag.lowercase())) issue(path, "INVALID_PANEL_TAG", "资料面板标签无效或重复")
+            if (panel.fields.isEmpty() || panel.fields.size > 16) issue(path, "INVALID_PANEL_FIELDS", "资料面板需要 1 到 16 个字段")
+            val tags = mutableSetOf<String>()
+            panel.fields.forEach { field ->
+                if (!panelTagPattern.matches(field.tag) || !tags.add(field.tag.lowercase()) || field.tag.equals(panel.sourceTag, ignoreCase = true)) issue(path, "INVALID_PANEL_FIELD_TAG", "资料字段标签无效或重复")
+                validateText("$path.fields.label", field.label, MAX_LABEL_CHARS, issues)
+            }
+        }
         if (adaptation.scenes.size > MAX_SCENE_VIEWS) {
             issue("scenes", "TOO_MANY_SCENES", "Scene View 数量超过 $MAX_SCENE_VIEWS")
         }
@@ -229,7 +294,23 @@ class NativeAdaptationValidator {
             }
             form.setup?.let { setup ->
                 validateSetupPayload("$path.setup.values", setup.values, definitions, worldBooks, issues)
+                if (setup.stateFields.values.distinct().size != setup.stateFields.size) {
+                    issue(path, "DUPLICATE_SETUP_FIELD", "开局字段只允许一对一复制")
+                }
+                val claimedState = (setup.values.stateValues.keys + setup.stateFields.keys).toMutableSet()
+                val claimedBooks = setup.values.worldBookOverrides.mapTo(mutableSetOf()) { it.bookId to it.entryId }
+                form.fields.forEach { field ->
+                    val options = field.options.mapNotNull { it.setup }
+                    val optionStates = options.flatMap { it.stateValues.keys }.toSet()
+                    val optionBooks = options.flatMap { it.worldBookOverrides }.map { it.bookId to it.entryId }.toSet()
+                    if (optionStates.any { it in claimedState } || optionBooks.any { it in claimedBooks }) {
+                        issue(path, "CONFLICTING_SETUP_OPTION", "不同开局字段或常量不能写入同一目标")
+                    }
+                    claimedState += optionStates
+                    claimedBooks += optionBooks
+                }
                 setup.stateFields.forEach { (stateKey, fieldId) ->
+                    if (stateKey in stageTargets) issue(path, "DERIVED_STATE_IS_READ_ONLY", "开局不能直接写入派生阶段")
                     val definition = definitions[stateKey]
                     val field = form.fields.firstOrNull { it.id == fieldId }
                     val expected = when (field?.type) {
@@ -258,6 +339,8 @@ class NativeAdaptationValidator {
                 }
             }
             validateText("$path.draftTemplate", form.draftTemplate, MAX_DRAFT_TEMPLATE_CHARS, issues)
+            val setupPayloads = listOfNotNull(form.setup?.values) + form.fields.flatMap { field -> field.options.mapNotNull { it.setup } }
+            if (setupPayloads.any { payload -> payload.stateValues.keys.any { it in stageTargets } }) issue(path, "DERIVED_STATE_IS_READ_ONLY", "开局不能直接写入派生阶段")
             if (form.draftTemplate.isBlank()) {
                 issue("$path.draftTemplate", "EMPTY_DRAFT_TEMPLATE", "Form 必须把填写结果投影为聊天草稿")
             }
@@ -298,6 +381,9 @@ class NativeAdaptationValidator {
             val definition = definitions[key]
             if (definition == null || !value.matches(definition.type, definition.fields) || value.toString().length > MAX_INPUT_CHARS) {
                 issues += NativeAdaptationValidationIssue("$path.stateValues.$key", "INVALID_SETUP_VALUE", "开局常量必须匹配已声明的状态类型与大小限制")
+            }
+            if (definition?.allowedStrings?.isNotEmpty() == true && (value as? JsonPrimitive)?.content !in definition.allowedStrings) {
+                issues += NativeAdaptationValidationIssue("$path.stateValues.$key", "INVALID_SETUP_OPTION", "开局常量不在声明选项中")
             }
         }
         if (payload.worldBookOverrides.size > 128) {

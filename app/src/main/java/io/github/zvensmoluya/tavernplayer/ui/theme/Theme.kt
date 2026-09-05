@@ -21,6 +21,7 @@ private val TavernPlayerColors = lightColorScheme(
     surfaceContainer = Color(0xFFF0F1EB),
     surfaceContainerLow = Color(0xFFF4F5EF),
     surfaceContainerHigh = Color(0xFFE8EBE3),
+    surfaceContainerHighest = Color(0xFFE2E6DD),
     outline = Color(0xFF868D84),
     outlineVariant = Color(0xFFDCE1D6),
 )

@@ -46,7 +46,7 @@ class UpdateVariableSetV1Adapter : LegacyStateAdapter {
             ?: return rejectedDecode("INVALID_STATE_ENVELOPE")
         val lines = block.lineSequence().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("//") }.toList()
         if (lines.size > maxUpdates) return rejectedDecode("TOO_MANY_STATE_UPDATES")
-        val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
+        val mappingsBySource = mappings.filter { it.writable }.associateBy(AssistantStateMapping::sourcePath)
         val assignments = linkedMapOf<String, JsonPrimitive>()
         var applied = 0
         for (line in lines) {
@@ -203,7 +203,7 @@ class UpdateVariableJsonPatchV1Adapter : LegacyStateAdapter {
         val operations = runCatching { Json.parseToJsonElement(payload) as? JsonArray }.getOrNull()
             ?: return rejectedDecode("INVALID_JSON_PATCH")
         if (operations.size > minOf(MAX_JSON_PATCH_OPERATIONS, maxUpdates)) return rejectedDecode("TOO_MANY_STATE_UPDATES")
-        val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
+        val mappingsBySource = mappings.filter { it.writable }.associateBy(AssistantStateMapping::sourcePath)
         val updates = operations.map { element ->
             val operation = element as? JsonObject ?: return rejectedDecode("INVALID_STATE_UPDATE")
             if (operation.keys != setOf("op", "path", "value")) return rejectedDecode("INVALID_STATE_UPDATE")
@@ -261,12 +261,14 @@ private fun coerceMappedScalar(
     definition: ConversationStateDefinition,
     value: JsonPrimitive,
 ): JsonPrimitive? = when (definition.type) {
-    ConversationStateValueType.STRING -> value.takeIf(JsonPrimitive::isString)?.let { JsonPrimitive(it.content) }
+    ConversationStateValueType.STRING -> value.takeIf(JsonPrimitive::isString)
+        ?.takeIf { definition.allowedStrings.isEmpty() || it.content in definition.allowedStrings }
+        ?.let { JsonPrimitive(it.content) }
     ConversationStateValueType.NUMBER -> value.takeUnless(JsonPrimitive::isString)
         ?.takeIf { it.booleanOrNull == null }
         ?.doubleOrNull
         ?.takeIf(Double::isFinite)
-        ?.let(::JsonPrimitive)
+        ?.let { number -> JsonPrimitive(definition.numberRange?.let { number.coerceIn(it.min, it.max) } ?: number) }
     ConversationStateValueType.BOOLEAN -> value.takeUnless(JsonPrimitive::isString)?.booleanOrNull?.let(::JsonPrimitive)
     ConversationStateValueType.RECORD,
     ConversationStateValueType.COLLECTION,

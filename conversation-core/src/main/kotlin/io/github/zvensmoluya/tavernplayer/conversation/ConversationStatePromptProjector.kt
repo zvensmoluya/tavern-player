@@ -4,6 +4,7 @@ import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
 import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 
 class ConversationStatePromptProjector {
@@ -29,6 +30,10 @@ class ConversationStatePromptProjector {
                                     "label" to JsonPrimitive(definition.label),
                                     "type" to JsonPrimitive(definition.type.name),
                                     "description" to JsonPrimitive(definition.description),
+                                    "allowedStrings" to JsonArray(definition.allowedStrings.map(::JsonPrimitive)),
+                                    "numberRange" to (definition.numberRange?.let { range ->
+                                        JsonObject(mapOf("min" to JsonPrimitive(range.min), "max" to JsonPrimitive(range.max)))
+                                    } ?: JsonNull),
                                     "fields" to JsonArray(
                                         definition.fields.sortedBy { it.key }.map { field ->
                                             JsonObject(
@@ -90,7 +95,7 @@ class ConversationStatePromptProjector {
                     }
                 }
                 appendLine("  允许的 sourcePath -> Native State key (类型)：")
-                adapter.mappings.sortedBy { it.sourcePath }.forEach { mapping ->
+                adapter.mappings.filter { it.writable }.sortedBy { it.sourcePath }.forEach { mapping ->
                     val type = definitions.firstOrNull { it.key == mapping.targetStateKey }?.type?.name ?: "UNKNOWN"
                     appendLine("  - ${mapping.sourcePath} -> ${mapping.targetStateKey} ($type)")
                 }

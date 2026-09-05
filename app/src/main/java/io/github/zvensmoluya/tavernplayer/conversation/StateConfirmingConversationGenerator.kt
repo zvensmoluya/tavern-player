@@ -53,6 +53,12 @@ class StateConfirmingConversationGenerator(
             combinedUsage?.let { emit(GenerationEvent.Usage(it)) }
             return@flow
         }
+        if (mainText.isBlank()) {
+            combinedUsage?.let { emit(GenerationEvent.Usage(it)) }
+            emit(GenerationEvent.Diagnostic("主回复没有正文，未执行状态确认"))
+            emit(finished)
+            return@flow
+        }
 
         when (val status = adaptationRuntime.projectAssistantMessage(adaptation, mainText.toString()).envelopeStatus) {
             AssistantStateEnvelopeStatus.NONE,

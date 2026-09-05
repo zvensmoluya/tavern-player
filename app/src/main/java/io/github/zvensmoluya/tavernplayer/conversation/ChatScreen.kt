@@ -129,7 +129,10 @@ fun ChatScreen(
         (if (state.retryAvailable) 1 else 0) +
         (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.busy) 1 else 0)
     LaunchedEffect(latestMessage?.message?.id, latestMessage?.status, scrollAnchorIndex, state.message) {
-        if (latestMessage != null) messageListState.scrollToItem(scrollAnchorIndex)
+        if (latestMessage != null) {
+            val openingForm = state.messages.size == 1 && latestMessage.nativeForms.isNotEmpty() && !latestMessage.setupClosed
+            messageListState.scrollToItem(if (openingForm) 0 else scrollAnchorIndex)
+        }
     }
     Scaffold(
         topBar = {
@@ -410,7 +413,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             } else {
                 Button(
                     modifier = Modifier.testTag("sendMessage"),
-                    enabled = state.input.isNotBlank() && !state.setupSaving,
+                    enabled = state.input.isNotBlank() && !state.busy,
                     onClick = actions.send,
                 ) { Text("发送") }
             }
@@ -474,6 +477,7 @@ private fun MessageBubble(
                     )
                 }
                 if (editingText == null) {
+                    state.nativePanels.forEach { panel -> NativeMessagePanelCard(panel) }
                     state.nativeForms.forEach { form ->
                         NativeFormCard(
                             form = form,

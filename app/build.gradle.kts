@@ -37,13 +37,16 @@ android {
 }
 
 val preparePressureCardAndroidTestAsset by tasks.registering(Copy::class) {
-    from(rootProject.layout.projectDirectory.file("source/复杂压测卡.png"))
+    from(rootProject.layout.projectDirectory.file("source/复杂压测卡.png")) { rename { "pressure-card.png" } }
+    from(rootProject.layout.projectDirectory.file("source/古茗医生.png")) { rename { "doctor-card.png" } }
+    from(rootProject.layout.projectDirectory.file("source/real复杂压测卡.png")) { rename { "second-pressure-card.png" } }
+    from(rootProject.layout.projectDirectory.file("source/夏瑾 天琴座 Beta 3.4.json")) { rename { "community-preset.json" } }
     into(layout.buildDirectory.dir("manualAndroidTestAssets"))
-    rename { "pressure-card.png" }
 }
 
 tasks.matching { task ->
-    task.name == "generateDebugAndroidTestAssets" || task.name == "mergeDebugAndroidTestAssets"
+    task.name in setOf("generateDebugAndroidTestAssets", "mergeDebugAndroidTestAssets",
+        "generateDebugAndroidTestLintModel", "lintAnalyzeDebugAndroidTest")
 }.configureEach {
     dependsOn(preparePressureCardAndroidTestAsset)
 }

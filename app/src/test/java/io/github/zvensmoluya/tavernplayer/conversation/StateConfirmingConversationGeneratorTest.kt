@@ -21,6 +21,19 @@ import org.junit.Test
 
 class StateConfirmingConversationGeneratorTest {
     @Test
+    fun `reasoning only response never invents state from a recovery request`() = runTest {
+        val delegate = RecordingGenerator { flow {
+            emit(GenerationEvent.ReasoningDelta("尚在思考"))
+            emit(GenerationEvent.Usage(GenerationUsage(outputTokens = 25, reasoningTokens = 25)))
+            emit(GenerationEvent.Finished("completed"))
+        } }
+        val events = StateConfirmingConversationGenerator(delegate).stream(connection(), plan(adaptation())).toList()
+        assertEquals(1, delegate.calls)
+        assertTrue(events.none { it is GenerationEvent.AssistantStateConfirmed })
+        assertEquals(25L, events.filterIsInstance<GenerationEvent.Usage>().single().value.reasoningTokens)
+    }
+
+    @Test
     fun `missing main envelope is recovered once without replacing roleplay text`() = runTest {
         val delegate = RecordingGenerator { call ->
             flow {

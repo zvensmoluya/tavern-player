@@ -48,6 +48,8 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
         val intents = mutableListOf<WorldBookActivationIntent>()
         payloads.forEach { payload ->
             payload.stateValues.forEach { (key, value) ->
+                val allowed = adaptation.state.first { it.key == key }.allowedStrings
+                if (allowed.isNotEmpty() && (value as? JsonPrimitive)?.content !in allowed) return reject("开局状态不在允许选项中：$key")
                 if (stateValues.put(key, value) != null) return reject("开局选择重复写入同一个状态：$key")
             }
             payload.worldBookOverrides.forEach { override ->
@@ -62,7 +64,7 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
         if (activation is WorldBookActivationMutationResult.Rejected) return reject("开局引用的世界书或条目不存在")
         val overrides = (activation as WorldBookActivationMutationResult.Applied).runtimeState.worldBookActivationOverrides
         fun ConversationRuntimeState.initialized() = copy(
-            conversationState = conversationState.applying(ConversationStatePatch(stateValues)),
+            conversationState = NativeStateRules.apply(adaptation, conversationState.applying(ConversationStatePatch(stateValues))),
             worldBookActivationOverrides = overrides,
             setupCommit = ConversationSetupCommit(form.id),
         )

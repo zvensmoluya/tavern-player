@@ -56,6 +56,7 @@ data class ChatMessageState(
     val nativeForms: List<NativeFormView> = emptyList(),
     val setupClosed: Boolean = false,
     val stateUnconfirmed: Boolean = false,
+    val nativePanels: List<NativeMessagePanelContent> = emptyList(),
 )
 
 data class GenerationTraceState(
@@ -93,7 +94,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving
+    val busy: Boolean get() = running || setupSaving || loadingConversation
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
 }
@@ -164,9 +165,28 @@ class ChatViewModel(
     }
 
     fun loadConversation(conversationId: String) {
-        if (_uiState.value.setupSaving) return
+        if (_uiState.value.setupSaving || _uiState.value.loadingConversation) return
+        if (conversationRepository?.get(conversationId) == null) return
+        if (generationJob != null || persistenceJob != null || persistenceDirty) {
+            _uiState.update { it.copy(loadingConversation = true) }
+            viewModelScope.launch {
+                try {
+                    generationJob?.cancelAndJoin()
+                    persistNow()
+                    loadSavedConversation(conversationId)
+                } catch (error: Exception) {
+                    _uiState.update { it.copy(message = "对话未切换：${error.userMessage()}") }
+                } finally {
+                    _uiState.update { it.copy(loadingConversation = false) }
+                }
+            }
+        } else {
+            loadSavedConversation(conversationId)
+        }
+    }
+
+    private fun loadSavedConversation(conversationId: String) {
         val loaded = conversationRepository?.get(conversationId) ?: return
-        generationJob?.cancel()
         record = loaded
         displayCache.clear()
         displayReasoningCache.clear()
@@ -183,7 +203,7 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
-        if (_uiState.value.setupSaving) return
+        if (_uiState.value.setupSaving || _uiState.value.loadingConversation) return
         record = record.copy(draft = value)
         _uiState.update { it.copy(input = value, message = null) }
         schedulePersist()
@@ -772,9 +792,19 @@ class ChatViewModel(
                 reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 finishFailure(variant.id, cancelled = false, error = error)
             } finally {
-                generationJob = null
-                persistNow()
-                refreshDisplayCache(currentPreset)
+                withContext(NonCancellable) {
+                    try {
+                        persistNow()
+                        refreshDisplayCache(currentPreset)
+                    } catch (error: Exception) {
+                        val message = "对话保存失败：${error.userMessage()}"
+                        _uiState.update { it.copy(message = message) }
+                        updateTrace { copy(error = message) }
+                    } finally {
+                        generationJob = null
+                        _uiState.update { it.copy(running = false) }
+                    }
+                }
             }
         }
     }
@@ -950,7 +980,7 @@ class ChatViewModel(
             }
             pendingAssistantRuntime = null
             removeVariant(variantId)
-            _uiState.update { it.copy(running = false, retryAvailable = true, message = "模型没有返回正文") }
+            _uiState.update { it.copy(retryAvailable = true, message = "模型没有返回正文") }
             updateTrace { copy(error = "模型没有返回正文") }
         } else {
             pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
@@ -962,7 +992,7 @@ class ChatViewModel(
                     it
                 }
             }
-            _uiState.update { it.copy(running = false, retryAvailable = false, regenerateAvailable = true) }
+            _uiState.update { it.copy(retryAvailable = false, regenerateAvailable = true) }
         }
     }
 
@@ -982,7 +1012,7 @@ class ChatViewModel(
             removeVariant(variantId)
         }
         val userMessage = if (cancelled) "已停止生成" else error?.userMessage().orEmpty().ifBlank { "生成失败" }
-        _uiState.update { it.copy(running = false, retryAvailable = !hasPartial, message = userMessage) }
+        _uiState.update { it.copy(retryAvailable = !hasPartial, message = userMessage) }
         updateTrace { copy(error = userMessage) }
     }
 
@@ -1046,7 +1076,7 @@ class ChatViewModel(
             lastTrace = trace,
             displayContents = displayCache,
             displayReasoning = displayReasoningCache,
-        )
+        ).copy(loadingConversation = current.loadingConversation)
     }
 
     private fun showCompilationFailure(
@@ -1290,6 +1320,7 @@ private fun ConversationRecord.toUiState(
                 form.matchesMessage(variant.message.sourceText)
             },
             setupClosed = runtimeState.setupCommit != null || turns.any { it.role == MessageRole.USER },
+            nativePanels = NativeMessagePanels.project(character.nativeAdaptation, variant.message.sourceText).panels,
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
                 NativeAdaptationRuntime().projectAssistantMessage(

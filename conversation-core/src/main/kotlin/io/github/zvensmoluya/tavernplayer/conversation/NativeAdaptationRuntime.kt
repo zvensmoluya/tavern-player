@@ -49,9 +49,9 @@ class NativeAdaptationRuntime(
     private val legacyStateAdapters = legacyStateAdapters.associateBy(LegacyStateAdapter::dialect)
 
     fun initialState(adaptation: NativeAdaptation?): ConversationRuntimeState = ConversationRuntimeState(
-        conversationState = ConversationStateSnapshot(
+        conversationState = NativeStateRules.apply(adaptation, ConversationStateSnapshot(
             adaptation?.state.orEmpty().associate { definition -> definition.key to definition.initialValue },
-        ),
+        )),
     )
 
     fun submitForm(
@@ -90,7 +90,7 @@ class NativeAdaptationRuntime(
         }
         val decoded = decodeAssistantMessage(adaptation, sourceText)
         if (!decoded.valid) return AssistantStateIngestionResult(runtimeState, 0, decoded.rejection)
-        val nextState = runtimeState.conversationState.applying(decoded.patch)
+        val nextState = NativeStateRules.apply(adaptation, runtimeState.conversationState.applying(decoded.patch))
         return AssistantStateIngestionResult(runtimeState.copy(conversationState = nextState), decoded.appliedUpdates)
     }
 
@@ -111,6 +111,16 @@ class NativeAdaptationRuntime(
         sourceText: String,
         stateConfirmedSeparately: Boolean = false,
         streaming: Boolean = false,
+    ): NativeAssistantMessageProjection {
+        val state = projectStateEnvelope(adaptation, sourceText, stateConfirmedSeparately, streaming)
+        return state.copy(narrativeText = NativeMessagePanels.project(adaptation, state.narrativeText, streaming).narrative)
+    }
+
+    private fun projectStateEnvelope(
+        adaptation: NativeAdaptation?,
+        sourceText: String,
+        stateConfirmedSeparately: Boolean,
+        streaming: Boolean,
     ): NativeAssistantMessageProjection {
         val dialects = adaptation?.assistantStateAdapters.orEmpty().mapTo(linkedSetOf()) { it.dialect }
         if (dialects.isEmpty() || sourceText.isEmpty()) {

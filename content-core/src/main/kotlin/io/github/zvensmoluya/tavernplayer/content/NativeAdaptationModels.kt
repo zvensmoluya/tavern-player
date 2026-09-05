@@ -22,6 +22,8 @@ data class NativeAdaptation(
     val scenes: List<NativeSceneView> = emptyList(),
     val collections: List<NativeCollectionView> = emptyList(),
     val forms: List<NativeFormView> = emptyList(),
+    val progressions: List<NativeProgressionDefinition> = emptyList(),
+    val messagePanels: List<NativeMessagePanelView> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
 )
 
@@ -57,7 +59,40 @@ data class ConversationStateDefinition(
     val description: String = "",
     val initialValue: JsonElement = JsonPrimitive(""),
     val fields: List<ConversationStateFieldDefinition> = emptyList(),
+    val numberRange: NativeNumberRange? = null,
+    val allowedStrings: List<String> = emptyList(),
 )
+
+@Serializable
+data class NativeNumberRange(val min: Double, val max: Double)
+
+/** 固定阶段表：一个数值决定所在阶段，一个可选事件标记决定该阶段是否解锁。 */
+@Serializable
+data class NativeProgressionDefinition(
+    val valueStateKey: String,
+    val stageStateKey: String,
+    val levels: List<NativeProgressionLevel>,
+)
+
+@Serializable
+data class NativeProgressionLevel(
+    val minValue: Double,
+    val label: String,
+    val unlockStateKey: String? = null,
+    val lockedLabel: String = "",
+)
+
+/** 从原消息的已知标签读取资料；布局、折叠和文字呈现由 Player 决定。 */
+@Serializable
+data class NativeMessagePanelView(
+    val id: String,
+    val title: String,
+    val sourceTag: String,
+    val fields: List<NativeMessagePanelField>,
+)
+
+@Serializable
+data class NativeMessagePanelField(val tag: String, val label: String)
 
 @Serializable
 enum class LegacyStateDialect {
@@ -75,6 +110,7 @@ data class AssistantStateAdapterDefinition(
 data class AssistantStateMapping(
     val sourcePath: String,
     val targetStateKey: String,
+    val writable: Boolean = true,
 )
 
 @Serializable

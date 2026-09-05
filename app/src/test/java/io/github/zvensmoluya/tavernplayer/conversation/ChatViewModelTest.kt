@@ -45,6 +45,56 @@ class ChatViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
+    fun `switching immediately after editing preserves each conversation draft on disk`() = runTest {
+        val directory = Files.createTempDirectory("conversation-draft-switch").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val first = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val second = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations,
+                FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(first.id)
+            vm.updateInput("尚未发送的预约资料")
+            vm.loadConversation(second.id)
+            vm.updateInput("另一段草稿")
+            vm.loadConversation(first.id)
+            assertEquals("尚未发送的预约资料", vm.uiState.value.input)
+            val reopened = ConversationRepository(directory, PromptCompiler())
+            assertEquals("尚未发送的预约资料", reopened.get(first.id)?.draft)
+            assertEquals("另一段草稿", reopened.get(second.id)?.draft)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `switching during generation saves cancelled output before loading another record`() = runTest {
+        val directory = Files.createTempDirectory("conversation-stream-switch").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val first = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val second = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {
+                emit(GenerationEvent.TextDelta("停笔前已经写下的正文。"))
+                awaitCancellation()
+            } }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(first.id)
+            vm.updateInput("继续")
+            vm.send()
+            assertTrue(vm.uiState.value.running)
+            vm.loadConversation(second.id)
+            assertEquals(second.id, vm.uiState.value.conversationId)
+            assertFalse(vm.uiState.value.busy)
+            assertEquals(second.turns.size, vm.uiState.value.messages.size)
+            val saved = ConversationRepository(directory, PromptCompiler()).get(first.id)!!.turns.last().selected
+            assertEquals(PersistedMessageStatus.CANCELLED, saved.status)
+            assertEquals("停笔前已经写下的正文。", saved.message.sourceText)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `setup persists before its draft and generation retry preserves selected facts`() = runTest {
         val directory = Files.createTempDirectory("native-setup-lifecycle").toFile()
         try {

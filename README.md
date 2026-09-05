@@ -40,6 +40,8 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 - 在聊天气泡内修正用户或 AI 历史文字，或显式从修改处截断旧未来并恢复 Macro 与 World Book 运行状态；
 - 保存消息候选、角色快照和运行状态，并在进程重启后恢复。
 
+Native 适配目前采用开发期手工 JSON 导入：角色详情安装与原件哈希匹配的适配后，新对话可以使用统一的预约／开局表单、状态摘要、消息资料面板和有限关系阶段。开局选择与草稿先保存再进入聊天；旧卡状态块经严格白名单验证后进入本地状态。当前尚未实现自动理解任意角色卡，复杂脚本的具体缺失行为会列在适配报告中。
+
 内置“默认”Preset 不可删除，但可以直接调整并随时恢复内置状态。导入或另存为的 Preset 也保留不可变初始版本。Preset 不绑定 Conversation：运行中的请求使用开始时的快照，切换只影响下一次生成；历史展示则使用当前 Preset 的 display Regex 与 `show_thoughts`。
 
 角色库中的“我的身份”是单一默认身份，不提供身份列表或自动绑定。名字用于 `{{user}}` 和用户消息署名；描述提供给 `{{persona}}` 与 `personaDescription` marker，是否进入请求以及所在位置仍完全由 Preset 决定。已有 Conversation 保留创建时的身份快照。
@@ -61,6 +63,8 @@ SillyTavern 建立了这个生态。
 - [SillyTavern 单轮生成源码研究](docs/st-research.md)
 - [社区 Preset 样本调查](docs/preset-import-capabilities.md)
 - [社区 Preset 真实链路验收](docs/community-preset-live-test.md)
+- [Native 适配当前运行契约](docs/adaptation-runtime-v1.md)
+- [Native 玩法实践与实测记录](docs/native-gameplay-verification-20260905.md)
 
 ## 验证
 

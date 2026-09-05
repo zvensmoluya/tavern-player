@@ -23,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -145,6 +146,28 @@ private fun decodeBoundedImage(path: String): android.graphics.Bitmap? {
 private const val MAX_RENDERED_ASSET_EDGE = 2_048
 
 @Composable
+internal fun NativeMessagePanelCard(panel: NativeMessagePanelContent) {
+    var expanded by rememberSaveable(panel.id) { mutableStateOf(false) }
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("native-message-panel-${panel.id}"),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(panel.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            panel.fields.take(if (expanded) panel.fields.size else 2).forEach { (label, value) ->
+                if (value.isNotBlank()) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SafeMarkdownText(value)
+                }
+            }
+            if (panel.fields.size > 2) TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "收起资料" else "查看本幕资料")
+            }
+        }
+    }
+}
+
+@Composable
 internal fun NativeCollectionCard(
     view: NativeCollectionView,
     state: Map<String, JsonElement>,
@@ -246,7 +269,7 @@ private fun NativeFormFieldEditor(
             enabled = enabled,
             label = { Text(field.label + if (field.required) " *" else "") },
             placeholder = if (field.placeholder.isBlank()) null else ({ Text(field.placeholder) }),
-            minLines = if (field.type == NativeFormFieldType.MULTILINE_TEXT) 3 else 1,
+            minLines = if (field.type == NativeFormFieldType.MULTILINE_TEXT) 2 else 1,
             maxLines = if (field.type == NativeFormFieldType.MULTILINE_TEXT) 8 else 1,
             shape = RoundedCornerShape(12.dp),
             keyboardOptions = KeyboardOptions(keyboardType = if (field.type == NativeFormFieldType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
