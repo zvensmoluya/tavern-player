@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.NativeGuideReader
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
@@ -130,6 +131,11 @@ fun ChatScreen(
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var nativeGuideVisible by remember(state.conversationId) { mutableStateOf(false) }
+    val hasNativeGuide = state.character.nativeAdaptation?.guide != null
+    val nativeGuide = remember(state.character) {
+        NativeGuideReader.read(state.character.nativeAdaptation, state.character.regexScripts, state.character.sourceSha256)
+    }
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var editingText by remember(state.conversationId) { mutableStateOf("") }
     var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
@@ -192,7 +198,7 @@ fun ChatScreen(
         },
         bottomBar = {
             Column {
-                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty()) {
+                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide) {
                     TextButton(
                         onClick = { nativeDetailsVisible = true },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("openNativeDetails"),
@@ -222,7 +228,8 @@ fun ChatScreen(
         ) {
             if (state.openingChoices.isNotEmpty()) {
                 item("native-opening-selector") {
-                    NativeOpeningSelector(state.openingChoices, !state.busy, actions.selectOpening)
+                    NativeOpeningSelector(state.openingChoices, !state.busy, actions.selectOpening,
+                        onGuide = if (hasNativeGuide) ({ nativeGuideVisible = true }) else null)
                 }
             }
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
@@ -325,6 +332,11 @@ fun ChatScreen(
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                if (hasNativeGuide) item {
+                    OutlinedButton(onClick = { nativeDetailsVisible = false; nativeGuideVisible = true }, modifier = Modifier.fillMaxWidth().testTag("openNativeGuideFromDetails")) {
+                        Text("玩法说明")
+                    }
+                }
                 if (state.nativeChoices.isNotEmpty()) item {
                     NativePlayerChoicesCard(state.nativeChoices, !state.busy) { id ->
                         nativeDetailsVisible = false
@@ -338,6 +350,10 @@ fun ChatScreen(
                 state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.conversationState) } }
             }
         }
+    }
+
+    if (nativeGuideVisible) {
+        NativeGuideSheet(nativeGuide, state.persona.name, state.character.name) { nativeGuideVisible = false }
     }
 
     state.choicePreview?.let { preview ->

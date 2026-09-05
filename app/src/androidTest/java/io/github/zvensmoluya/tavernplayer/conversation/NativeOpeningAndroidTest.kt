@@ -68,7 +68,9 @@ class NativeOpeningAndroidTest {
                 active.uiState.value.conversationId == id && !active.uiState.value.busy
             }
             fun screenshot(name: String) {
+                compose.mainClock.advanceTimeBy(500)
                 compose.waitForIdle()
+                android.os.SystemClock.sleep(400)
                 instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
                     File(output, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                     bitmap.recycle()
@@ -89,6 +91,18 @@ class NativeOpeningAndroidTest {
                     screenshot("opening-selector")
                     File(output, "opening-display.txt").writeText(sanitizeCardText(active.uiState.value.messages.single().displayContent))
                     compose.onNodeWithTag("native-form-option-body-TS魔法少女").assertIsDisplayed()
+                    val beforeReading = active.uiState.value
+                    compose.onNodeWithTag("openNativeGuide").performClick()
+                    compose.onNodeWithTag("native-guide-section-welcome").assertIsDisplayed()
+                    screenshot("guide-introduction")
+                    compose.onNodeWithTag("nativeGuide").performScrollToNode(hasTestTag("native-guide-section-people"))
+                    compose.onNode(hasText("天海咲") and hasAnyAncestor(hasTestTag("nativeGuide"))).assertIsDisplayed()
+                    screenshot("guide-people")
+                    compose.onNodeWithTag("nativeGuide").performScrollToNode(hasTestTag("closeNativeGuide"))
+                    compose.onNodeWithTag("closeNativeGuide").performClick()
+                    assertEquals(beforeReading.input, active.uiState.value.input)
+                    assertEquals(beforeReading.conversationState, active.uiState.value.conversationState)
+                    assertEquals(beforeReading.messages, active.uiState.value.messages)
                 }
                 compose.onNodeWithTag("native-form-option-body-TS魔法少女").performScrollTo().performClick()
                 fill("extra-power", "照明魔法")
@@ -124,6 +138,16 @@ class NativeOpeningAndroidTest {
                 assertTrue(active.uiState.value.openingChoices.isEmpty())
                 assertFalse(active.uiState.value.running)
                 screenshot("opening-$index-restored")
+                if (index == 0) {
+                    // Reading remains available after setup closes, using the restored snapshot.
+                    compose.onNodeWithTag("openNativeDetails").performClick()
+                    compose.onNodeWithTag("openNativeGuideFromDetails").performClick()
+                    compose.onNodeWithTag("native-guide-section-welcome").assertIsDisplayed()
+                    compose.onNodeWithTag("nativeGuide").performScrollToNode(hasTestTag("closeNativeGuide"))
+                    compose.onNodeWithTag("closeNativeGuide").performClick()
+                    assertEquals(saved.draft, active.uiState.value.input)
+                    assertEquals(saved.runtimeState.conversationState.values, active.uiState.value.conversationState)
+                }
             }
         } finally {
             root.deleteRecursively()

@@ -114,9 +114,12 @@ internal fun NativeStatusCard(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun NativeOpeningSelector(choices: List<NativeOpeningChoice>, enabled: Boolean, onSelect: (Int) -> Unit) {
+internal fun NativeOpeningSelector(choices: List<NativeOpeningChoice>, enabled: Boolean, onSelect: (Int) -> Unit, onGuide: (() -> Unit)? = null) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("选择开场", style = MaterialTheme.typography.titleSmall)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("选择开场", style = MaterialTheme.typography.titleSmall)
+            if (onGuide != null) TextButton(onClick = onGuide, modifier = Modifier.testTag("openNativeGuide")) { Text("玩法说明") }
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             choices.forEach { choice ->
                 FilterChip(selected = choice.selected, onClick = { onSelect(choice.sourceIndex) }, enabled = enabled,

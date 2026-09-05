@@ -19,6 +19,7 @@ class NativeAdaptationValidator {
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
         issues += NativeWorldBookTextSelectionValidator.validate(adaptation, worldBooks)
         issues += NativePlayerChoiceValidator.validate(adaptation)
+        issues += NativeGuideReader.validate(adaptation.guide, regexScripts)
 
         fun issue(path: String, code: String, message: String) {
             issues += NativeAdaptationValidationIssue(path, code, message)

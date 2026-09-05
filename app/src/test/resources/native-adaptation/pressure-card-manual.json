@@ -329,6 +329,83 @@
       ]
     }
   ],
+  "guide": {
+    "title": "樱见市 · 世界与开场",
+    "sourceRegexId": "dq_world_nav_page",
+    "sourceContentSha256": "edb4e292db295cc2cdb9187a8279aeada25bbb7d996d7a81fd01967a94b312ab",
+    "sections": [
+      {
+        "id": "welcome",
+        "title": "来自樱见市的信",
+        "excerpts": [
+          {
+            "start": 16715,
+            "endExclusive": 16893
+          }
+        ]
+      },
+      {
+        "id": "power",
+        "title": "特殊力量",
+        "excerpts": [
+          {
+            "start": 17188,
+            "endExclusive": 17210
+          }
+        ]
+      },
+      {
+        "id": "routes",
+        "title": "三条开场路线",
+        "excerpts": [
+          {
+            "start": 17433,
+            "endExclusive": 17540
+          },
+          {
+            "start": 17614,
+            "endExclusive": 17728
+          },
+          {
+            "start": 17804,
+            "endExclusive": 17887
+          }
+        ]
+      },
+      {
+        "id": "people",
+        "title": "人物总览",
+        "excerpts": [
+          {
+            "start": 18300,
+            "endExclusive": 18303
+          },
+          {
+            "start": 18576,
+            "endExclusive": 18579
+          },
+          {
+            "start": 18852,
+            "endExclusive": 18856
+          },
+          {
+            "start": 19129,
+            "endExclusive": 19132
+          }
+        ]
+      },
+      {
+        "id": "news",
+        "title": "魔物动向",
+        "excerpts": [
+          {
+            "start": 19231,
+            "endExclusive": 19285
+          }
+        ]
+      }
+    ]
+  },
   "report": {
     "status": "PARTIAL",
     "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板及三种开场的原生设定落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
@@ -341,7 +418,8 @@
       "自定义开局的身体、力量、时间、地点、第一幕要求和见证者投影为用户确认后发送的聊天草稿",
       "两条预设剧情各有身份、力量和开局要求表单；自定义表单提交时原子选中原卡自定义说明候选",
       "主动战败使用固定玩家选择：未变身禁用、预览可取消、草稿不覆盖，确认后将战局与草稿一起保存且不自动发送",
-      "PNG 卡面作为经 Native Decoder 验证的本地静态资产保存，可供固定 Native View 引用"
+      "PNG 卡面作为经 Native Decoder 验证的本地静态资产保存，可供固定 Native View 引用",
+      "原导航中的世界介绍、力量、路线、人物名单与动向提示，以来源校验的只读玩法说明呈现"
     ],
     "degradedPresentation": [
       "开局导航、变身契约书、活页手帐、变量快报和悬浮星盘的 HTML/CSS 动画及皮肤不重建",
@@ -350,7 +428,6 @@
     "unsupportedBehaviors": [
       "Tavern Helper、MagVarUpdate、iframe、远程 module/font、宿主 API 和任意 JavaScript 不执行",
       "JSONPatch add/remove/move、对象与数组变更不进入当前 scalar replace Adapter",
-      "导航页的观察信件和机制介绍尚未单独整理到原生资料；显示规则被接管后存在说明信息展示缺口，原件仍保留",
       "原生 Setup 可选定来源开场；不复制宿主自动发送或输入框排队，保存草稿后由用户发送",
       "变身与战局的跨字段一致性、施法消耗和剧情结算仍依赖原卡提示词，尚未完成逐项玩法验收"
     ],

@@ -46,6 +46,47 @@ class PressureCardManualAdaptationTest {
     @get:Rule
     val temporary = TemporaryFolder()
 
+    @Test fun `source guide restores navigation information without changing prompt or saved facts`() = runTest {
+        val source = pressureCardOrNull()
+        assumeTrue("held-back pressure card is not present", source != null)
+        val imported = (CharacterCardImporter().import(checkNotNull(source).readBytes(), source.name) as CharacterImportResult.Ready).character
+        val native = manualAdaptation()
+        val reader = io.github.zvensmoluya.tavernplayer.content.NativeGuideReader
+        val characters = CharacterRepository(temporary.newFolder("guide-characters"))
+        val saved = (characters.import(source.readBytes(), source.name) as CharacterSaveResult.Saved).character
+        val installed = characters.installNativeAdaptation(saved.id, native) as NativeAdaptationInstallResult.Installed
+        val directory = temporary.newFolder("guide-conversations")
+        val record = io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(directory, PromptCompiler())
+            .create(installed.character, Persona("audit", "旅人"), BuiltInPresets.default)
+        val restored = checkNotNull(io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(directory, PromptCompiler()).get(record.id))
+        val guide = checkNotNull(reader.read(restored.character.nativeAdaptation, restored.character.regexScripts, restored.character.sourceSha256).content)
+        assertEquals(listOf("welcome", "power", "routes", "people", "news"), guide.sections.map { it.id })
+        val texts = guide.sections.associate { it.id to it.text }
+        assertTrue(texts.getValue("welcome").contains("欢迎来到樱见市"))
+        assertEquals("天海咲\n\n星野灯\n\n白鸟优里\n\n新井晴", texts.getValue("people"))
+        listOf("旧桥遭遇", "白理独播", "自定义开局").forEach { assertTrue(texts.getValue("routes").contains(it)) }
+        val raw = imported.regexScripts.single { it.id == native.guide!!.sourceRegexId }.replaceString
+        val originalPower = Regex("<div class=\"glass-desc\">(.*?)</div>").find(raw)!!.groupValues[1]
+        assertEquals(originalPower, texts.getValue("power"))
+        assertTrue(texts.getValue("news").contains("留意魔物动向"))
+        assertFalse(guide.sections.any { "<script" in it.text || "PHOTO" in it.text })
+        assertEquals(record.runtimeState, restored.runtimeState)
+        assertEquals(record.turns, restored.turns)
+        fun compile(adaptation: NativeAdaptation) = PromptCompiler().compile(NormalGenerationInput(
+            character = imported.copy(nativeAdaptation = adaptation).snapshot(), persona = record.persona,
+            history = listOf(ConversationMessage("u", MessageRole.USER, "沿街散步。", "旅人")),
+            preset = BuiltInPresets.default, runtimeState = record.runtimeState,
+            conversationId = "guide-audit", generationId = "guide-audit", modelId = "test", modelContextTokens = 65536,
+        )) as CompilationResult.Success
+        val withGuide = compile(native).plan
+        val withoutGuide = compile(native.copy(guide = null)).plan
+        assertEquals(withoutGuide.messages, withGuide.messages)
+        assertEquals(withoutGuide.runtimeState, withGuide.runtimeState)
+        val mismatch = native.copy(guide = native.guide!!.copy(sourceContentSha256 = "0".repeat(64)))
+        assertTrue(characters.installNativeAdaptation(saved.id, mismatch) is NativeAdaptationInstallResult.Rejected)
+        assertEquals(raw, restored.character.regexScripts.single { it.id == native.guide!!.sourceRegexId }.replaceString)
+    }
+
     @Test
     fun `manually audited pressure card maps only into fixed Player domains`() {
         val source = pressureCardOrNull()

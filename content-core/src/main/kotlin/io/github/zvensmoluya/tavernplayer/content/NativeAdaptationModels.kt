@@ -26,8 +26,29 @@ data class NativeAdaptation(
     val messagePanels: List<NativeMessagePanelView> = emptyList(),
     val worldBookTextSelections: List<NativeWorldBookTextSelection> = emptyList(),
     val playerChoices: List<NativePlayerChoice> = emptyList(),
+    val guide: NativeGuideView? = null,
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
 )
+
+/** 只读说明书：引用同一原卡显示规则中的静态文字，不运行该规则或网页。 */
+@Serializable
+data class NativeGuideView(
+    val title: String,
+    val sourceRegexId: String,
+    val sourceContentSha256: String,
+    val sections: List<NativeGuideSection>,
+)
+
+@Serializable
+data class NativeGuideSection(
+    val id: String,
+    val title: String,
+    val excerpts: List<NativeSourceTextRange>,
+)
+
+/** 原始 replaceString 的 UTF-16 半开区间。 */
+@Serializable
+data class NativeSourceTextRange(val start: Int, val endExclusive: Int)
 
 /** Player 的显式确认流程：一个枚举门槛、一个枚举事实和一份普通聊天草稿。 */
 @Serializable
