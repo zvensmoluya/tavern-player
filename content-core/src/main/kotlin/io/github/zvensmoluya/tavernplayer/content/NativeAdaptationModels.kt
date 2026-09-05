@@ -46,7 +46,7 @@ data class NativeGuideSection(
     val excerpts: List<NativeSourceTextRange>,
 )
 
-/** 原始 replaceString 的 UTF-16 半开区间。 */
+/** 来源文本的 UTF-16 半开区间。 */
 @Serializable
 data class NativeSourceTextRange(val start: Int, val endExclusive: Int)
 
@@ -72,6 +72,8 @@ data class NativeWorldBookTextSelection(
     val stateKey: String,
     val sourceContentSha256: String,
     val cases: List<NativeWorldBookTextCase>,
+    val sourcePrefix: NativeSourceTextRange? = null,
+    val sourceSuffix: NativeSourceTextRange? = null,
 )
 
 /** 对原始 entry.content 的 UTF-16 半开区间引用，不允许适配提供新的 Prompt 文本。 */

@@ -1,6 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
+import io.github.zvensmoluya.tavernplayer.content.NativeSourceTextRange
 import io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator
 import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,11 +40,15 @@ object NativeWorldBookTextProjector {
             if (caseIndex < 0) return rejected("INVALID_TEXT_SELECTION_STATE", "当前状态缺失或不在原文分支选项中", selection.stateKey)
             val case = selection.cases[caseIndex]
             val entry = books.single { it.id == selection.bookId }.entries.single { it.id == selection.entryId }
-            replacements[selection.bookId to selection.entryId] = entry.content.substring(case.sourceStart, case.sourceEndExclusive)
+            val ranges = listOfNotNull(selection.sourcePrefix,
+                NativeSourceTextRange(case.sourceStart, case.sourceEndExclusive), selection.sourceSuffix)
+            replacements[selection.bookId to selection.entryId] = ranges.joinToString("") {
+                entry.content.substring(it.start, it.endExclusive)
+            }
             trace += CompilationTraceEntry(
                 stage = "native-world-book-text",
                 sourceIds = listOf(selection.bookId, selection.entryId, selection.stateKey),
-                decision = "selected source case=$caseIndex range=${case.sourceStart}..${case.sourceEndExclusive}; activation unchanged",
+                decision = "selected source case=$caseIndex ranges=${ranges.joinToString(",") { "${it.start}..${it.endExclusive}" }}; activation unchanged",
             )
         }
         return NativeWorldBookTextProjection(books.map { book ->

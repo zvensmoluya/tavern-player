@@ -5,6 +5,38 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeWorldBookTextSelectionValidatorTest {
+    @Test fun `common context must remain ordered bounded literal and character aligned`() {
+        val prefix = "<speaker>向导🌙：\n"
+        val suffix = "\n</speaker>"
+        val wrapped = prefix + content + suffix
+        val selected = selection.copy(sourceContentSha256 = NativeWorldBookTextSelectionValidator.sha256(wrapped),
+            cases = selection.cases.map { it.copy(sourceStart = it.sourceStart + prefix.length, sourceEndExclusive = it.sourceEndExclusive + prefix.length) },
+            sourcePrefix = NativeSourceTextRange(0, prefix.length),
+            sourceSuffix = NativeSourceTextRange(wrapped.length - suffix.length, wrapped.length))
+        val sourceBooks = listOf(books.single().copy(entries = listOf(books.single().entries.single().copy(content = wrapped))))
+        fun valid(candidate: NativeWorldBookTextSelection) = NativeWorldBookTextSelectionValidator.validate(
+            adaptation.copy(worldBookTextSelections = listOf(candidate)), sourceBooks).isEmpty()
+        assertTrue(valid(selected))
+        listOf(
+            selected.copy(sourcePrefix = NativeSourceTextRange(-1, prefix.length)),
+            selected.copy(sourcePrefix = NativeSourceTextRange(0, prefix.indexOf("🌙") + 1)),
+            selected.copy(sourceSuffix = NativeSourceTextRange(wrapped.length, Int.MAX_VALUE)),
+            selected.copy(sourcePrefix = NativeSourceTextRange(0, selected.cases.first().sourceEndExclusive)),
+            selected.copy(sourceSuffix = NativeSourceTextRange(0, prefix.length)),
+            selected.copy(sourcePrefix = NativeSourceTextRange(0, prefix.length + 3)),
+        ).forEach { assertFalse(it.toString(), valid(it)) }
+    }
+
+    @Test fun `joined pieces cannot construct EJS markers or bypass total length limit`() {
+        listOf("< discarded %payload" to 12, "a".repeat(8192) + "x" to 8192).forEach { (source, start) ->
+            val selected = selection.copy(sourceContentSha256 = NativeWorldBookTextSelectionValidator.sha256(source),
+                cases = listOf("day", "night").map { NativeWorldBookTextCase(it, start, source.length) },
+                sourcePrefix = NativeSourceTextRange(0, if (source.startsWith('<')) 1 else 8192))
+            val sourceBooks = listOf(books.single().copy(entries = listOf(books.single().entries.single().copy(content = source))))
+            assertFalse(NativeWorldBookTextSelectionValidator.validate(adaptation.copy(worldBookTextSelections = listOf(selected)), sourceBooks).isEmpty())
+        }
+    }
+
     private val content = "<% if (mode) { %>白昼☀<% } else { %>夜晚🌙<% } %>"
     private val books = listOf(WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", content = content))))
     private fun case(value: String, text: String): NativeWorldBookTextCase {

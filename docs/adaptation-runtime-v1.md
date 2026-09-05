@@ -182,7 +182,7 @@ Setup 表单也可使用 `openingIndices` 绑定原卡开场：0 为 first messa
 
 `worldBookTextSelections` 是开发期实验契约：以一个声明了完整 `allowedStrings` 的 STRING 状态，为一个已有世界书条目选择一段原文。它是每次 Prompt 编译的只读投影，最多 8 个条目、每条最多 32 个选项；不建立 Condition、Trigger 或 Operation。
 
-每项携带 `bookId`、`entryId`、`stateKey`、条目正文的 UTF-8 SHA-256，以及各 `stateValue` 对应的 `sourceStart/sourceEndExclusive`。区间按 Kotlin String 的 UTF-16 单元计数、左闭右开，不能拆开代理对，长度不超过 8192。适配不能提供新增 Prompt 文本。分支必须非空且不含未处理的 EJS 标记；这不代表支持执行其他 EJS，也不证明人工选择的语义正确。
+每项携带 `bookId`、`entryId`、`stateKey`、条目正文的 UTF-8 SHA-256，以及各 `stateValue` 对应的 `sourceStart/sourceEndExclusive`。可选的 `sourcePrefix/sourceSuffix` 各引用同一条目的一个固定公共前/后文区间（`start/endExclusive`），用来保留角色指向与外层标签。区间按 Kotlin String 的 UTF-16 单元计数、左闭右开，不能拆开代理对；前文、当前分支、后文必须按源顺序且互不重叠，拼接总长度不超过 8192。拼接后的文本也检查 EJS 标记，不能从片段边界重建代码标记。适配不能提供新增 Prompt 文本。分支必须非空且不含未处理的 EJS 标记；这不代表支持执行其他 EJS，也不证明人工选择的语义正确。
 
 安装时和运行时都核对唯一目标、原文哈希、区间与枚举覆盖。运行时同时核对角色原件哈希；状态缺失或非法时阻止该次生成并给出诊断，不能悄悄选默认分支或把所有分支一起发送。
 
@@ -231,6 +231,6 @@ Setup 表单也可使用 `openingIndices` 绑定原卡开场：0 为 first messa
 
 角色详情提供严格 JSON 的手工适配导入入口，校验原件哈希、资产和世界书引用。只影响后续创建的对话，旧对话保留快照。
 
-`second-pressure-manual.json` 对应第二张复杂卡：九项状态，八项允许模型写入；关系阶段由有限阈值和事件门槛判定，原卡五项本幕资料独立附着到回复。远程 CG、任意 JS、后台 RUBY 任务和 EJS 条件执行仍明确列为未迁移，不用 PARTIAL 标签替代这些具体差异。
+`second-pressure-manual.json` 对应第二张复杂卡：九项状态，八项允许模型写入；关系阶段由有限阈值和事件门槛判定，原卡五项本幕资料独立附着到回复。动态关系反馈已按派生阶段选择唯一原文，保留公共角色指向与标签。远程 CG、任意 JS、后台 RUBY 任务仍明确列为未迁移，不用 PARTIAL 标签替代这些具体差异。
 
 原卡的两个固定读取宏 `get_message_variable::stat_data` / `format_message_variable::stat_data` 可根据已声明 Adapter 的精确映射重建当前状态的只读 JSON。不会建立第二份 MVU 存储，也不执行 JavaScript、EJS 或任意状态路径查询。

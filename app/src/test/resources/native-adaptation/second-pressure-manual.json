@@ -9,7 +9,7 @@
     {"key":"yun-affinity","label":"云知意·好感","type":"NUMBER","initialValue":0,"numberRange":{"min":0,"max":100},"description":"好感度，每轮依原卡规则增减不超过 5；到达阈值不等于剧情事件已发生。"},
     {"key":"yun-mood","label":"云知意·心情","type":"STRING","initialValue":"冷若冰霜"},
     {"key":"reconciliation","label":"破镜重圆事件","type":"BOOLEAN","initialValue":false,"description":"原卡的隐藏剧情事件标记，只有相应事件实际发生时才改变。"},
-    {"key":"relationship-stage","label":"关系阶段","type":"STRING","initialValue":"暗流涌动","description":"Player 根据好感度和剧情事件自动判定，只读。"}
+    {"key":"relationship-stage","label":"关系阶段","type":"STRING","initialValue":"暗流涌动","allowedStrings":["暗流涌动","两难挣扎","心防动摇(锁中)","清醒接纳"],"description":"Player 根据好感度和剧情事件自动判定，只读。"}
   ],
   "assistantStateAdapters":[{"dialect":"UPDATE_VARIABLE_JSON_PATCH_V1","mappings":[
     {"sourcePath":"/世界/天气","targetStateKey":"weather"},
@@ -41,12 +41,21 @@
     {"tag":"状态","label":"氛围"},{"tag":"日历简述","label":"日历"},{"tag":"日历折叠","label":"时节与起居"},
     {"tag":"心境波澜","label":"心境波澜"},{"tag":"袖中语","label":"袖中语"}
   ]}],
+  "worldBookTextSelections":[{
+    "bookId":"book-b7cf04e3198ffc3a",
+    "entryId":"book-b7cf04e3198ffc3a:entry:109299",
+    "stateKey":"relationship-stage",
+    "sourceContentSha256":"fc76b1432c6087a5a0042972cc5aab2cc47f4a489ad3e088e29bf878a5245d83",
+    "cases":[{"stateValue":"暗流涌动","sourceStart":131,"sourceEndExclusive":224},{"stateValue":"两难挣扎","sourceStart":262,"sourceEndExclusive":358},{"stateValue":"心防动摇(锁中)","sourceStart":400,"sourceEndExclusive":532},{"stateValue":"清醒接纳","sourceStart":570,"sourceEndExclusive":679}],
+    "sourcePrefix":{"start":0,"endExclusive":46},
+    "sourceSuffix":{"start":689,"endExclusive":706}
+  }],
   "report":{
     "status":"PARTIAL",
     "summary":"原卡九项状态、好感范围、带剧情锁的关系阶段与每幕资料交给 Player 固定领域。世界书和角色文本保留，模型继续推进剧情。",
-    "restoredBehaviors":["世界日期、时间、天气、两名角色的好感和心情随消息候选保存","好感限制在 0 到 100，天气保留原卡五种选项","关系阶段由好感阈值与隐藏事件共同决定，模型不能直接改写派生阶段","原卡 stat_data 读取包含实时派生阶段","每幕的氛围、日历、心境与袖中语从原回复提取为原生资料，不作为当前持久状态伪造"],
+    "restoredBehaviors":["世界日期、时间、天气、两名角色的好感和心情随消息候选保存","好感限制在 0 到 100，天气保留原卡五种选项","关系阶段由好感阈值与隐藏事件共同决定，模型不能直接改写派生阶段","原卡 stat_data 读取包含实时派生阶段","每幕的氛围、日历、心境与袖中语从原回复提取为原生资料，不作为当前持久状态伪造","当前关系阶段选出动态态度原文，保留公共角色指向与标签，不向 Prompt 同时注入其他阶段"],
     "degradedPresentation":["网页字体、动画、折叠布局改为 Player 原生资料面板","按氛围切换的远程图片暂以氛围文字保留，不宣称已经恢复 CG"],
-    "unsupportedBehaviors":["任意 JavaScript、远程 MVU 模块、后台 RUBY 分析任务和宿主按钮未迁移","旧协议 delta/insert/remove 未执行；模型回写使用白名单 replace","独立 EJS 条件模板和动态资源获取未迁移"],
+    "unsupportedBehaviors":["任意 JavaScript、远程 MVU 模块、后台 RUBY 分析任务和宿主按钮未迁移","旧协议 delta/insert/remove 未执行；模型回写使用白名单 replace","动态资源获取未迁移"],
     "warnings":["源文件哈希绑定的手工适配，不是卡名特判","每轮好感增减和事件是否发生仍由原卡剧情规则约束模型，与原卡分工一致；Player 确定性执行范围限制和阶段判定"]
   }
 }

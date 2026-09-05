@@ -36,14 +36,18 @@ object NativeWorldBookTextSelectionValidator {
             }
             selection.cases.forEachIndexed { caseIndex, case ->
                 val casePath = "$path.cases[$caseIndex]"
-                val start = case.sourceStart
-                val end = case.sourceEndExclusive
-                if (start < 0 || end <= start || end > entry.content.length || end.toLong() - start > 8192 ||
-                    !entry.content.isCharacterBoundary(start) || !entry.content.isCharacterBoundary(end)) {
+                val ranges = listOfNotNull(selection.sourcePrefix,
+                    NativeSourceTextRange(case.sourceStart, case.sourceEndExclusive), selection.sourceSuffix)
+                if (ranges.any { (start, end) ->
+                        start < 0 || end <= start || end > entry.content.length ||
+                            !entry.content.isCharacterBoundary(start) || !entry.content.isCharacterBoundary(end)
+                    } || ranges.sumOf { it.endExclusive.toLong() - it.start } > 8192) {
                     issue(casePath, "INVALID_TEXT_SELECTION_RANGE", "原文区间必须有效、不截断字符且不超过 8192 个 UTF-16 单元")
+                } else if (ranges.zipWithNext().any { (left, right) -> left.endExclusive > right.start }) {
+                    issue(casePath, "UNORDERED_TEXT_SELECTION_RANGE", "公共前后文与分支必须保持来源顺序且不重叠")
                 } else {
-                    val text = entry.content.substring(start, end)
-                    if (text.isBlank() || "<%" in text || "%>" in text) {
+                    val text = ranges.joinToString("") { entry.content.substring(it.start, it.endExclusive) }
+                    if (entry.content.substring(case.sourceStart, case.sourceEndExclusive).isBlank() || "<%" in text || "%>" in text) {
                         issue(casePath, "NON_LITERAL_TEXT_SELECTION", "原文分支必须是非空正文，不能包含未处理的 EJS 标记")
                     }
                 }

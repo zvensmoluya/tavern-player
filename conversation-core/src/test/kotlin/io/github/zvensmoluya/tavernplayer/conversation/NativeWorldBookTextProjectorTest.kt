@@ -6,6 +6,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeWorldBookTextProjectorTest {
+    @Test fun `common speaker context surrounds exactly one current branch in the actual prompt`() {
+        val prefix = "<speaker>向导对{{user}}的态度：\n"
+        val suffix = "\n</speaker>"
+        val wrapped = prefix + source + suffix
+        val selected = selection.copy(sourceContentSha256 = NativeWorldBookTextSelectionValidator.sha256(wrapped),
+            cases = selection.cases.map { it.copy(sourceStart = it.sourceStart + prefix.length, sourceEndExclusive = it.sourceEndExclusive + prefix.length) },
+            sourcePrefix = NativeSourceTextRange(0, prefix.length),
+            sourceSuffix = NativeSourceTextRange(wrapped.length - suffix.length, wrapped.length))
+        val card = character.copy(worldBooks = listOf(book.copy(entries = book.entries.map {
+            if (it.id == entry.id) it.copy(content = wrapped) else it
+        })), nativeAdaptation = adaptation.copy(worldBookTextSelections = listOf(selected)))
+        listOf("day", "night", "day").forEach { value ->
+            val plan = (compile(value, card) as CompilationResult.Success).plan
+            val text = plan.messages.joinToString("\n") { it.content }
+            assertTrue(text.contains((prefix + if (value == "day") first + suffix else second + suffix).replace("{{user}}", "旅人")))
+            assertEquals(1, Regex("<speaker>").findAll(text).count())
+            assertFalse(text.contains(if (value == "day") "SECOND_BRANCH_NEEDLE" else "FIRST_BRANCH_NEEDLE"))
+            assertFalse(text.contains("<%"))
+            assertEquals(state(value).conversationState, plan.runtimeState.conversationState)
+        }
+        assertEquals(wrapped, card.worldBooks.single().entries.first().content)
+    }
+
     private val first = "清晨。FIRST_BRANCH_NEEDLE。{{user}}抵达。"
     private val second = "夜晚。SECOND_BRANCH_NEEDLE。{{user}}离开。"
     private val source = "<% if (mode) { %>$first<% } else { %>$second<% } %>"

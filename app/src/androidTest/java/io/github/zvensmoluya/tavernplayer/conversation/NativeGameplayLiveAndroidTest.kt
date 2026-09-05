@@ -332,9 +332,14 @@ class NativeGameplayLiveAndroidTest {
             compose.waitUntil(15_000) { active.uiState.value.selectedConnection?.id == connection.id && !active.uiState.value.busy }
             compose.runOnUiThread { active.updateInput("时间来到中午十二点，沛宁城开始下雨。我带着伞走到门前，帮林纾璃收好门边的东西，再轻声问云知意要不要一同吃午饭。按眼下的关系自然继续，不跳过矛盾。") }
             compose.onNodeWithTag("sendMessage").performClick()
-            compose.waitUntil(600_000) { !active.uiState.value.running }
+            awaitReply("second-pressure-first")
             var secondState = active.uiState.value
-            File(output, "second-pressure-first.txt").writeText(secondState.messages.last().message.sourceText)
+            val actualPrompt = checkNotNull(secondState.lastTrace?.plan).messages.joinToString("\n") { it.content }
+            assertEquals(1, Regex("<cloud_attitude>").findAll(actualPrompt).count())
+            assertTrue(actualPrompt.contains("云知意当前对"))
+            assertTrue(actualPrompt.contains("表面恭谨挑不出错"))
+            assertFalse(actualPrompt.contains("好感极高但尚未堪破心结"))
+            assertFalse(actualPrompt.contains("<%_ let stage"))
             assertEquals(secondState.message, MessageRole.ASSISTANT, secondState.messages.last().message.role)
             assertEquals(secondState.message, ChatMessageStatus.COMPLETE, secondState.messages.last().status)
             assertFalse("second card state confirmation failed", secondState.messages.last().stateUnconfirmed)
@@ -342,11 +347,10 @@ class NativeGameplayLiveAndroidTest {
             assertEquals(JsonPrimitive("暗流涌动"), secondState.conversationState["relationship-stage"])
             assertTrue("per-message panel was not restored", secondState.messages.last().nativePanels.isNotEmpty())
             assertFalse(secondState.messages.last().displayContent.contains("<suihan_panel>"))
-            screenshot("second-pressure-first")
             val firstPanel = secondState.messages.last().nativePanels
             compose.runOnUiThread { active.updateInput("我把伞放在门旁，先去准备午饭，告诉她们不用急着回答。让场景顺着刚才的气氛继续。") }
             compose.onNodeWithTag("sendMessage").performClick()
-            compose.waitUntil(600_000) { !active.uiState.value.running }
+            awaitReply("second-pressure-second")
             secondState = active.uiState.value
             assertEquals(secondState.message, MessageRole.ASSISTANT, secondState.messages.last().message.role)
             assertEquals(secondState.message, ChatMessageStatus.COMPLETE, secondState.messages.last().status)
