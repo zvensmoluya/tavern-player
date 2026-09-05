@@ -136,8 +136,8 @@ class PromptCompilerTest {
         val contractMessage = result.plan.messages.single { it.origin.sourceIds == listOf("assistantStateContract") }
         val stateMessage = contractMessage.content
 
-        assertTrue(stateMessage.contains("有状态变化时，回复必须以且只以一个完整的 <UpdateVariable> 块开头"))
-        assertTrue(stateMessage.contains("状态块放在长正文之后"))
+        assertTrue(stateMessage.contains("每次回复输出恰好一个完整 <UpdateVariable> 块，放在正文之后"))
+        assertTrue(stateMessage.contains("开局已由玩家选定的事实以当前状态为准"))
         assertTrue(stateMessage.contains("UPDATE_VARIABLE_JSON_PATCH_V1"))
         assertTrue(stateMessage.contains("/世界/日期 -> world-day (NUMBER)"))
         assertTrue(stateMessage.contains("{\"op\":\"replace\""))

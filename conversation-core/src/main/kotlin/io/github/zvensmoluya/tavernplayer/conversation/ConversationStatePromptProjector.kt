@@ -64,9 +64,9 @@ class ConversationStatePromptProjector {
         val definitions = adaptation?.state.orEmpty()
         return buildString {
             appendLine("Tavern Player 必须执行的状态回写契约：")
-            appendLine("- 在写剧情正文前，先判断本轮用户行动与剧情造成了哪些状态变化。")
-            appendLine("- 有状态变化时，回复必须以且只以一个完整的 <UpdateVariable> 块开头；第一个字符必须是 <UpdateVariable> 的 <。")
-            appendLine("- 有状态变化时，只有完整闭合 </UpdateVariable> 后才能开始剧情正文；禁止把状态块放在长正文之后。")
+            appendLine("- 根据本轮实际发生的剧情与用户行动判断状态变化，保留角色卡原有的演绎方式。")
+            appendLine("- 每次回复输出恰好一个完整 <UpdateVariable> 块，放在正文之后；机器块不要混入剧情对白。")
+            appendLine("- 开局已由玩家选定的事实以当前状态为准，不要仅因历史默认值不同而重置。")
             appendLine("- 只回写已变化的标量值；路径必须从下方白名单逐字复制，value 必须匹配标注类型。")
             appendLine("- 禁止 add、remove、move，禁止对象、数组、表达式、占位符和白名单以外的路径。")
             appendLine("- 即使没有白名单内状态变化，也必须输出完整空块，以确认本轮是 no-op；不要用 Markdown 代码栏包裹。")
@@ -102,9 +102,8 @@ class ConversationStatePromptProjector {
         adaptation?.assistantStateAdapters
             ?.takeIf { it.isNotEmpty() }
             ?.let {
-                "Tavern Player 回复完成提醒：先执行顶层状态回写契约。" +
-                    "有状态变化时，回复开头先输出恰好一个完整 <UpdateVariable> 块；若为 JSONPatch，" +
+                "Tavern Player 回复完成提醒：保留剧情正文，并在正文之后输出恰好一个完整 <UpdateVariable> 块；若为 JSONPatch，" +
                     "JSON 数组后必须依次闭合 </JSONPatch> 和 </UpdateVariable>。" +
-                    "状态块完整闭合后再写剧情；无状态变化时也必须用完整空块确认 no-op。"
+                    "无状态变化时也用完整空块确认 no-op。"
             }
 }

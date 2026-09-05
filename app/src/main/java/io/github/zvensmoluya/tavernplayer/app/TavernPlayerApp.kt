@@ -95,6 +95,10 @@ fun TavernPlayerApp(
                     },
                     onNewConversation = { characterLibraryViewModel.createConversation(character.id) },
                     onOpenConversation = characterLibraryViewModel::openConversation,
+                    onInstallAdaptation = { characterLibraryViewModel.installNativeAdaptation(character.id, it) },
+                    onImportError = characterLibraryViewModel::reportMessage,
+                    importing = libraryState.importing,
+                    message = libraryState.message,
                 )
             }
         }

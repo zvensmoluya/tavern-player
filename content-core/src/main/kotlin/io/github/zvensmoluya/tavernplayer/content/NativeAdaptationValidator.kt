@@ -12,6 +12,7 @@ class NativeAdaptationValidator {
         adaptation: NativeAdaptation,
         expectedSourceSha256: String? = null,
         availableAssetIds: Set<String>? = null,
+        worldBooks: List<WorldBookDefinition>? = null,
     ): NativeAdaptationValidationResult {
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
 
@@ -197,6 +198,7 @@ class NativeAdaptationValidator {
                 if (!fieldIds.add(field.id)) issue("$fieldPath.id", "DUPLICATE_FIELD_ID", "Form 字段 id 重复")
                 validateText("$fieldPath.label", field.label, MAX_LABEL_CHARS, issues)
                 validateText("$fieldPath.placeholder", field.placeholder, MAX_LABEL_CHARS, issues)
+                validateText("$fieldPath.emptyText", field.emptyText, MAX_INPUT_CHARS, issues)
                 if (field.initialValues.size > MAX_FORM_OPTIONS) {
                     issue("$fieldPath.initialValues", "TOO_MANY_INITIAL_VALUES", "Form 默认值过多")
                 }
@@ -223,6 +225,36 @@ class NativeAdaptationValidator {
                 }
                 if (field.type == NativeFormFieldType.TOGGLE && field.initialValues.any { it != "true" && it != "false" }) {
                     issue("$fieldPath.initialValues", "INVALID_TOGGLE_INITIAL_VALUE", "开关默认值只能是 true 或 false")
+                }
+            }
+            form.setup?.let { setup ->
+                validateSetupPayload("$path.setup.values", setup.values, definitions, worldBooks, issues)
+                setup.stateFields.forEach { (stateKey, fieldId) ->
+                    val definition = definitions[stateKey]
+                    val field = form.fields.firstOrNull { it.id == fieldId }
+                    val expected = when (field?.type) {
+                        NativeFormFieldType.TEXT, NativeFormFieldType.MULTILINE_TEXT, NativeFormFieldType.SINGLE_SELECT -> ConversationStateValueType.STRING
+                        NativeFormFieldType.NUMBER -> ConversationStateValueType.NUMBER
+                        NativeFormFieldType.TOGGLE -> ConversationStateValueType.BOOLEAN
+                        else -> null
+                    }
+                    if (definition == null || expected == null || definition.type != expected) {
+                        issue("$path.setup.stateFields.$stateKey", "INVALID_SETUP_FIELD", "开局字段必须一对一复制到同类型标量状态")
+                    }
+                    if (stateKey in setup.values.stateValues) {
+                        issue("$path.setup.stateFields.$stateKey", "CONFLICTING_SETUP_TARGET", "开局常量与字段不能写入同一个状态")
+                    }
+                }
+            }
+            form.fields.forEachIndexed { fieldIndex, field ->
+                field.options.forEachIndexed { optionIndex, option ->
+                    option.setup?.let { payload ->
+                        val optionPath = "$path.fields[$fieldIndex].options[$optionIndex].setup"
+                        if (form.setup == null || field.type != NativeFormFieldType.SINGLE_SELECT) {
+                            issue(optionPath, "INVALID_OPTION_SETUP", "只有开局表单的单选项可携带初始化常量")
+                        }
+                        validateSetupPayload(optionPath, payload, definitions, worldBooks, issues)
+                    }
                 }
             }
             validateText("$path.draftTemplate", form.draftTemplate, MAX_DRAFT_TEMPLATE_CHARS, issues)
@@ -253,6 +285,35 @@ class NativeAdaptationValidator {
         }
 
         return NativeAdaptationValidationResult(issues.distinct())
+    }
+
+    private fun validateSetupPayload(
+        path: String,
+        payload: NativeSetupPayload,
+        definitions: Map<String, ConversationStateDefinition>,
+        worldBooks: List<WorldBookDefinition>?,
+        issues: MutableList<NativeAdaptationValidationIssue>,
+    ) {
+        payload.stateValues.forEach { (key, value) ->
+            val definition = definitions[key]
+            if (definition == null || !value.matches(definition.type, definition.fields) || value.toString().length > MAX_INPUT_CHARS) {
+                issues += NativeAdaptationValidationIssue("$path.stateValues.$key", "INVALID_SETUP_VALUE", "开局常量必须匹配已声明的状态类型与大小限制")
+            }
+        }
+        if (payload.worldBookOverrides.size > 128) {
+            issues += NativeAdaptationValidationIssue(path, "TOO_MANY_SETUP_OVERRIDES", "开局世界书设置过多")
+        }
+        val targets = mutableSetOf<Pair<String, String?>>()
+        payload.worldBookOverrides.forEachIndexed { index, override ->
+            val book = worldBooks?.firstOrNull { it.id == override.bookId }
+            if (override.bookId.isBlank() || override.entryId?.isBlank() == true ||
+                (worldBooks != null && (book == null || (override.entryId != null && book.entries.none { it.id == override.entryId })))) {
+                issues += NativeAdaptationValidationIssue("$path.worldBookOverrides[$index]", "UNKNOWN_SETUP_WORLD_BOOK", "开局设置只能引用当前角色快照内的世界书或条目")
+            }
+            if (!targets.add(override.bookId to override.entryId)) {
+                issues += NativeAdaptationValidationIssue("$path.worldBookOverrides[$index]", "CONFLICTING_SETUP_TARGET", "开局世界书目标重复")
+            }
+        }
     }
 
     private fun validateViewId(

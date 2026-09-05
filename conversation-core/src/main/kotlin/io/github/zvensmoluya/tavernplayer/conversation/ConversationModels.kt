@@ -136,9 +136,13 @@ data class ConversationRuntimeState(
     val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
     val worldBookActivationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
     val conversationState: ConversationStateSnapshot = ConversationStateSnapshot(),
+    val setupCommit: ConversationSetupCommit? = null,
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
 )
+
+@Serializable
+data class ConversationSetupCommit(val formId: String)
 
 data class NormalGenerationInput(
     val character: CharacterSnapshot,
@@ -290,6 +294,7 @@ data class ConversationRecord(
     val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
     val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long,
+    val draft: String = "",
 )
 
 fun ContentRole.toMessageRole(): MessageRole = when (this) {

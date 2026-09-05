@@ -1,0 +1,25 @@
+{
+  "sourceSha256": "0d9f771474cab7f170f33700e9a0db6b87df96451a4da473c0cfa9f8b70e8c22",
+  "forms": [{
+    "id": "appointment",
+    "title": "茗香心理咨询所",
+    "marker": "<GAMESTRAT/>",
+    "description": "预约申请单。写下你想聊的事，茗香会在这里等你。",
+    "fields": [
+      {"id":"name","type":"TEXT","label":"怎么称呼你","placeholder":"请填入您的姓名","emptyText":"匿名访客"},
+      {"id":"time","type":"TEXT","label":"预约时间","placeholder":"例如：周三下午 14:00","emptyText":"未指定时间"},
+      {"id":"reasons","type":"MULTI_SELECT","label":"这次想聊什么","options":[{"value":"家庭矛盾"},{"value":"心理问题"},{"value":"学业障碍"},{"value":"单纯想聊天"}],"emptyText":"未勾选"},
+      {"id":"description","type":"MULTILINE_TEXT","label":"想说的话","placeholder":"请简述您想聊的话题…","emptyText":"无详细描述"},
+      {"id":"dietary","type":"MULTILINE_TEXT","label":"忌口与其他需求","placeholder":"如有特殊要求请在此填写（选填）","emptyText":"无"}
+    ],
+    "draftTemplate": "[剧情开始]\n姓名：{{form.name}}\n预约时间：{{form.time}}\n预约理由：{{form.reasons}}\n详细描述：{{form.description}}\n忌口/需求：{{form.dietary}}\n\n（以此内容为重点，开始生成 {{user}} 到了预约时间进入茗香所并见到茗香的剧情。）",
+    "submitLabel": "生成预约草稿"
+  }],
+  "report": {
+    "status":"FULL",
+    "summary":"保留原卡预约表单的全部输入、空值默认文案、多选合并和聊天草稿；角色与世界书沿用原卡。",
+    "restoredBehaviors":["开场 marker 唤起预约申请表","姓名、时间、四项多选理由、详细描述、忌口与需求完整进入可编辑草稿","不自动发送；由玩家确认后开始角色对话","原卡没有需要接管的持久状态协议"],
+    "degradedPresentation":["网页纸张与字体效果改为 Player 统一的原生表单样式"],
+    "warnings":["人工审计的源文件哈希绑定适配；FULL 指已审计的原卡交互语义，不表示所有社区卡都能自动转换"]
+  }
+}

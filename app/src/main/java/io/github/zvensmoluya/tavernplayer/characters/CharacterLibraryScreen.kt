@@ -323,7 +323,30 @@ fun CharacterDetailScreen(
     onBack: () -> Unit,
     onNewConversation: () -> Unit,
     onOpenConversation: (String) -> Unit,
+    onInstallAdaptation: (ByteArray) -> Unit = {},
+    onImportError: (String) -> Unit = {},
+    importing: Boolean = false,
+    message: String? = null,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val adaptationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching { withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    val result = ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        require(result.size() + count <= 1024 * 1024) { "适配文件超过 1 MiB" }
+                        result.write(buffer, 0, count)
+                    }
+                    result.toByteArray()
+                } ?: error("无法读取适配文件")
+            } }.onSuccess(onInstallAdaptation).onFailure { onImportError(it.message ?: "无法读取适配文件") }
+        }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -356,11 +379,18 @@ fun CharacterDetailScreen(
             item("new") {
                 Button(
                     onClick = onNewConversation,
+                    enabled = !importing,
                     modifier = Modifier.fillMaxWidth().testTag("newConversation"),
                 ) { Text("开始新对话") }
             }
             item("native-adaptation") {
                 DetailSection("原生适配") {
+                    OutlinedButton(
+                        onClick = { adaptationPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                        enabled = !importing,
+                        modifier = Modifier.testTag("installNativeAdaptation"),
+                    ) { Text(if (importing) "正在安装…" else "导入原生适配文件") }
+                    if (message != null) Text(message, style = MaterialTheme.typography.bodySmall)
                     val adaptation = character.nativeAdaptation
                     if (adaptation == null) {
                         Text("暂无原生适配；原始卡片仍可按文字角色卡使用。", color = MaterialTheme.colorScheme.onSurfaceVariant)

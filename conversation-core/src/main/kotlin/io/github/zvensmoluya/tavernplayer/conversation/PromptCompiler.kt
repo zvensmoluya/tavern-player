@@ -52,6 +52,7 @@ class PromptCompiler(
                 conversationId = conversationId,
                 generationId = generationId,
                 lastGenerationType = runtimeState.lastGenerationType,
+            legacyStateJson = LegacyStateReadProjection.project(character.nativeAdaptation, runtimeState.conversationState),
                 now = evaluationInstant,
                 zoneId = evaluationZoneId,
             ),
@@ -205,6 +206,7 @@ class PromptCompiler(
             conversationId = conversationId,
             generationId = generationId,
             lastGenerationType = runtimeState.lastGenerationType,
+            legacyStateJson = LegacyStateReadProjection.project(character.nativeAdaptation, runtimeState.conversationState),
             now = evaluationInstant,
             zoneId = evaluationZoneId,
         )
@@ -341,6 +343,7 @@ class PromptCompiler(
             currentSwipeId = input.currentSwipeId,
             allChatLastMessageId = input.allChatLastMessageId,
             lastGenerationType = input.runtimeState.lastGenerationType,
+            legacyStateJson = LegacyStateReadProjection.project(input.character.nativeAdaptation, input.runtimeState.conversationState),
             now = input.evaluationInstant,
             zoneId = input.evaluationZoneId,
         )
@@ -638,6 +641,7 @@ class PromptCompiler(
             conversationId = conversationId,
             generationId = generationId,
             lastGenerationType = runtimeState.lastGenerationType,
+            legacyStateJson = LegacyStateReadProjection.project(character.nativeAdaptation, runtimeState.conversationState),
             now = evaluationInstant,
             zoneId = evaluationZoneId,
         )

@@ -148,6 +148,28 @@ class CharacterLibraryViewModel(
         }
     }
 
+    fun installNativeAdaptation(characterId: String, bytes: ByteArray) {
+        if (_uiState.value.importing) return
+        _uiState.update { it.copy(importing = true, message = null) }
+        viewModelScope.launch {
+            try {
+                require(bytes.size <= 1024 * 1024) { "适配文件超过 1 MiB" }
+                val adaptation = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    kotlinx.serialization.json.Json.decodeFromString<io.github.zvensmoluya.tavernplayer.content.NativeAdaptation>(bytes.decodeToString())
+                }
+                val message = when (val result = characterRepository.installNativeAdaptation(characterId, adaptation)) {
+                    is NativeAdaptationInstallResult.Installed -> "原生适配已安装，开始新对话即可使用"
+                    is NativeAdaptationInstallResult.Rejected -> "适配未安装：${result.issues.firstOrNull()?.message.orEmpty()}"
+                }
+                _uiState.update { it.copy(message = message) }
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "适配文件无法导入：${error.message.orEmpty().take(200)}") }
+            } finally {
+                _uiState.update { it.copy(importing = false) }
+            }
+        }
+    }
+
     private suspend fun importShelfPreset(bytes: ByteArray, fileName: String) {
         when (val result = presetRepository.importPreset(bytes, fileName)) {
             is PresetLibraryImportResult.Saved -> _uiState.update {

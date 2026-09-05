@@ -45,6 +45,72 @@ class ChatViewModelTest {
     val mainDispatcherRule = MainDispatcherRule()
 
     @Test
+    fun `setup persists before its draft and generation retry preserves selected facts`() = runTest {
+        val directory = Files.createTempDirectory("native-setup-lifecycle").toFile()
+        try {
+            val native = dayAdaptation().copy(forms = listOf(io.github.zvensmoluya.tavernplayer.content.NativeFormView(
+                id = "setup", title = "开局", marker = "<setup/>", fields = listOf(
+                    io.github.zvensmoluya.tavernplayer.content.NativeFormField("day", io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType.NUMBER, "日期", required = true)),
+                draftTemplate = "从第{{form.day}}天开始", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day")),
+            )))
+            val character = DemoConversationContent.character.copy(firstMessage = "<setup/>", nativeAdaptation = native)
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            var attempts = 0
+            val generator = FakeGenerator { _, _ -> flow {
+                if (++attempts == 1) throw IOException("offline")
+                emit(GenerationEvent.TextDelta("第七天的早晨。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(created.id)
+            vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
+            assertEquals("从第7天开始", vm.uiState.value.input)
+            val saved = ConversationRepository(directory, PromptCompiler()).get(created.id)!!
+            assertEquals(vm.uiState.value.input, saved.draft)
+            assertEquals("setup", saved.runtimeState.setupCommit?.formId)
+            vm.submitNativeForm("setup", mapOf("day" to listOf("9")))
+            assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+            vm.send()
+            assertTrue(vm.uiState.value.retryAvailable)
+            vm.retry()
+            assertEquals(2, attempts)
+            assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+            vm.resetConversation()
+            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `setup disk failure exposes neither state nor draft`() = runTest {
+        val directory = Files.createTempDirectory("native-setup-failure").toFile()
+        try {
+            val native = dayAdaptation().copy(forms = listOf(io.github.zvensmoluya.tavernplayer.content.NativeFormView(
+                id = "setup", title = "开局", marker = "<setup/>", fields = listOf(
+                    io.github.zvensmoluya.tavernplayer.content.NativeFormField("day", io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType.NUMBER, "日期")),
+                draftTemplate = "{{form.day}}", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day")),
+            )))
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val created = conversations.create(DemoConversationContent.character.copy(firstMessage = "<setup/>", nativeAdaptation = native), DemoConversationContent.persona, DemoConversationContent.preset)
+            val target = java.io.File(directory, "tavern/conversations/${created.id}.json")
+            check(target.delete())
+            check(target.mkdir())
+            java.io.File(target, "prevent-replacement").writeText("test")
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(created.id)
+            vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
+            assertEquals("", vm.uiState.value.input)
+            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+            assertTrue(vm.uiState.value.message.orEmpty().contains("开局未保存"))
+            assertFalse(vm.uiState.value.setupSaving)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `completed stream appends user once and records response metadata and latest trace`() = runTest {
         val generator = FakeGenerator { connection, _ ->
             flow {

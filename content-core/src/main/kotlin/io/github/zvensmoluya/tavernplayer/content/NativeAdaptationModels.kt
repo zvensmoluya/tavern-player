@@ -10,7 +10,7 @@ const val NATIVE_ADAPTATION_SCHEMA_VERSION: Int = 1
  * Player-owned native content captured with a Character snapshot.
  *
  * This is intentionally not a component tree or an action graph. Each collection belongs to one
- * concrete Tavern Player surface and each form has exactly one outcome: a chat draft.
+ * concrete Tavern Player surface. A setup form owns a single initialization before its chat draft.
  */
 @Serializable
 data class NativeAdaptation(
@@ -132,6 +132,7 @@ data class NativeFormView(
     val fields: List<NativeFormField>,
     val draftTemplate: String,
     val submitLabel: String = "写入草稿",
+    val setup: NativeSetupContract? = null,
 )
 
 @Serializable
@@ -153,12 +154,34 @@ data class NativeFormField(
     val required: Boolean = false,
     val options: List<NativeFormOption> = emptyList(),
     val initialValues: List<String> = emptyList(),
+    val emptyText: String = "",
 )
 
 @Serializable
 data class NativeFormOption(
     val value: String,
     val label: String = value,
+    val setup: NativeSetupPayload? = null,
+)
+
+/** 固定开局流程，只允许常量和标量字段的一对一复制。 */
+@Serializable
+data class NativeSetupContract(
+    val values: NativeSetupPayload = NativeSetupPayload(),
+    val stateFields: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+data class NativeSetupPayload(
+    val stateValues: Map<String, JsonElement> = emptyMap(),
+    val worldBookOverrides: List<NativeSetupWorldBookOverride> = emptyList(),
+)
+
+@Serializable
+data class NativeSetupWorldBookOverride(
+    val bookId: String,
+    val entryId: String? = null,
+    val enabled: Boolean,
 )
 
 @Serializable

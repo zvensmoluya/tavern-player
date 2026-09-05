@@ -126,6 +126,7 @@ class ChatScreenTest {
             }
         }
 
+        compose.onNodeWithTag("openNativeDetails").performClick()
         compose.onNodeWithText("当前状态").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("native-state-world-day").assertTextEquals("3")
     }
@@ -153,6 +154,7 @@ class ChatScreenTest {
             }
         }
 
+        compose.onNodeWithTag("openNativeDetails").performClick()
         compose.onNodeWithTag("native-scene-location").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("图片不可用").assertIsDisplayed()
         assertEquals("asset-beach", requestedAsset)

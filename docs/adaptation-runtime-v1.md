@@ -91,7 +91,7 @@ Adapter 返回 `ConversationStatePatch` 或带原因的拒绝结果。完整、�
 }
 ```
 
-key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转义，不经过 Character Macro 或 Regex。适配不能提供 Prompt 模板、role、插入位置、条件或动态计算。声明 Legacy Adapter 时，Player 还会生成固定的 assistant 状态回写契约；它只列出已校验 dialect、白名单路径和 scalar 类型。模型应在长剧情正文之前先输出并闭合一个机器状态块，没有变化时也用空块明确确认 no-op。在 OpenAI Responses 边界，Player-owned 的当前状态投影与回写契约共同占据顶层 `instructions`；卡片、World Book 与 Preset 的 system 内容保留原有时序，但以较低的 `developer` 权限发送，不能改写 Player 的当前事实或放宽可执行状态协议。
+key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转义，不经过 Character Macro 或 Regex。适配不能提供 Prompt 模板、role、插入位置、条件或动态计算。声明 Legacy Adapter 时，Player 还会生成固定的 assistant 状态回写契约；它只列出已校验 dialect、白名单路径和 scalar 类型。模型在正文之后输出并闭合一个机器状态块，没有变化时也用空块明确确认 no-op。主回复缺失或非法时只补确认一次；仍失败则保留上一轮状态，并在消息上标明未确认。在 OpenAI Responses 边界，Player-owned 的当前状态投影与回写契约共同占据顶层 `instructions`；卡片、World Book 与 Preset 的 system 内容保留原有时序，但以较低的 `developer` 权限发送，不能改写 Player 的当前事实或放宽可执行状态协议。
 
 ## Player 固定 Native View
 
@@ -109,9 +109,19 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 ### Form View
 
-表单只有一个结果：把经校验的字段值投影为聊天输入框 Draft。Draft 需要用户确认后才作为普通 Conversation Turn 发送；提交表单不会直接写 State、修改历史、swipe、regenerate、调用模型或切换 World Book。
+普通表单把经校验的字段值投影为聊天输入框 Draft。Draft 需要用户确认后才作为普通 Conversation Turn 发送。普通表单不直接写 State、修改历史、swipe、regenerate、调用模型或切换 World Book。`emptyText` 保留源表单对空输入的展示文案，区别于编辑器中的 `initialValues`。模板单次替换，插入的字段内容不被再次解释为身份引用。草稿随 Conversation 保存。
 
 表单模板只接受 `{{form.field}}`、`{{user}}` 和 `{{char}}`。所有字段都必须进入 Draft，不能收集后静默丢弃。Form marker 只负责把固定表单附着到匹配的原始消息；它不是可订阅 Trigger。
+
+### 一次性 Setup
+
+带 `setup` 的表单拥有固定开局生命周期，仅在当前 opening 含 marker、尚无 user turn 且从未提交 Setup 时可用。输入来源限于 `setup.values` 的预验证常量、`stateFields` 的同类型标量直接复制，以及单选项 `setup` 携带的预验证常量。不执行模板计算、动态路径、条件表达式或动作链。
+
+`NativeSetupController` 验证完整字段、状态类型、世界书快照引用及冲突后，返回同时包含初始化状态、启停覆盖、`setupCommit` 和 Draft 的新 ConversationRecord。应用先原子落盘，成功后才发布界面和草稿。失败不改变运行状态或草稿；重复或对话开始后的提交被拒绝。
+
+初始化结果进入所有 opening candidate 的前后检查点，因此候选切换、第一轮失败/重试、历史重启及从磁盘恢复不会回到旧默认值。重新开始对话清除本次 Setup。表单不拥有自动发送或生成权限。
+
+固定原生表单使用统一布局；状态摘要固定在输入框上方，完整 Status/Scene/Collection 放入详情面板。表现由 Player 决定，不由适配文件指定颜色、布局树或事件处理器。
 
 ## 本地静态 Assets
 
@@ -126,7 +136,7 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 - `SetBookEnabled(bookId, enabled)`
 - `SetEntryEnabled(bookId, entryId, enabled)`
 
-执行器先验证全部 snapshot 引用，再原子返回新的 Runtime State；不存在通用 dispatcher。World Book Engine 读取有效覆盖并在 Prompt trace 中说明由 Conversation override 造成的启停。普通 Form 和 Legacy State Adapter 都不能调用这些 intent；正式 Setup 生命周期尚未建立。
+执行器先验证全部 snapshot 引用，再原子返回新的 Runtime State；不存在通用 dispatcher。World Book Engine 读取有效覆盖并在 Prompt trace 中说明由 Conversation override 造成的启停。普通 Form 和 Legacy State Adapter 都不能调用这些 intent；一次性 Setup 是明确的生产调用方。
 
 ## 确定性验证
 
@@ -148,9 +158,15 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 - 19 个 scalar 状态和一个严格 JSON Patch-shaped Adapter；
 - 固定 Status View；
-- 自定义开局 Form → Draft；
+- 自定义开局 Setup → 本地身体状态 + Draft；
 - opening candidates 保留给现有 swipe；
 - PNG 卡面作为可验证本地静态资产；
 - HTML/CSS/JavaScript、宿主 API、自动发送、历史改写、动态 World Book 切换等明确标为降级或不支持。
 
 该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。
+
+`doctor-manual.json` 对应 `source/古茗医生.png`，保留五项预约输入、多选合并、全部空值默认文案及原始草稿结构。这张卡没有需要迁移的持久变量协议，因此没有新增模型状态契约。
+
+角色详情提供严格 JSON 的手工适配导入入口，校验原件哈希、资产和世界书引用。只影响后续创建的对话，旧对话保留快照。
+
+原卡的两个固定读取宏 `get_message_variable::stat_data` / `format_message_variable::stat_data` 可根据已声明 Adapter 的精确映射重建当前状态的只读 JSON。不会建立第二份 MVU 存储，也不执行 JavaScript、EJS 或任意状态路径查询。

@@ -54,6 +54,8 @@ data class ChatMessageState(
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
     val edited: Boolean = false,
     val nativeForms: List<NativeFormView> = emptyList(),
+    val setupClosed: Boolean = false,
+    val stateUnconfirmed: Boolean = false,
 )
 
 data class GenerationTraceState(
@@ -80,6 +82,7 @@ data class ChatUiState(
     val loadingConnections: Boolean = true,
     val loadingConversation: Boolean = false,
     val running: Boolean = false,
+    val setupSaving: Boolean = false,
     val retryAvailable: Boolean = false,
     val regenerateAvailable: Boolean = false,
     val variantNavigationAvailable: Boolean = false,
@@ -90,6 +93,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
+    val busy: Boolean get() = running || setupSaving
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
 }
@@ -160,6 +164,7 @@ class ChatViewModel(
     }
 
     fun loadConversation(conversationId: String) {
+        if (_uiState.value.setupSaving) return
         val loaded = conversationRepository?.get(conversationId) ?: return
         generationJob?.cancel()
         record = loaded
@@ -178,12 +183,42 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
+        if (_uiState.value.setupSaving) return
+        record = record.copy(draft = value)
         _uiState.update { it.copy(input = value, message = null) }
+        schedulePersist()
     }
 
     fun submitNativeForm(formId: String, values: Map<String, List<String>>) {
-        if (_uiState.value.running) return
+        if (_uiState.value.busy) return
         val adaptation = record.character.nativeAdaptation ?: return
+        val form = adaptation.forms.firstOrNull { it.id == formId } ?: return
+        if (record.turns.none { form.matchesMessage(it.selected.message.sourceText) }) return
+        if (form.setup != null) {
+            val result = NativeSetupController(adaptationRuntime).commit(record, NativeFormSubmission(formId, values))
+            if (result is NativeSetupResult.Rejected) {
+                _uiState.update { it.copy(message = result.message) }
+                return
+            }
+            val prepared = (result as NativeSetupResult.Committed).record
+            _uiState.update { it.copy(setupSaving = true) }
+            viewModelScope.launch {
+                try {
+                    persistenceJob?.cancelAndJoin()
+                    persistenceJob = null
+                    persistenceDirty = false
+                    val saved = conversationRepository?.save(prepared) ?: prepared
+                    record = saved
+                    syncRecord(input = saved.draft, message = "开局设定已保存，发送草稿即可开始")
+                    refreshDisplayCache()
+                } catch (error: Exception) {
+                    _uiState.update { it.copy(message = "开局未保存：${error.userMessage()}") }
+                } finally {
+                    _uiState.update { it.copy(setupSaving = false) }
+                }
+            }
+            return
+        }
         when (
             val result = adaptationRuntime.submitForm(
                 adaptation = adaptation,
@@ -193,14 +228,17 @@ class ChatViewModel(
             )
         ) {
             is NativeFormSubmissionResult.Rejected -> _uiState.update { it.copy(message = result.message) }
-            is NativeFormSubmissionResult.Draft -> syncRecord(input = result.text, message = null)
+            is NativeFormSubmissionResult.Draft -> {
+                syncRecord(input = result.text, message = null)
+                schedulePersist()
+            }
         }
     }
 
     fun send() {
         val state = _uiState.value
         val connection = state.selectedConnection
-        if (state.running || state.input.isBlank()) return
+        if (state.busy || state.input.isBlank()) return
         if (connection == null) {
             _uiState.update { it.copy(message = "请先配置可用模型") }
             return
@@ -276,7 +314,7 @@ class ChatViewModel(
     fun retry() {
         val state = _uiState.value
         val connection = state.selectedConnection ?: return
-        if (state.running || !state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER) return
+        if (state.busy || !state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER) return
         val capturedPreset = presetSource.captureActive()
         _uiState.update { it.copy(running = true, message = null) }
         viewModelScope.launch {
@@ -295,7 +333,7 @@ class ChatViewModel(
         val state = _uiState.value
         val connection = state.selectedConnection ?: return
         val last = record.turns.lastOrNull() ?: return
-        if (state.running || last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER) return
+        if (state.busy || last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER) return
         val capturedPreset = presetSource.captureActive()
         _uiState.update { it.copy(running = true, message = null) }
         viewModelScope.launch {
@@ -312,7 +350,7 @@ class ChatViewModel(
 
     fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
         val state = _uiState.value
-        if (state.running || sourceText.isBlank()) return
+        if (state.busy || sourceText.isBlank()) return
         val turnIndex = record.turns.indexOfFirst { it.selected.message.id == messageId }
         if (turnIndex < 0) return
         val turn = record.turns[turnIndex]
@@ -493,7 +531,7 @@ class ChatViewModel(
 
     fun selectConnection(connectionId: String) {
         val state = _uiState.value
-        if (state.running || state.readyConnections.none { it.id == connectionId }) return
+        if (state.busy || state.readyConnections.none { it.id == connectionId }) return
         _uiState.update { it.copy(selectedConnectionId = connectionId, message = null) }
         viewModelScope.launch {
             runCatching { repository.activate(connectionId) }
@@ -502,6 +540,7 @@ class ChatViewModel(
     }
 
     fun resetConversation() {
+        if (_uiState.value.setupSaving) return
         generationJob?.cancel()
         val previous = record
         record = fallbackRecord(
@@ -948,7 +987,7 @@ class ChatViewModel(
     }
 
     private fun selectVariant(delta: Int) {
-        if (_uiState.value.running) return
+        if (_uiState.value.busy) return
         val lastIndex = record.turns.indexOfLast { it.role == MessageRole.ASSISTANT }
         if (lastIndex < 0) return
         val turn = record.turns[lastIndex]
@@ -993,6 +1032,7 @@ class ChatViewModel(
         trace: GenerationTraceState? = _uiState.value.lastTrace,
     ) {
         val current = _uiState.value
+        record = record.copy(draft = input)
         _uiState.value = record.toUiState(
             input = input,
             loadingConnections = current.loadingConnections,
@@ -1000,6 +1040,7 @@ class ChatViewModel(
             readyConnections = current.readyConnections,
             selectedConnectionId = current.selectedConnectionId,
             running = running,
+            setupSaving = current.setupSaving,
             retryAvailable = retryAvailable,
             message = message,
             lastTrace = trace,
@@ -1204,12 +1245,13 @@ private fun ConversationRecord.findVariant(id: String): MessageVariant? = turns.
     .firstOrNull { it.id == id }
 
 private fun ConversationRecord.toUiState(
-    input: String = "",
+    input: String = draft,
     loadingConnections: Boolean,
     activePreset: PresetAsset,
     readyConnections: List<StoredConnection> = emptyList(),
     selectedConnectionId: String? = null,
     running: Boolean = false,
+    setupSaving: Boolean = false,
     retryAvailable: Boolean = false,
     message: String? = null,
     lastTrace: GenerationTraceState? = null,
@@ -1247,6 +1289,12 @@ private fun ConversationRecord.toUiState(
             nativeForms = character.nativeAdaptation?.forms.orEmpty().filter { form ->
                 form.matchesMessage(variant.message.sourceText)
             },
+            setupClosed = runtimeState.setupCommit != null || turns.any { it.role == MessageRole.USER },
+            stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
+                character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
+                NativeAdaptationRuntime().projectAssistantMessage(
+                    character.nativeAdaptation, variant.message.stateConfirmation ?: variant.message.sourceText,
+                ).envelopeStatus != AssistantStateEnvelopeStatus.STRIPPED,
         )
     },
     input = input,
@@ -1256,6 +1304,7 @@ private fun ConversationRecord.toUiState(
     activePresetName = activePreset.name,
     loadingConnections = loadingConnections,
     running = running,
+    setupSaving = setupSaving,
     retryAvailable = retryAvailable,
     regenerateAvailable = turns.lastOrNull()?.role == MessageRole.ASSISTANT &&
         turns.dropLast(1).lastOrNull()?.role == MessageRole.USER,

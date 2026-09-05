@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -117,16 +118,16 @@ fun ChatScreen(
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
+    var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var editingText by remember(state.conversationId) { mutableStateOf("") }
     var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
     val messageListState = rememberLazyListState()
     val latestMessage = state.messages.lastOrNull()
-    val scrollAnchorIndex = (if (state.nativeStatus != null) 1 else 0) + state.nativeScenes.size +
-        state.nativeCollections.size + state.messages.size +
+    val scrollAnchorIndex = state.messages.size +
         (if (state.message != null) 1 else 0) +
         (if (state.retryAvailable) 1 else 0) +
-        (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) 1 else 0)
+        (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.busy) 1 else 0)
     LaunchedEffect(latestMessage?.message?.id, latestMessage?.status, scrollAnchorIndex, state.message) {
         if (latestMessage != null) messageListState.scrollToItem(scrollAnchorIndex)
     }
@@ -150,33 +151,53 @@ fun ChatScreen(
                 navigationIcon = {
                     TextButton(
                         modifier = Modifier.testTag("backToCharacter"),
-                        enabled = !state.running,
+                        enabled = !state.busy,
                         onClick = actions.back,
                     ) { Text("返回") }
                 },
                 actions = {
                     TextButton(
                         modifier = Modifier.testTag("choosePreset"),
-                        enabled = !state.running,
+                        enabled = !state.busy,
                         onClick = { presetPickerVisible = true },
-                    ) { Text(state.activePresetName.ifBlank { "预设" }, maxLines = 1) }
+                    ) { Text("预设", maxLines = 1) }
                     if (state.lastTrace != null) {
                         TextButton(
                             modifier = Modifier.testTag("openTrace"),
-                            enabled = !state.running,
+                            enabled = !state.busy,
                             onClick = { traceVisible = true },
                         ) { Text("上下文") }
                     }
                     TextButton(
                         modifier = Modifier.testTag("chooseModel"),
-                        enabled = !state.running,
+                        enabled = !state.busy,
                         onClick = { modelPickerVisible = true },
                     ) { Text("模型") }
                 },
             )
         },
         bottomBar = {
-            ChatComposer(state, actions)
+            Column {
+                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty()) {
+                    TextButton(
+                        onClick = { nativeDetailsVisible = true },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("openNativeDetails"),
+                    ) {
+                        Text(
+                            state.nativeStatus?.items?.take(3)?.joinToString("  ·  ") { item ->
+                                val value = state.conversationState[item.stateKey] as? kotlinx.serialization.json.JsonPrimitive
+                                "${item.label} ${value?.content.orEmpty()}"
+                            }.orEmpty().ifBlank { "查看场景与资料" },
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text("  详情", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                ChatComposer(state, actions)
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -185,28 +206,11 @@ fun ChatScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            state.nativeStatus?.let { status ->
-                item("native-status") { NativeStatusCard(status, state.conversationState) }
-            }
-            state.nativeScenes.forEach { scene ->
-                item("native-scene-${scene.id}") {
-                    NativeSceneCard(
-                        view = scene,
-                        state = state.conversationState,
-                        resolveAssetPath = { assetId -> resolveAssetPath(state.character.assetId, assetId) },
-                    )
-                }
-            }
-            state.nativeCollections.forEach { collection ->
-                item("native-collection-${collection.id}") {
-                    NativeCollectionCard(collection, state.conversationState)
-                }
-            }
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
                 MessageBubble(
                     state = message,
                     onSubmitNativeForm = actions.submitNativeForm,
-                    editable = !state.running,
+                    editable = !state.busy,
                     editingText = editingText.takeIf { editingMessageId == message.message.id },
                     onStartEdit = {
                         editingMessageId = message.message.id
@@ -260,7 +264,7 @@ fun ChatScreen(
                     ) { Text("重试这一轮") }
                 }
             }
-            if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) {
+            if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.busy) {
                 item("assistant-variants") {
                     val last = state.messages.lastOrNull()
                     Row(
@@ -295,6 +299,21 @@ fun ChatScreen(
             }
         }
     }
+    if (nativeDetailsVisible) {
+        ModalBottomSheet(onDismissRequest = { nativeDetailsVisible = false }) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().testTag("nativeDetails"),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                state.nativeStatus?.let { status -> item { NativeStatusCard(status, state.conversationState) } }
+                state.nativeScenes.forEach { scene -> item {
+                    NativeSceneCard(scene, state.conversationState) { resolveAssetPath(state.character.assetId, it) }
+                } }
+                state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.conversationState) } }
+            }
+        }
+    }
 
     if (modelPickerVisible) {
         ModelPicker(
@@ -315,7 +334,7 @@ fun ChatScreen(
         PresetPicker(
             presets = presets,
             selectedId = state.activePresetId,
-            enabled = !state.running,
+            enabled = !state.busy,
             onSelect = {
                 actions.selectPreset(it)
                 presetPickerVisible = false
@@ -377,7 +396,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             value = state.input,
             onValueChange = actions.updateInput,
             modifier = Modifier.fillMaxWidth().testTag("chatInput"),
-            enabled = !state.running,
+            enabled = !state.busy,
             label = { Text("说点什么") },
             minLines = 1,
             maxLines = 5,
@@ -391,7 +410,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             } else {
                 Button(
                     modifier = Modifier.testTag("sendMessage"),
-                    enabled = state.input.isNotBlank(),
+                    enabled = state.input.isNotBlank() && !state.setupSaving,
                     onClick = actions.send,
                 ) { Text("发送") }
             }
@@ -422,7 +441,10 @@ private fun MessageBubble(
         } else {
             Modifier.fillMaxWidth(0.94f).widthIn(max = 560.dp)
         }
-        Card(modifier = cardModifier.testTag("message-${state.message.id}")) {
+        Card(
+            modifier = cardModifier.testTag("message-${state.message.id}"),
+            colors = CardDefaults.cardColors(containerColor = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+        ) {
             Column(
                 modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -457,6 +479,7 @@ private fun MessageBubble(
                             form = form,
                             enabled = editable,
                             onSubmit = { values -> onSubmitNativeForm(form.id, values) },
+                            completed = form.setup != null && state.setupClosed,
                         )
                     }
                 }
@@ -486,6 +509,9 @@ private fun MessageBubble(
                         color = MaterialTheme.colorScheme.error,
                     )
                     else -> Unit
+                }
+                if (state.stateUnconfirmed) {
+                    Text("本轮状态未能确认，保留上一轮记录", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                 }
                 if (editingText != null) {
                     Row(

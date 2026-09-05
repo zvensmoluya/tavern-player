@@ -2,6 +2,11 @@ package io.github.zvensmoluya.tavernplayer.conversation
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,10 +15,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -21,14 +27,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.mapSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.content.NativeCollectionView
 import io.github.zvensmoluya.tavernplayer.content.NativeFormField
@@ -67,11 +75,11 @@ internal fun NativeStatusCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(item.label, style = MaterialTheme.typography.labelMedium)
+                        Text(item.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                         Text(
                             displayed,
                             fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.testTag("native-state-${item.stateKey}"),
+                            modifier = Modifier.weight(1.3f).testTag("native-state-${item.stateKey}"),
                         )
                     }
                     val number = primitive?.doubleOrNull
@@ -176,16 +184,27 @@ internal fun NativeFormCard(
     form: NativeFormView,
     enabled: Boolean,
     onSubmit: (Map<String, List<String>>) -> Unit,
+    completed: Boolean = false,
 ) {
-    var values by remember(form.id) { mutableStateOf(initialFormValues(form)) }
-    Card(modifier = Modifier.fillMaxWidth().testTag("native-form-${form.id}")) {
+    var values by rememberSaveable(form.id, stateSaver = FormValuesSaver) { mutableStateOf(initialFormValues(form)) }
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("native-form-${form.id}"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(form.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(if (form.setup == null) "填写 · 开始对话" else "开局设定", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Text(form.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            if (completed) {
+                Text("开局表单已收起；重新开始可再次填写", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("native-setup-completed"))
+                return@Column
+            }
             if (form.description.isNotBlank()) {
-                Text(form.description, style = MaterialTheme.typography.bodyMedium)
+                Text(form.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             form.fields.forEach { field ->
                 NativeFormFieldEditor(field, values[field.id].orEmpty(), enabled) { fieldValues ->
@@ -199,10 +218,16 @@ internal fun NativeFormCard(
             ) {
                 Text(form.submitLabel)
             }
+            Text(
+                if (form.setup == null) "填写内容将放入输入框，你可以修改后再发送。" else "保存后生成开场草稿。开局选定的设定会立即生效。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NativeFormFieldEditor(
     field: NativeFormField,
@@ -223,12 +248,15 @@ private fun NativeFormFieldEditor(
             placeholder = if (field.placeholder.isBlank()) null else ({ Text(field.placeholder) }),
             minLines = if (field.type == NativeFormFieldType.MULTILINE_TEXT) 3 else 1,
             maxLines = if (field.type == NativeFormFieldType.MULTILINE_TEXT) 8 else 1,
+            shape = RoundedCornerShape(12.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = if (field.type == NativeFormFieldType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
         )
         NativeFormFieldType.SINGLE_SELECT,
         NativeFormFieldType.MULTI_SELECT,
         -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(field.label + if (field.required) " *" else "", style = MaterialTheme.typography.labelMedium)
-            field.options.forEach { option ->
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              field.options.forEach { option ->
                 val selected = option.value in values
                 val click = {
                     onValue(
@@ -241,19 +269,14 @@ private fun NativeFormFieldEditor(
                         },
                     )
                 }
-                if (selected) {
-                    Button(
-                        onClick = click,
-                        enabled = enabled,
-                        modifier = Modifier.fillMaxWidth().testTag("native-form-option-${field.id}-${option.value}"),
-                    ) { Text(option.label) }
-                } else {
-                    OutlinedButton(
-                        onClick = click,
-                        enabled = enabled,
-                        modifier = Modifier.fillMaxWidth().testTag("native-form-option-${field.id}-${option.value}"),
-                    ) { Text(option.label) }
-                }
+                FilterChip(
+                    selected = selected,
+                    onClick = click,
+                    enabled = enabled,
+                    label = { Text(option.label) },
+                    modifier = Modifier.testTag("native-form-option-${field.id}-${option.value}"),
+                )
+              }
             }
         }
         NativeFormFieldType.TOGGLE -> Row(
@@ -271,6 +294,11 @@ private fun NativeFormFieldEditor(
         }
     }
 }
+
+private val FormValuesSaver = mapSaver(
+    save = { values: Map<String, List<String>> -> values.mapValues { ArrayList(it.value) } },
+    restore = { values -> values.mapValues { (_, value) -> (value as? List<*>)?.filterIsInstance<String>().orEmpty() } },
+)
 
 private fun initialFormValues(form: NativeFormView): Map<String, List<String>> = form.fields.associate { field ->
     field.id to when {

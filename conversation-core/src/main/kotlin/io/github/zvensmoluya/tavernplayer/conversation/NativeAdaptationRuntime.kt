@@ -70,7 +70,10 @@ class NativeAdaptationRuntime(
         form.fields.forEach { field ->
             validateField(field, submission.values[field.id].orEmpty())?.let { return it }
         }
-        val draft = renderDraft(form.draftTemplate, submission.values, userName, characterName)
+        val draftValues = form.fields.associate { field ->
+            field.id to submission.values[field.id].orEmpty().filter(String::isNotBlank).ifEmpty { listOf(field.emptyText) }
+        }
+        val draft = renderDraft(form.draftTemplate, draftValues, userName, characterName)
         if (draft.length > MAX_DRAFT_CHARS) {
             return NativeFormSubmissionResult.Rejected("DRAFT_TOO_LONG", "生成的草稿超过 $MAX_DRAFT_CHARS 字符")
         }
@@ -207,11 +210,12 @@ class NativeAdaptationRuntime(
         userName: String,
         characterName: String,
     ): String {
-        val fields = FORM_REFERENCE.replace(template) { match ->
-            form[match.groupValues[1]].orEmpty().joinToString("、")
-        }
-        return IDENTITY_REFERENCE.replace(fields) { match ->
-            if (match.groupValues[1] == "user") userName else characterName
+        return DRAFT_REFERENCE.replace(template) { match ->
+            when (val reference = match.groupValues[1]) {
+                "user" -> userName
+                "char" -> characterName
+                else -> form[reference.removePrefix("form.")].orEmpty().joinToString("、")
+            }
         }
     }
 
@@ -219,8 +223,7 @@ class NativeAdaptationRuntime(
         private const val MAX_FIELD_CHARS = 8_192
         private const val MAX_DRAFT_CHARS = 16_384
         private const val MAX_MESSAGE_UPDATES = 128
-        private val FORM_REFERENCE = Regex("\\{\\{form\\.([a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})\\}\\}")
-        private val IDENTITY_REFERENCE = Regex("\\{\\{(user|char)\\}\\}")
+        private val DRAFT_REFERENCE = Regex("\\{\\{(user|char|form\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15})\\}\\}")
         private const val UPDATE_BLOCK_OPEN = "<UpdateVariable>"
         private const val UPDATE_BLOCK_CLOSE = "</UpdateVariable>"
         private const val JSON_PATCH_OPEN = "<JSONPatch>"

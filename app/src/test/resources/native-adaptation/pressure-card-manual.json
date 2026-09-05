@@ -76,7 +76,7 @@
       "id": "custom-opening-contract",
       "title": "自定义变身契约",
       "marker": "<NavPage/>\r\n<CharCreationForm/>",
-      "description": "填写后只生成一段可编辑的聊天草稿。原卡三条既有开场继续使用消息候选的上一条/下一条选择。",
+      "description": "身体选择会先保存到开局状态，其余内容生成可编辑的聊天草稿。原卡三条既有开场继续使用消息候选的上一条/下一条选择。",
       "fields": [
         {"id":"body","type":"SINGLE_SELECT","label":"身体","placeholder":"","required":true,"options":[{"value":"少女","label":"少女"},{"value":"TS魔法少女","label":"TS魔法少女"}],"initialValues":["少女"]},
         {"id":"extra-power","type":"MULTILINE_TEXT","label":"额外力量","placeholder":"主角独有的额外力量；留空则沿用世界书默认规则。","required":false,"options":[],"initialValues":[]},
@@ -86,12 +86,13 @@
         {"id":"witnesses","type":"MULTI_SELECT","label":"在场见证者","placeholder":"","required":false,"options":[{"value":"天海咲","label":"天海咲"},{"value":"星野灯","label":"星野灯"},{"value":"白鸟优里","label":"白鸟优里"},{"value":"新井晴","label":"新井晴"}],"initialValues":[]}
       ],
       "draftTemplate": "【自定义开局契约】\n身体：{{form.body}}\n额外力量：{{form.extra-power}}\n契约之时：{{form.contract-time}}\n契约之地：{{form.contract-place}}\n第一幕要求：{{form.opening-notes}}\n在场见证者：{{form.witnesses}}\n请根据以上信息自然生成第一幕；不要复述表单。",
-      "submitLabel": "写入草稿"
+      "submitLabel": "保存开局并生成草稿",
+      "setup": {"stateFields":{"protagonist-body":"body"}}
     }
   ],
   "report": {
     "status": "PARTIAL",
-    "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板和自定义开局输入落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
+    "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板和一次性自定义开局落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
     "restoredBehaviors": [
       "19 个角色、关系和军团标量以带时间线的 Conversation State 保存并进入模型上下文",
       "唯一且完整的 UpdateVariable/JSONPatch 块可将白名单 scalar replace 原子映射回 Conversation State",
@@ -102,7 +103,7 @@
     ],
     "degradedPresentation": [
       "开局导航、变身契约书、活页手帐、变量快报和悬浮星盘的 HTML/CSS 动画及皮肤不重建",
-      "三步契约向导退化为 Player 固定字段表单；状态栏退化为 Player 固定只读列表"
+      "三步契约向导合并为原生表单；状态栏使用固定摘要与详情"
     ],
     "unsupportedBehaviors": [
       "Tavern Helper、MagVarUpdate、iframe、远程 module/font、宿主 API 和任意 JavaScript 不执行",
@@ -112,7 +113,7 @@
     ],
     "warnings": [
       "这是人工审计测试夹具，不是自动编译结果，也不构成其他卡片的兼容规则",
-      "普通 Form 只产生 Draft；身体选择要等模型在下一条完整 JSONPatch 中回写，当前不是原子 Setup Commit",
+      "身体选择由一次性 Setup Commit 原子保存；生成失败、重试、候选切换和重启不会丢失。重新开始可重新设定",
       "预设开场请使用 Player 既有消息候选切换；此 Form 只承担自定义开局草稿"
     ]
   }
