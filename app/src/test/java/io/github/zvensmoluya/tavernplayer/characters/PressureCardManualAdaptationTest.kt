@@ -18,12 +18,17 @@ import io.github.zvensmoluya.tavernplayer.conversation.NativeFormSubmissionResul
 import io.github.zvensmoluya.tavernplayer.conversation.NormalGenerationInput
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.conversation.LegacyStateReadProjection
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationStatePromptProjector
+import io.github.zvensmoluya.tavernplayer.conversation.NativeSetupController
+import io.github.zvensmoluya.tavernplayer.conversation.NativeSetupResult
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -93,6 +98,82 @@ class PressureCardManualAdaptationTest {
         assertEquals("无战斗", (ingested.runtimeState.conversationState.values.getValue("protagonist-battle") as JsonPrimitive).content)
         assertFalse(ingested.runtimeState.conversationState.values.containsKey("任意/脚本"))
     }
+
+    @Test
+    fun `source numeric bounds are enforced for every mapped resource and relationship`() {
+        val adaptation = manualAdaptation()
+        val runtime = NativeAdaptationRuntime()
+        val initial = runtime.initialState(adaptation)
+        val paths = listOf("/主角/魔力", "/主角/情欲") +
+            listOf("新井晴", "天海咲", "星野灯", "白鸟优里").map { "/关系/$it/好感度" }
+        paths.forEach { path ->
+            val key = adaptation.assistantStateAdapters.single().mappings.single { it.sourcePath == path }.targetStateKey
+            listOf(-12 to 0.0, 135 to 100.0).forEach { (input, expected) ->
+                val result = runtime.ingestAssistantMessage(adaptation, patch(path, input.toString()), initial)
+                assertEquals(null, result.rejection)
+                assertEquals(expected, (result.runtimeState.conversationState.values.getValue(key) as JsonPrimitive).double, 0.0)
+            }
+        }
+    }
+
+    @Test
+    fun `invalid transformation and battle values reject the whole reply`() {
+        val adaptation = manualAdaptation()
+        val runtime = NativeAdaptationRuntime()
+        val initial = runtime.initialState(adaptation)
+        val paths = listOf("/主角/变身", "/主角/战局") +
+            listOf("新井晴", "天海咲", "星野灯", "白鸟优里").map { "/关系/$it/变身" }
+        paths.forEach { path ->
+            val reply = "<UpdateVariable><JSONPatch>[" +
+                "{\"op\":\"replace\",\"path\":\"/主角/魔力\",\"value\":50}," +
+                "{\"op\":\"replace\",\"path\":\"$path\",\"value\":\"未知状态\"}]</JSONPatch></UpdateVariable>"
+            val result = runtime.ingestAssistantMessage(adaptation, reply, initial)
+            assertEquals("STATE_TYPE_MISMATCH", result.rejection)
+            assertEquals(0, result.appliedUpdates)
+            assertEquals(initial, result.runtimeState)
+        }
+    }
+
+    @Test
+    fun `setup identity stays readable but cannot be overwritten by assistant after repository restore`() = runTest {
+        val source = pressureCardOrNull()
+        assumeTrue("held-back pressure card is not present", source != null)
+        val imported = (CharacterCardImporter().import(checkNotNull(source).readBytes(), source.name) as CharacterImportResult.Ready).character
+        val adaptation = manualAdaptation()
+        val root = temporary.newFolder("identity-lock")
+        val repository = io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(root, PromptCompiler(), idFactory = { "identity-lock" })
+        val record = repository.create(imported.copy(nativeAdaptation = adaptation), Persona("p", "旅人"), BuiltInPresets.default)
+        val form = adaptation.forms.single()
+        val committed = (NativeSetupController().commit(record, NativeFormSubmission(form.id,
+            mapOf("body" to listOf("TS魔法少女")))) as NativeSetupResult.Committed).record
+        repository.save(committed)
+        val restored = checkNotNull(io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(root, PromptCompiler()).get(record.id))
+        val states = restored.turns.single().variants.flatMap {
+            listOf(checkNotNull(it.runtimeStateBefore), checkNotNull(it.projectionRuntimeStateBefore), checkNotNull(it.runtimeStateAfter))
+        } + restored.runtimeState
+        states.forEach { state ->
+            val read = Json.parseToJsonElement(checkNotNull(LegacyStateReadProjection.project(adaptation, state.conversationState))).jsonObject
+            assertEquals(JsonPrimitive("TS魔法少女"), read.getValue("主角").jsonObject["身体"])
+            val result = NativeAdaptationRuntime().ingestAssistantMessage(adaptation, patch("/主角/身体", "\"少女\""), state)
+            assertEquals("UNDECLARED_STATE_PATH", result.rejection)
+            assertEquals(state, result.runtimeState)
+        }
+        assertTrue(restored.draft.contains("TS魔法少女"))
+        val contract = checkNotNull(ConversationStatePromptProjector().projectAdapterContract(adaptation))
+        assertFalse(contract.contains("/主角/身体"))
+        assertTrue(checkNotNull(ConversationStatePromptProjector().project(restored.runtimeState.conversationState, adaptation)).contains("TS魔法少女"))
+    }
+
+    @Test
+    fun `native status exposes every source field including relationship thoughts`() {
+        val adaptation = manualAdaptation()
+        val status = checkNotNull(adaptation.status)
+        assertEquals(adaptation.state.map { it.key }.toSet(), status.items.map { it.stateKey }.toSet())
+        assertEquals(19, status.items.size)
+    }
+
+    private fun patch(path: String, value: String): String =
+        "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"$path\",\"value\":$value}]</JSONPatch></UpdateVariable>"
 
     @Test
     fun `real pressure card and manual adaptation compile a clean dialogue prompt`() {

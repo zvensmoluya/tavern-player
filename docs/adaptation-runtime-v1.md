@@ -22,7 +22,7 @@ Deterministic validation
 Native playback
 ```
 
-当前不建设 `ProgramView`、AI compiler、repair、派生缓存或 Shelf 分发协议。真实模型只用于测试对话玩法；它不参与生成适配，也不拥有 Runtime 设计权。等 Native View、Versioned Conversation State、Legacy State Adapter 和验证边界稳定后，再单独设计 Android 导入期的自动适配流程。
+当前先验证人工复杂卡适配，尚未建设新的 `ProgramView`、AI compiler、repair 或派生缓存。真实模型目前只用于测试对话玩法；它不参与生成适配，也不拥有 Runtime 设计权。人工玩法验收通过后，再建立独立于 Tavern Shelf 的编译内核与导入期适配流程；Shelf 是可选的存储和传输工具。当前验收清单见 [Native 玩法还原验收](native-gameplay-fidelity-audit.md)。
 
 ## 原件、安装与 Conversation Snapshot
 
@@ -173,11 +173,12 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 开发夹具 `pressure-card-manual.json` 手工适配本机 `source/复杂压测卡.png`：
 
 - 19 个 scalar 状态和一个严格 JSON Patch-shaped Adapter；
-- 固定 Status View；
+- 固定 Status View 展示全部 19 项，含四名角色心里话和变身；
+- 六项数值范围、七项字符串枚举，身体只允许开局 Setup 写入；
 - 自定义开局 Setup → 本地身体状态 + Draft；
 - opening candidates 保留给现有 swipe；
 - PNG 卡面作为可验证本地静态资产；
-- HTML/CSS/JavaScript、宿主 API、自动发送、历史改写、动态 World Book 切换等明确标为降级或不支持。
+- 原表单预设开场的设定流程、世界书 EJS 分支选择和悬浮球主动操作仍未完整迁移；详见逐项验收清单。源码审计没有找到该卡开局动态启停 World Book 的调用，已撤回此前笼统归因。
 
 该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。
 

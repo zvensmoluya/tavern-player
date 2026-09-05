@@ -65,6 +65,7 @@ SillyTavern 建立了这个生态。
 - [社区 Preset 真实链路验收](docs/community-preset-live-test.md)
 - [Native 适配当前运行契约](docs/adaptation-runtime-v1.md)
 - [Native 玩法实践与实测记录](docs/native-gameplay-verification-20260905.md)
+- [Native 玩法还原验收与当前缺口](docs/native-gameplay-fidelity-audit.md)
 
 ## 验证
 
