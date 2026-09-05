@@ -54,8 +54,6 @@ class NativeAdaptationRuntimeTest {
             <UpdateVariable>
               _.set('世界.日期', 1, 2);
               _.set('世界.地点', '家', '客厅');
-              _.set('世界.日期', 2, fetch('bad'));
-              _.set('未知.字段', 0, 7);
             </UpdateVariable>
         """.trimIndent()
 
@@ -88,10 +86,7 @@ class NativeAdaptationRuntimeTest {
             <JSONPatch>
             [
               {"op":"replace","path":"/世界/日期","value":2},
-              {"op":"replace","path":"/世界/地点","value":"客厅"},
-              {"op":"add","path":"/世界/日期","value":7},
-              {"op":"replace","path":"/未知","value":8},
-              {"op":"replace","path":"/世界/日期","value":{"call":"bad"}}
+              {"op":"replace","path":"/世界/地点","value":"客厅"}
             ]
             </JSONPatch>
             </UpdateVariable>
@@ -186,10 +181,11 @@ class NativeAdaptationRuntimeTest {
             ),
         )
 
-        val partialTag = runtime.projectAssistantMessage(adaptation, "<UpdateVari")
+        val partialTag = runtime.projectAssistantMessage(adaptation, "<UpdateVari", streaming = true)
         val partialEnvelope = runtime.projectAssistantMessage(
             adaptation,
             "正文\n<UpdateVariable><JSONPatch>[]",
+            streaming = true,
         )
         val malformed = "<UpdateVariable><JSONPatch>[]</UpdateVariable>正文"
         val malformedProjection = runtime.projectAssistantMessage(adaptation, malformed)
@@ -239,6 +235,52 @@ class NativeAdaptationRuntimeTest {
     @Test
     fun `form marker matching is a fixed message lifecycle not a trigger catalog`() {
         assertTrue(fixture().forms.single().matchesMessage("before <GAMESTART/> after"))
+    }
+
+    @Test
+    fun `invalid update rejects the entire batch instead of becoming a confirmed partial patch`() {
+        val adaptation = fixture().copy(assistantStateAdapters = listOf(AssistantStateAdapterDefinition(
+            LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1,
+            listOf(AssistantStateMapping("/day", "world-day")),
+        )))
+        val initial = runtime.initialState(adaptation)
+        listOf(
+            "{\"op\":\"replace\",\"path\":\"/day\",\"value\":\"two\"}",
+            "{\"op\":\"replace\",\"path\":\"/unknown\",\"value\":2}",
+            "{\"op\":\"add\",\"path\":\"/day\",\"value\":2}",
+            "{\"op\":\"replace\",\"path\":\"/day\",\"value\":{}}",
+            "42",
+        ).forEach { invalid ->
+            val source = "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"/day\",\"value\":7},$invalid]</JSONPatch></UpdateVariable>"
+            val decoded = runtime.decodeAssistantMessage(adaptation, source)
+            assertFalse(invalid, decoded.valid)
+            assertEquals(initial, runtime.ingestAssistantMessage(adaptation, source, initial).runtimeState)
+            assertEquals(AssistantStateEnvelopeStatus.INVALID, runtime.projectAssistantMessage(adaptation, source).envelopeStatus)
+        }
+        val empty = "<UpdateVariable><JSONPatch>[]</JSONPatch></UpdateVariable>"
+        assertTrue(runtime.decodeAssistantMessage(adaptation, empty).valid)
+    }
+
+    @Test
+    fun `set dialect rejects executable syntax and unknown paths atomically`() {
+        val adaptation = fixture()
+        val initial = runtime.initialState(adaptation)
+        listOf("_.set('世界.日期', 1, fetch('bad'));", "_.set('未知.字段', 0, 7);", "some explanation").forEach { invalid ->
+            val source = "<UpdateVariable>\n_.set('世界.日期', 1, 2);\n$invalid\n</UpdateVariable>"
+            assertFalse(runtime.decodeAssistantMessage(adaptation, source).valid)
+            assertEquals(initial, runtime.ingestAssistantMessage(adaptation, source, initial).runtimeState)
+        }
+    }
+
+    @Test
+    fun `final malformed envelope never buffers the remaining narrative forever`() {
+        val source = "<UpdateVariable><JSONPatch>[]</JSONPatch>\n\n正文继续。"
+        val adaptation = fixture()
+        assertEquals("", runtime.projectAssistantMessage(adaptation, source, streaming = true).narrativeText)
+        assertEquals("正文继续。", runtime.projectAssistantMessage(adaptation, source).narrativeText)
+        assertEquals("正文继续。", runtime.projectAssistantMessage(adaptation, source, stateConfirmedSeparately = true).narrativeText)
+        val ambiguousBoundary = "<UpdateVariable>unfinished payload and maybe narrative"
+        assertEquals(ambiguousBoundary, runtime.projectAssistantMessage(adaptation, ambiguousBoundary).narrativeText)
     }
 
     private fun fixture() = NativeAdaptation(

@@ -79,8 +79,7 @@ class PressureCardManualAdaptationTest {
               {"op":"replace","path":"/主角/变身","value":"未变身"},
               {"op":"replace","path":"/主角/战局","value":"无战斗"},
               {"op":"replace","path":"/关系/天海咲/好感度","value":10},
-              {"op":"replace","path":"/关系/天海咲/心里话","value":"至少她愿意停下来听我说。"},
-              {"op":"add","path":"/任意/脚本","value":{"run":"fetch()"}}
+              {"op":"replace","path":"/关系/天海咲/心里话","value":"至少她愿意停下来听我说。"}
             ]
             </JSONPatch>
             </UpdateVariable>

@@ -5,8 +5,6 @@ import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
 import io.github.zvensmoluya.tavernplayer.content.NativeFormField
 import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
 import io.github.zvensmoluya.tavernplayer.content.NativeFormView
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 
 data class NativeFormSubmission(
     val formId: String,
@@ -25,6 +23,7 @@ sealed interface NativeFormSubmissionResult {
 data class AssistantStateIngestionResult(
     val runtimeState: ConversationRuntimeState,
     val appliedUpdates: Int,
+    val rejection: String? = null,
 )
 
 enum class AssistantStateEnvelopeStatus {
@@ -86,19 +85,17 @@ class NativeAdaptationRuntime(
         if (adaptation.assistantStateAdapters.isEmpty() || sourceText.isEmpty()) {
             return AssistantStateIngestionResult(runtimeState, 0)
         }
-        val definitions = adaptation.state.associateBy { it.key }
-        val assignments = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()
-        var applied = 0
-        adaptation.assistantStateAdapters.forEach { definition ->
-            val remaining = MAX_MESSAGE_UPDATES - applied
-            if (remaining <= 0) return@forEach
-            val adapter = legacyStateAdapters[definition.dialect] ?: return@forEach
-            val decoded = adapter.decode(sourceText, definition.mappings, definitions, remaining)
-            assignments.putAll(decoded.patch.assignments)
-            applied += decoded.appliedUpdates
-        }
-        val nextState = runtimeState.conversationState.applying(ConversationStatePatch(assignments))
-        return AssistantStateIngestionResult(runtimeState.copy(conversationState = nextState), applied)
+        val decoded = decodeAssistantMessage(adaptation, sourceText)
+        if (!decoded.valid) return AssistantStateIngestionResult(runtimeState, 0, decoded.rejection)
+        val nextState = runtimeState.conversationState.applying(decoded.patch)
+        return AssistantStateIngestionResult(runtimeState.copy(conversationState = nextState), decoded.appliedUpdates)
+    }
+
+    fun decodeAssistantMessage(adaptation: NativeAdaptation, sourceText: String): LegacyStateDecodeResult {
+        val definition = adaptation.assistantStateAdapters.singleOrNull()
+        val adapter = definition?.let { legacyStateAdapters[it.dialect] }
+            ?: return LegacyStateDecodeResult(ConversationStatePatch(), 0, "INVALID_STATE_ADAPTER")
+        return adapter.decode(sourceText, definition.mappings, adaptation.state.associateBy { it.key }, MAX_MESSAGE_UPDATES)
     }
 
     /**
@@ -110,6 +107,7 @@ class NativeAdaptationRuntime(
         adaptation: NativeAdaptation?,
         sourceText: String,
         stateConfirmedSeparately: Boolean = false,
+        streaming: Boolean = false,
     ): NativeAssistantMessageProjection {
         val dialects = adaptation?.assistantStateAdapters.orEmpty().mapTo(linkedSetOf()) { it.dialect }
         if (dialects.isEmpty() || sourceText.isEmpty()) {
@@ -120,7 +118,7 @@ class NativeAdaptationRuntime(
             val partial = sourceText.partialTagSuffixStart(UPDATE_BLOCK_OPEN)
             return if (partial >= 0) {
                 NativeAssistantMessageProjection(
-                    narrativeText = sourceText.substring(0, partial).trimEnd(),
+                    narrativeText = if (streaming) sourceText.substring(0, partial).trimEnd() else sourceText,
                     envelopeStatus = AssistantStateEnvelopeStatus.PENDING,
                 )
             } else {
@@ -130,6 +128,21 @@ class NativeAdaptationRuntime(
         val contentStart = open + UPDATE_BLOCK_OPEN.length
         val close = sourceText.indexOf(UPDATE_BLOCK_CLOSE, contentStart, ignoreCase = true)
         if (close < 0) {
+            if (!streaming) {
+                // A closed inner payload gives a deterministic display boundary. Never execute the
+                // incomplete outer envelope; otherwise preserve the whole suffix for diagnosis.
+                val innerClose = sourceText.indexOf(JSON_PATCH_CLOSE, contentStart, ignoreCase = true)
+                val unambiguous = sourceText.indexOf(UPDATE_BLOCK_OPEN, contentStart, ignoreCase = true) < 0 &&
+                    sourceText.substring(contentStart).singleTaggedContent(JSON_PATCH_OPEN, JSON_PATCH_CLOSE) != null
+                return NativeAssistantMessageProjection(
+                    narrativeText = if (innerClose >= 0 && unambiguous) {
+                        sourceText.withoutEnvelope(open, innerClose + JSON_PATCH_CLOSE.length)
+                    } else sourceText,
+                    envelopeStatus = if (stateConfirmedSeparately && unambiguous) {
+                        AssistantStateEnvelopeStatus.RECOVERED
+                    } else AssistantStateEnvelopeStatus.INVALID,
+                )
+            }
             return NativeAssistantMessageProjection(
                 narrativeText = sourceText.substring(0, open).trimEnd(),
                 envelopeStatus = AssistantStateEnvelopeStatus.PENDING,
@@ -139,7 +152,9 @@ class NativeAdaptationRuntime(
         val ambiguous = sourceText.indexOf(UPDATE_BLOCK_OPEN, contentStart, ignoreCase = true) >= 0 ||
             sourceText.indexOf(UPDATE_BLOCK_CLOSE, envelopeEnd, ignoreCase = true) >= 0
         val envelope = sourceText.substring(open, envelopeEnd)
-        if (ambiguous || envelope.length > MAX_UPDATE_BLOCK_CHARS || dialects.none { it.recognizesEnvelope(envelope) }) {
+        if (ambiguous || envelope.length > MAX_UPDATE_BLOCK_CHARS ||
+            !decodeAssistantMessage(checkNotNull(adaptation), envelope).valid
+        ) {
             if (!ambiguous && stateConfirmedSeparately) {
                 return NativeAssistantMessageProjection(
                     narrativeText = sourceText.withoutEnvelope(open, envelopeEnd),
@@ -211,17 +226,6 @@ class NativeAdaptationRuntime(
         private const val JSON_PATCH_OPEN = "<JSONPatch>"
         private const val JSON_PATCH_CLOSE = "</JSONPatch>"
         private const val MAX_UPDATE_BLOCK_CHARS = 128 * 1024
-        private const val MAX_JSON_PATCH_CHARS = 64 * 1024
-    }
-
-    private fun LegacyStateDialect.recognizesEnvelope(envelope: String): Boolean = when (this) {
-        LegacyStateDialect.UPDATE_VARIABLE_SET_V1 ->
-            !envelope.contains(JSON_PATCH_OPEN, ignoreCase = true)
-        LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1 -> {
-            val payload = envelope.singleTaggedContent(JSON_PATCH_OPEN, JSON_PATCH_CLOSE)
-                ?.takeIf { it.length <= MAX_JSON_PATCH_CHARS }
-            payload != null && runCatching { Json.parseToJsonElement(payload) is JsonArray }.getOrDefault(false)
-        }
     }
 }
 

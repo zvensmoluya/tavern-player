@@ -64,11 +64,11 @@ Conversation State 位于 `ConversationRuntimeState`，每个消息候选保存�
 
 两者只接受适配中逐项声明的精确 `sourcePath -> targetStateKey` 白名单，并按目标状态类型校验值。函数、表达式、对象、数组、动态路径和未声明目标不会执行。JSON Patch 形态不是通用 JSON Patch Runtime；`add`、`remove`、`move` 等操作不获得语义。
 
-Adapter 只返回 `ConversationStatePatch`。只有完整、唯一且符合已声明 dialect 的块才会应用；空块是经确认的 no-op，缺块本身不再被解释成“没有变化”。它不渲染 UI、不发消息、不修改 World Book，也不形成事件系统。
+Adapter 返回 `ConversationStatePatch` 或带原因的拒绝结果。完整、唯一且每项操作均符合已声明 dialect、路径和类型的块才会整批应用；任意一项错误都会拒绝整批，不产生部分状态。合法空块是经确认的 no-op，缺块、未知路径、类型错误和超限都不等于 no-op。状态确认与摄入共用同一验证入口，不能仅凭 JSON 外壳合法就报告成功。Adapter 不渲染 UI、不发消息、不修改 World Book，也不形成事件系统。
 
 正常对话生成缺少、未闭合或给出畸形状态块时，App 的固定状态确认层会使用同一模型再发起一次短请求。该请求只包含 Player 当前状态、已经校验的 Adapter 白名单，以及作为 JSON 数据转义的本轮 user / assistant 证据；它只接收一个完整 envelope，不生成或修改 `NativeAdaptation`，也不改写主回复。补取成功后，原始主回复原样保存在 `sourceText`，确认块独立保存在 `stateConfirmation`，两次 usage 合并；失败时不猜测状态，并写入生成诊断。主回复已经给出合法块时不会发生第二次调用。
 
-`sourceText` 保留主模型原始输出，`stateConfirmation` 保留可选的独立确认结果，两者不会混写。对于声明了对应 Adapter 的角色，Player 在 Macro / Regex 和聊天存储投影之前剥离已识别的机器状态块；流式阶段已经开始但尚未闭合的状态块会被缓冲，避免协议文本闪入聊天 UI。主回复中的单个畸形块只有在独立确认成功后才从 canonical 展示中移除；原始文本仍可诊断。歧义的多个块不被静默隐藏，也不会直接写入状态。
+`sourceText` 保留主模型原始输出，`stateConfirmation` 保留可选的独立确认结果，两者不会混写。对于声明了对应 Adapter 的角色，Player 在 Macro / Regex 和聊天存储投影之前剥离已识别的机器状态块；流式阶段已经开始但尚未闭合的状态块会被暂时缓冲。流结束或失败时必须重新执行最终投影：缺失外层结束标签但内层 JSONPatch 有唯一完整边界时保留其后的剧情；无法确定边界时保留原文供诊断，不得继续隐藏整个后缀。畸形块不因此获得状态执行权。其他单个完整但无效的块只有在独立确认成功后才从 canonical 展示中移除；歧义的多个块不被静默隐藏。
 
 ### State → Conversation Semantics
 

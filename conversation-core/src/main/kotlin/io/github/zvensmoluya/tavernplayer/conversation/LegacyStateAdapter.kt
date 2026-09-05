@@ -14,7 +14,10 @@ import kotlinx.serialization.json.doubleOrNull
 data class LegacyStateDecodeResult(
     val patch: ConversationStatePatch,
     val appliedUpdates: Int,
-)
+    val rejection: String? = null,
+) {
+    val valid: Boolean get() = rejection == null
+}
 
 interface LegacyStateAdapter {
     val dialect: LegacyStateDialect
@@ -36,32 +39,25 @@ class UpdateVariableSetV1Adapter : LegacyStateAdapter {
         definitions: Map<String, ConversationStateDefinition>,
         maxUpdates: Int,
     ): LegacyStateDecodeResult {
-        if (sourceText.isEmpty() || maxUpdates <= 0) {
-            return LegacyStateDecodeResult(ConversationStatePatch(), 0)
-        }
+        if (sourceText.isEmpty() || maxUpdates <= 0) return rejectedDecode("MISSING_STATE_ENVELOPE")
+        val block = sourceText.singleTaggedContent(UPDATE_BLOCK_OPEN, UPDATE_BLOCK_CLOSE)
+            ?.takeIf { it.length <= MAX_UPDATE_BLOCK_CHARS }
+            ?.withoutLegacyAnalysis()
+            ?: return rejectedDecode("INVALID_STATE_ENVELOPE")
+        val lines = block.lineSequence().map(String::trim).filter { it.isNotEmpty() && !it.startsWith("//") }.toList()
+        if (lines.size > maxUpdates) return rejectedDecode("TOO_MANY_STATE_UPDATES")
         val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
         val assignments = linkedMapOf<String, JsonPrimitive>()
         var applied = 0
-        for (update in parseUpdateVariableBlock(sourceText, maxUpdates)) {
-            val mapping = mappingsBySource[update.path] ?: continue
-            val definition = definitions[mapping.targetStateKey] ?: continue
-            val value = coerceMappedScalar(definition, update.value) ?: continue
+        for (line in lines) {
+            val update = parseUpdateLine(line) ?: return rejectedDecode("INVALID_STATE_UPDATE")
+            val mapping = mappingsBySource[update.path] ?: return rejectedDecode("UNDECLARED_STATE_PATH")
+            val definition = definitions[mapping.targetStateKey] ?: return rejectedDecode("UNKNOWN_STATE")
+            val value = coerceMappedScalar(definition, update.value) ?: return rejectedDecode("STATE_TYPE_MISMATCH")
             assignments[definition.key] = value
             applied += 1
-            if (applied >= maxUpdates) break
         }
         return LegacyStateDecodeResult(ConversationStatePatch(assignments), applied)
-    }
-
-    private fun parseUpdateVariableBlock(source: String, maxUpdates: Int): List<DialectUpdate> {
-        val block = source.singleTaggedContent(UPDATE_BLOCK_OPEN, UPDATE_BLOCK_CLOSE)
-            ?.takeIf { it.length <= MAX_UPDATE_BLOCK_CHARS }
-            ?: return emptyList()
-        val result = mutableListOf<DialectUpdate>()
-        block.lineSequence().forEach { line ->
-            if (result.size < maxUpdates) parseUpdateLine(line)?.let(result::add)
-        }
-        return result
     }
 
     private fun parseUpdateLine(line: String): DialectUpdate? {
@@ -193,29 +189,33 @@ class UpdateVariableJsonPatchV1Adapter : LegacyStateAdapter {
         definitions: Map<String, ConversationStateDefinition>,
         maxUpdates: Int,
     ): LegacyStateDecodeResult {
-        if (sourceText.isEmpty() || maxUpdates <= 0) return emptyDecode()
+        if (sourceText.isEmpty() || maxUpdates <= 0) return rejectedDecode("MISSING_STATE_ENVELOPE")
         val updateBlock = sourceText.singleTaggedContent(UPDATE_BLOCK_OPEN, UPDATE_BLOCK_CLOSE)
             ?.takeIf { it.length <= MAX_UPDATE_BLOCK_CHARS }
-            ?: return emptyDecode()
+            ?.withoutLegacyAnalysis()
+            ?: return rejectedDecode("INVALID_STATE_ENVELOPE")
         val payload = updateBlock.singleTaggedContent(JSON_PATCH_OPEN, JSON_PATCH_CLOSE)
             ?.takeIf { it.length <= MAX_JSON_PATCH_CHARS }
-            ?: return emptyDecode()
+            ?: return rejectedDecode("INVALID_JSON_PATCH_ENVELOPE")
+        if (!updateBlock.trim().startsWith(JSON_PATCH_OPEN, ignoreCase = true) ||
+            !updateBlock.trim().endsWith(JSON_PATCH_CLOSE, ignoreCase = true)
+        ) return rejectedDecode("UNEXPECTED_STATE_CONTENT")
         val operations = runCatching { Json.parseToJsonElement(payload) as? JsonArray }.getOrNull()
-            ?.takeIf { it.size <= MAX_JSON_PATCH_OPERATIONS }
-            ?: return emptyDecode()
+            ?: return rejectedDecode("INVALID_JSON_PATCH")
+        if (operations.size > minOf(MAX_JSON_PATCH_OPERATIONS, maxUpdates)) return rejectedDecode("TOO_MANY_STATE_UPDATES")
         val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
-        val updates = operations.mapNotNull { element ->
-            val operation = element as? JsonObject ?: return@mapNotNull null
-            val op = operation.stringValue("op") ?: return@mapNotNull null
-            if (op != "replace") return@mapNotNull null
-            val path = operation.stringValue("path") ?: return@mapNotNull null
-            val mapping = mappingsBySource[path] ?: return@mapNotNull null
-            val definition = definitions[mapping.targetStateKey] ?: return@mapNotNull null
-            val value = operation["value"] as? JsonPrimitive ?: return@mapNotNull null
-            val coerced = coerceMappedScalar(definition, value) ?: return@mapNotNull null
+        val updates = operations.map { element ->
+            val operation = element as? JsonObject ?: return rejectedDecode("INVALID_STATE_UPDATE")
+            if (operation.keys != setOf("op", "path", "value")) return rejectedDecode("INVALID_STATE_UPDATE")
+            val op = operation.stringValue("op") ?: return rejectedDecode("INVALID_STATE_OPERATION")
+            if (op != "replace") return rejectedDecode("UNSUPPORTED_STATE_OPERATION")
+            val path = operation.stringValue("path") ?: return rejectedDecode("INVALID_STATE_PATH")
+            val mapping = mappingsBySource[path] ?: return rejectedDecode("UNDECLARED_STATE_PATH")
+            val definition = definitions[mapping.targetStateKey] ?: return rejectedDecode("UNKNOWN_STATE")
+            val value = operation["value"] as? JsonPrimitive ?: return rejectedDecode("STATE_TYPE_MISMATCH")
+            val coerced = coerceMappedScalar(definition, value) ?: return rejectedDecode("STATE_TYPE_MISMATCH")
             mapping.targetStateKey to coerced
         }
-        if (updates.size > maxUpdates) return emptyDecode()
         val assignments = linkedMapOf<String, JsonPrimitive>()
         updates.forEach { (key, value) -> assignments[key] = value }
         return LegacyStateDecodeResult(
@@ -243,8 +243,18 @@ internal fun String.singleTaggedContent(open: String, close: String): String? {
     if (start < 0 || indexOf(open, start + open.length, ignoreCase = true) >= 0) return null
     val contentStart = start + open.length
     val end = indexOf(close, contentStart, ignoreCase = true)
-    if (end < 0 || indexOf(close, end + close.length, ignoreCase = true) >= 0) return null
+    if (end < 0 || indexOf(close, ignoreCase = true) != end || indexOf(close, end + close.length, ignoreCase = true) >= 0) return null
     return substring(contentStart, end)
+}
+
+private fun String.withoutLegacyAnalysis(): String? {
+    val open = "<analysis>"
+    val close = "</analysis>"
+    val start = indexOf(open, ignoreCase = true)
+    if (start < 0) return takeUnless { contains(close, ignoreCase = true) }
+    singleTaggedContent(open, close) ?: return null
+    val end = indexOf(close, start + open.length, ignoreCase = true) + close.length
+    return substring(0, start) + substring(end)
 }
 
 private fun coerceMappedScalar(
@@ -263,4 +273,4 @@ private fun coerceMappedScalar(
     -> null
 }
 
-private fun emptyDecode() = LegacyStateDecodeResult(ConversationStatePatch(), 0)
+private fun rejectedDecode(code: String) = LegacyStateDecodeResult(ConversationStatePatch(), 0, code)

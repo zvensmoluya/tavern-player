@@ -173,6 +173,23 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `completed and failed streams preserve narrative after an unclosed machine block`() = runTest {
+        for (fail in listOf(false, true)) {
+            val generator = FakeGenerator { _, _ -> flow {
+                emit(GenerationEvent.TextDelta("<UpdateVariable><JSONPatch>[]</JSONPatch>\n\n正文仍然存在。"))
+                if (fail) error("stream failed") else emit(GenerationEvent.Finished("stop"))
+            } }
+            val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = dayAdaptation()))
+            viewModel.updateInput("继续")
+            viewModel.send()
+            val last = viewModel.uiState.value.messages.last()
+            assertEquals("正文仍然存在。", last.message.content)
+            assertEquals(if (fail) ChatMessageStatus.ERROR else ChatMessageStatus.COMPLETE, last.status)
+            assertEquals(1.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+        }
+    }
+
+    @Test
     fun `world book overrides replay from the assistant checkpoint and follow the selected swipe`() = runTest {
         val directory = Files.createTempDirectory("tavern-chat-world-book-swipe").toFile()
         try {

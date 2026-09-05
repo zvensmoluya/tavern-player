@@ -20,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -720,11 +721,16 @@ class ChatViewModel(
                         event,
                     )
                 }
+                reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 finishIfStreamEnded(variant.id)
             } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                }
                 finishFailure(variant.id, cancelled = true, error = null)
                 throw cancelled
             } catch (error: Exception) {
+                reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 finishFailure(variant.id, cancelled = false, error = error)
             } finally {
                 generationJob = null
@@ -795,6 +801,7 @@ class ChatViewModel(
                 schedulePersist()
             }
             is GenerationEvent.Finished -> {
+                reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
                 pendingAssistantRuntime = null
                 updateVariant(variantId) {
@@ -827,13 +834,16 @@ class ChatViewModel(
         preset: PresetAsset,
         evaluationInstant: Instant,
         evaluationZoneId: ZoneId,
+        streaming: Boolean = true,
     ) {
         val history = record.selectedMessages().dropLast(1)
         val adaptation = record.character.nativeAdaptation
+        val projectionRuntime = record.findVariant(variantId)?.projectionRuntimeStateBefore ?: record.runtimeState
         val narrativeSource = adaptationRuntime.projectAssistantMessage(
             adaptation = adaptation,
             sourceText = rawAssistant,
             stateConfirmedSeparately = rawStateConfirmation != null,
+            streaming = streaming,
         ).narrativeText
         val projection = withContext(projectionDispatcher) {
             compiler.projectAssistantOutput(
@@ -842,7 +852,7 @@ class ChatViewModel(
                 character = record.character,
                 persona = record.persona,
                 preset = preset,
-                runtimeState = record.runtimeState,
+                runtimeState = projectionRuntime,
                 history = history,
                 conversationId = record.id,
                 generationId = generationId,
