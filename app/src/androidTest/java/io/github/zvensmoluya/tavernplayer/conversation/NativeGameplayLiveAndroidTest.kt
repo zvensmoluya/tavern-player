@@ -45,6 +45,115 @@ class NativeGameplayLiveAndroidTest {
     @Test fun pressureGameplayChoicesAcrossMultipleTurns() = verify("pressure-gameplay")
     @Test fun confirmSavedReplyWithLiveModel() = verify("recovery-replay")
     @Test fun secondPressurePreservesProgressionAndHistoricalPanels() = verify("second-pressure")
+    @Test fun secondPressureMemoriesReachNextPrompt() = verify("second-pressure-memory")
+    @Test fun savedSecondPressureMemoryExperiment() = verify("memory-experiment")
+
+    private fun memoryExperiment(
+        graph: AppGraph,
+        gateway: ConversationGenerator,
+        connection: io.github.zvensmoluya.tavernplayer.connections.StoredConnection,
+        preset: PresetAsset,
+        output: File,
+        progress: (String) -> Unit,
+    ) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val sourceFile = File(context.cacheDir, "native-live-replay.json")
+        assumeTrue("explicit saved real conversation is required", sourceFile.isFile)
+        val source = Json.decodeFromString<ConversationRecord>(sourceFile.readText())
+        assertEquals(3, source.character.nativeAdaptation?.memories?.size)
+        val seed = runBlocking { graph.conversationRepository.save(source.copy(id = java.util.UUID.randomUUID().toString(), draft = "")) }
+        File(output, "input.json").writeText(Json.encodeToString(seed))
+        // Exercise real Android preparation before the UI's user-facing error classification.
+        assertNotNull(NativeMemoryController.prepare(seed, source.character.nativeAdaptation!!.memories.first().id, force = true))
+        val requests = java.util.Collections.synchronizedList(mutableListOf<GenerationPlan>())
+        val generator = object : ConversationGenerator {
+            override suspend fun validateTokens(connection: io.github.zvensmoluya.tavernplayer.connections.StoredConnection, plan: GenerationPlan) = gateway.validateTokens(connection, plan)
+            override fun stream(connection: io.github.zvensmoluya.tavernplayer.connections.StoredConnection, plan: GenerationPlan): kotlinx.coroutines.flow.Flow<GenerationEvent> {
+                if (plan.messages.firstOrNull()?.origin?.stage == "conversation-memory-contract") {
+                    requests += plan
+                    File(output, "analysis-request-${requests.size}.json").writeText(Json.encodeToString(plan))
+                    progress("analysis request ${requests.size}")
+                }
+                return gateway.stream(connection, plan)
+            }
+        }
+        fun model(repository: ConversationRepository) = ChatViewModel(graph.connectionRepository, graph.promptCompiler,
+            generator, repository, graph.presetRepository)
+        lateinit var active: ChatViewModel
+        lateinit var route: MutableState<ChatViewModel>
+        compose.runOnUiThread {
+            active = model(graph.conversationRepository).also { it.loadConversation(seed.id) }
+            route = mutableStateOf(active)
+        }
+        compose.setContent { TavernPlayerTheme {
+            ChatRoute(route.value, remember { PresetViewModel(graph.presetRepository) }, {}, {}, {},
+                resolveAssetPath = { character, asset -> graph.characterRepository.assetFile(character, asset)?.absolutePath })
+        } }
+        compose.waitUntil(15_000) { active.uiState.value.selectedConnection?.id == connection.id && !active.uiState.value.busy }
+        fun refresh(name: String): ConversationRecord {
+            compose.onNodeWithTag("openNativeDetails").performClick()
+            compose.onNodeWithTag("refreshConversationMemories").performScrollTo().performClick()
+            compose.waitUntil(600_000) { !active.uiState.value.running }
+            val saved = checkNotNull(ConversationRepository(context.filesDir, PromptCompiler()).get(seed.id))
+            File(output, "$name.json").writeText(Json.encodeToString(saved))
+            File(output, "$name-result.txt").writeText(active.uiState.value.message.orEmpty())
+            assertEquals(active.uiState.value.message, 3, saved.runtimeState.memories.size)
+            assertEquals(seed.runtimeState.conversationState, saved.runtimeState.conversationState)
+            assertEquals(seed.turns.map { it.selected.message }, saved.turns.map { it.selected.message })
+            assertEquals(saved.runtimeState.memories, saved.turns.last().selected.runtimeStateAfter?.memories)
+            compose.onNodeWithTag("memory-toggle-yun-relationship").performScrollTo().performClick()
+            compose.onNodeWithTag("memory-body-yun-relationship").assertExists()
+            instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(output, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+            compose.waitForIdle()
+            return saved
+        }
+        val first = refresh("analysis-first")
+        assertEquals(3, requests.size)
+        compose.runOnUiThread {
+            active = model(ConversationRepository(context.filesDir, PromptCompiler())).also { it.loadConversation(seed.id) }
+            route.value = active
+        }
+        compose.waitUntil(15_000) { active.uiState.value.selectedConnection?.id == connection.id && !active.uiState.value.busy }
+        assertEquals(first.runtimeState.memories, active.uiState.value.memories)
+        assertEquals("reopening must not trigger analysis", 3, requests.size)
+        val updated = refresh("analysis-refresh")
+        assertEquals(6, requests.size)
+        for (request in requests.takeLast(3)) {
+            val id = request.messages.first().origin.sourceIds.single()
+            assertTrue(request.messages.last().content.contains(first.runtimeState.memories.getValue(id).content.let {
+                JsonPrimitive(it).toString().removeSurrounding("\"" )
+            }))
+        }
+        progress("six analyses saved; repository and screen restored; previous analyses reached refresh")
+        val nextUser = ConversationMessage("comparison-user", MessageRole.USER,
+            "午饭后我准备出门买纸墨，问她们有没有需要顺路带的东西。只继续普通日常，自然保持现有关系，不突然和解，也不要制造新冲突。", seed.persona.name)
+        val instant = java.time.Instant.now()
+        for ((label, runtime) in listOf("without-analysis" to updated.runtimeState.copy(memories = emptyMap()), "with-analysis" to updated.runtimeState)) {
+            val compiled = graph.promptCompiler.compile(NormalGenerationInput(character = updated.character, persona = updated.persona,
+                history = updated.turns.map { it.selected.message } + nextUser, preset = preset, runtimeState = runtime,
+                conversationId = updated.id, generationId = "comparison", inputText = nextUser.content,
+                modelId = connection.selectedModel, modelOutputTokens = 16384, evaluationInstant = instant))
+            assertTrue(compiled.toString(), compiled is CompilationResult.Success)
+            val plan = (compiled as CompilationResult.Success).plan
+            val text = plan.messages.joinToString("\n") { it.content }
+            updated.runtimeState.memories.values.forEach { note -> assertEquals(label, label == "with-analysis", note.content in text) }
+            File(output, "$label-request.json").writeText(Json.encodeToString(plan))
+            progress("comparison $label")
+            val events = runBlocking { gateway.stream(connection, plan).toList() }
+            val response = events.filterIsInstance<GenerationEvent.TextDelta>().joinToString("") { it.text }
+            File(output, "$label.txt").writeText(response)
+            File(output, "$label-result.txt").writeText("finish=${events.filterIsInstance<GenerationEvent.Finished>().lastOrNull()?.reason}\nusage=${events.filterIsInstance<GenerationEvent.Usage>().lastOrNull()?.value}\n")
+            assertTrue(response.isNotBlank())
+            assertTrue(events.filterIsInstance<GenerationEvent.Finished>().lastOrNull()?.reason in setOf("completed", "stop", "end_turn", "STOP"))
+        }
+        File(output, "result.txt").writeText("memory experiment passed\nmodel=${connection.selectedModel}\nSix live analyses; fresh repository and view model; two matched-history continuations.\nCadence is tested deterministically, not by a live 30-turn run.\n")
+        progress("memory experiment complete")
+    }
 
     private fun verify(scenario: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -135,6 +244,11 @@ class NativeGameplayLiveAndroidTest {
                     reasoningEffort = PresetReasoningEffort.LOW,
                     disabledParameters = importedPreset.preset.generationSettings.disabledParameters - setOf(PresetGenerationParameter.OUTPUT_LIMIT, PresetGenerationParameter.REASONING_EFFORT)),
             )).also { graph.presetRepository.activate(it.id) }
+        }
+        if (scenario == "memory-experiment") {
+            memoryExperiment(graph, ModelGatewayConversationGenerator(ModelGateway(graph.credentialStore, observedClient),
+                graph.connectionRepository), connection, preset, output, ::progress)
+            return
         }
         fun install(card: String, fixture: String): CharacterAsset = runBlocking {
             val saved = graph.characterRepository.import(assets.open(card).use { it.readBytes() }, card) as CharacterSaveResult.Saved
@@ -322,7 +436,7 @@ class NativeGameplayLiveAndroidTest {
             val disk = ConversationRepository(context.filesDir, PromptCompiler()).get(pressureRecord.id)
             assertTrue("Persisted runtime differs after reopening the conversation repository", savedPressure.runtimeState == disk?.runtimeState)
         }
-        if (scenario == "second-pressure") {
+        if (scenario == "second-pressure" || scenario == "second-pressure-memory") {
             val restoredRepository = ConversationRepository(context.filesDir, PromptCompiler())
             val secondRecord = runBlocking { restoredRepository.create(secondPressure, Persona("native-live", "林澈"), preset) }
             compose.runOnUiThread {
@@ -362,6 +476,39 @@ class NativeGameplayLiveAndroidTest {
             File(output, "second-pressure-second.txt").writeText(secondState.messages.last().message.sourceText)
             assertTrue(savedSecond.runtimeState == ConversationRepository(context.filesDir, PromptCompiler()).get(secondRecord.id)?.runtimeState)
             screenshot("second-pressure-second")
+            if (scenario == "second-pressure-memory") {
+                val beforeMemory = active.uiState.value.conversationState
+                val beforeTurns = active.uiState.value.messages.size
+                compose.onNodeWithTag("openNativeDetails").performClick()
+                compose.onNodeWithTag("refreshConversationMemories").performScrollTo().performClick()
+                progress("waiting for three source-bound memory analyses")
+                compose.waitUntil(600_000) { !active.uiState.value.running }
+                val afterMemory = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(secondRecord.id))
+                File(output, "second-memory.json").writeText(Json.encodeToString(afterMemory))
+                File(output, "second-memory-result.txt").writeText(active.uiState.value.message.orEmpty())
+                assertEquals(active.uiState.value.message, 3, afterMemory.runtimeState.memories.size)
+                assertEquals(beforeMemory, active.uiState.value.conversationState)
+                assertEquals(beforeTurns, active.uiState.value.messages.size)
+                afterMemory.runtimeState.memories.forEach { (id, note) ->
+                    assertTrue(note.content.isNotBlank())
+                    assertEquals(afterMemory.turns.map { it.selected.id }, note.sourceVariantIds)
+                    assertEquals(afterMemory.runtimeState.memories, afterMemory.turns.last().selected.runtimeStateAfter?.memories)
+                }
+                compose.onNodeWithTag("memory-toggle-yun-relationship").performScrollTo().performClick()
+                compose.onNodeWithTag("memory-body-yun-relationship").assertExists()
+                screenshot("second-memory-details")
+                // Dismiss the sheet through Android back; the next turn uses the saved checkpoint.
+                instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                compose.waitForIdle()
+                compose.runOnUiThread { active.updateInput("午饭后继续普通日常。我请她们各自安排下午的休息，不制造新的冲突，也不突然改变现有关系。") }
+                compose.onNodeWithTag("sendMessage").performClick()
+                awaitReply("second-memory-next-turn")
+                val prompt = checkNotNull(active.uiState.value.lastTrace?.plan)
+                afterMemory.runtimeState.memories.values.forEach { note ->
+                    assertTrue("memory must reach the actual next request", prompt.messages.any { note.content in it.content })
+                }
+                progress("three analyses persisted and reached the next actual request")
+            }
         }
         File(output, "result.txt").writeText("scenario=$scenario passed\npreset=${preset.name}\nmodel=${connection.selectedModel}\n")
     }

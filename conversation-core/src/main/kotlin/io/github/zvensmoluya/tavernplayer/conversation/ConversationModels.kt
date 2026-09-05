@@ -137,8 +137,19 @@ data class ConversationRuntimeState(
     val worldBookActivationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
     val conversationState: ConversationStateSnapshot = ConversationStateSnapshot(),
     val setupCommit: ConversationSetupCommit? = null,
+    val memories: Map<String, ConversationMemory> = emptyMap(),
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
+)
+
+@Serializable
+data class ConversationMemory(
+    val content: String,
+    val sourceVariantIds: List<String>,
+    val assistantReplyCount: Int,
+    val model: String,
+    val inputTokens: Long? = null,
+    val outputTokens: Long? = null,
 )
 
 @Serializable

@@ -372,9 +372,18 @@ class PromptCompiler(
         diagnostics += worldBookText.diagnostics
         trace += worldBookText.trace
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
+        val memoryEntries = try {
+            NativeMemoryController.entries(input.character, input.runtimeState)
+        } catch (_: IllegalArgumentException) {
+            return CompilationResult.Failure(diagnostics + error("INVALID_CONVERSATION_MEMORY", "对话记忆与当前适配不匹配"), trace)
+        } catch (_: NoSuchElementException) {
+            return CompilationResult.Failure(diagnostics + error("INVALID_CONVERSATION_MEMORY", "对话记忆引用已不存在"), trace)
+        }
         val activation = worldBookEngine.activate(
-            books = worldBookText.books,
-            characterText = characterScanText,
+            books = if (memoryEntries.isEmpty()) worldBookText.books else listOf(
+                io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition(NativeMemoryController.BOOK_ID, entries = memoryEntries)
+            ) + worldBookText.books,
+            characterText = (listOf(characterScanText) + memoryEntries.map { it.content }).joinToString("\n"),
             projectedHistory = projectedHistory.map { message ->
                 ConversationMessage(
                     id = message.origin.sourceIds.firstOrNull().orEmpty(),
@@ -390,6 +399,7 @@ class PromptCompiler(
             activationOverrides = input.runtimeState.worldBookActivationOverrides,
             turnIndex = input.runtimeState.generationIndex,
             inputBudgetTokens = (contextLimit - outputLimit).coerceAtLeast(0),
+            literalEntryIds = memoryEntries.map { it.id }.toSet(),
         )
         diagnostics += activation.diagnostics
         trace += activation.trace
@@ -427,7 +437,18 @@ class PromptCompiler(
                     transaction,
                     diagnostics,
                     trace,
-                )?.let(resolved::add)
+                )?.let { ordinary ->
+                    resolved += ordinary
+                    if (prompt.identifier == WORLD_INFO_BEFORE_MARKER) {
+                        activation.injections.filter { it.literal }.forEach { memory ->
+                            resolved += ResolvedPrompt(
+                                definition = prompt.copy(identifier = "native-memory-${memory.entryIds.joinToString("-")}"),
+                                content = memory.content,
+                                worldBookEntryIds = memory.entryIds,
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -811,7 +832,7 @@ class PromptCompiler(
         val dynamic = when (prompt.identifier) {
             WORLD_INFO_BEFORE_MARKER -> formatWorldInfo(
                 input.preset.controlSettings.worldInfoFormat,
-                world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER }.joinToString("\n") { it.content },
+                world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER && !it.literal }.joinToString("\n") { it.content },
             )
             WORLD_INFO_AFTER_MARKER -> formatWorldInfo(
                 input.preset.controlSettings.worldInfoFormat,
@@ -852,7 +873,7 @@ class PromptCompiler(
         }
         val content = expand(candidate, prompt.identifier, expansionContext, transaction, diagnostics)
         val entryIds = when (prompt.identifier) {
-            WORLD_INFO_BEFORE_MARKER -> world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER }.flatMap(WorldBookInjection::entryIds)
+            WORLD_INFO_BEFORE_MARKER -> world.filter { it.position == WorldBookPosition.BEFORE_CHARACTER && !it.literal }.flatMap(WorldBookInjection::entryIds)
             WORLD_INFO_AFTER_MARKER -> world.filter { it.position == WorldBookPosition.AFTER_CHARACTER }.flatMap(WorldBookInjection::entryIds)
             else -> emptyList()
         }

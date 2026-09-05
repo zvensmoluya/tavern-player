@@ -45,6 +45,186 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    private fun memoryCharacter(): io.github.zvensmoluya.tavernplayer.content.CharacterAsset {
+        val entry = WorldBookEntryDefinition("memory-instruction", content = "记住已经一起完成的事情。", enabled = false)
+        val reference = io.github.zvensmoluya.tavernplayer.content.NativeWorldBookReference("memory-source", entry.id,
+            io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator.sha256(entry.content))
+        val original = DemoConversationContent.character
+        return original.copy(worldBooks = listOf(WorldBookDefinition("memory-source", entries = listOf(entry))),
+            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256, memories = listOf(
+                io.github.zvensmoluya.tavernplayer.content.NativeMemoryDefinition("journey", "旅行记忆", reference, firstReply = 2, everyReplies = 2))))
+    }
+
+    @Test fun `automatic memory persists with candidates reaches next prompt and invalidates on text edit`() = runTest {
+        val directory = Files.createTempDirectory("conversation-memory").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
+            var analyses = 0
+            var latestMainPrompt = ""
+            val generator = FakeGenerator { _, plan -> flow {
+                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
+                    emit(GenerationEvent.TextDelta("旅行笔记 ${++analyses}"))
+                } else {
+                    latestMainPrompt = plan.messages.joinToString("\n") { it.content }
+                    emit(GenerationEvent.TextDelta("我们抵达河边。"))
+                }
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("出发吧。")
+            vm.send()
+            assertEquals(1, analyses)
+            assertEquals("旅行笔记 1", vm.uiState.value.memories.getValue("journey").content)
+            assertEquals(vm.uiState.value.memories, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.memories)
+            vm.regenerate()
+            assertEquals(2, analyses)
+            assertEquals("旅行笔记 2", vm.uiState.value.memories.getValue("journey").content)
+            vm.previousVariant()
+            assertEquals("旅行笔记 1", vm.uiState.value.memories.getValue("journey").content)
+            vm.nextVariant()
+            assertEquals("旅行笔记 2", vm.uiState.value.memories.getValue("journey").content)
+            vm.updateInput("继续散步。")
+            vm.send()
+            assertTrue(latestMainPrompt.contains("旅行笔记 2"))
+            assertFalse(latestMainPrompt.contains("旅行笔记 1"))
+            assertEquals(2, analyses)
+            val message = vm.uiState.value.messages.first { it.message.role == MessageRole.USER }.message
+            vm.editMessage(message.id, "沿着河道出发吧。", MessageEditMode.TEXT_ONLY)
+            assertTrue(vm.uiState.value.memories.isEmpty())
+            assertTrue(ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.memories.isEmpty())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `unconfirmed numeric state does not block independent text analysis or become confirmed`() = runTest {
+        val directory = Files.createTempDirectory("memory-unconfirmed-state").toFile()
+        try {
+            val original = memoryCharacter()
+            val character = original.copy(nativeAdaptation = original.nativeAdaptation!!.copy(
+                state = listOf(ConversationStateDefinition("score", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(0))),
+                assistantStateAdapters = listOf(AssistantStateAdapterDefinition(LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1,
+                    listOf(AssistantStateMapping("/score", "score"))))))
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            var evidence = ""
+            val generator = FakeGenerator { _, plan -> flow {
+                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
+                    evidence = plan.messages.last().content
+                    emit(GenerationEvent.TextDelta("已经出发；分数变化未确认。"))
+                } else emit(GenerationEvent.TextDelta("我们沿河出发。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("出发吧。")
+            vm.send()
+            assertTrue(evidence.contains("\"stateConfirmedForLastReply\":false"))
+            assertEquals("已经出发；分数变化未确认。", vm.uiState.value.memories.getValue("journey").content)
+            assertTrue(vm.uiState.value.messages.last().stateUnconfirmed)
+            assertEquals(JsonPrimitive(0), vm.uiState.value.conversationState["score"])
+            assertNull(conversations.get(saved.id)!!.turns.last().selected.message.stateConfirmation)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `cancelled memory preserves completed reply and can be retried without another chat turn`() = runTest {
+        val directory = Files.createTempDirectory("cancel-memory").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
+            var analyses = 0
+            val generator = FakeGenerator { _, plan -> flow {
+                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
+                    if (++analyses == 1) awaitCancellation()
+                    emit(GenerationEvent.TextDelta("完成的记忆"))
+                } else emit(GenerationEvent.TextDelta("已完成的正文。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("出发。")
+            vm.send()
+            vm.cancel()
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+            assertTrue(vm.uiState.value.memories.isEmpty())
+            vm.refreshMemories()
+            assertEquals(2, analyses)
+            assertEquals(3, vm.uiState.value.messages.size)
+            assertEquals("完成的记忆", vm.uiState.value.memories.getValue("journey").content)
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `cancelling during memory save commits once and stops remaining analyses`() = runTest {
+        val directory = Files.createTempDirectory("memory-save-cancellation").toFile()
+        try {
+            lateinit var vm: ChatViewModel
+            var cancelAtSave = false
+            var analyses = 0
+            val finishAnalysis = CompletableDeferred<Unit>()
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, now = {
+                if (cancelAtSave && vm.uiState.value.memorySaving) {
+                    cancelAtSave = false
+                    vm.cancel()
+                    vm.updateInput("must not replace the draft during save")
+                    vm.resetConversation()
+                }
+                1L
+            })
+            val original = memoryCharacter()
+            val adaptation = original.nativeAdaptation!!
+            val saved = conversations.create(original.copy(nativeAdaptation = adaptation.copy(memories =
+                adaptation.memories + adaptation.memories.single().copy(id = "second"))), DemoConversationContent.persona, DemoConversationContent.preset)
+            val generator = FakeGenerator { _, plan -> flow {
+                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
+                    analyses++
+                    emit(GenerationEvent.TextDelta("已保存的旅行记忆"))
+                    finishAnalysis.await()
+                    cancelAtSave = true
+                } else emit(GenerationEvent.TextDelta("我们沿河出发。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("出发吧。")
+            vm.send()
+            finishAnalysis.complete(Unit)
+            assertFalse(vm.uiState.value.running)
+            assertFalse(vm.uiState.value.memorySaving)
+            assertEquals(1, analyses)
+            assertEquals("", vm.uiState.value.input)
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+            val restored = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertEquals(vm.uiState.value.memories, restored.runtimeState.memories)
+            assertEquals(setOf("journey"), restored.runtimeState.memories.keys)
+            assertEquals(restored.runtimeState.memories, restored.turns.last().selected.runtimeStateAfter?.memories)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `typing during analysis preserves draft and rejects obsolete memory`() = runTest {
+        val directory = Files.createTempDirectory("stale-memory").toFile()
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
+            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
+            lateinit var vm: ChatViewModel
+            val generator = FakeGenerator { _, plan -> flow {
+                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
+                    vm.updateInput("下一轮草稿")
+                    emit(GenerationEvent.TextDelta("迟到的记忆"))
+                } else emit(GenerationEvent.TextDelta("正文。"))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("出发。")
+            vm.send()
+            assertEquals("下一轮草稿", vm.uiState.value.input)
+            assertEquals("下一轮草稿", ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.draft)
+            assertTrue(vm.uiState.value.memories.isEmpty())
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+        } finally { directory.deleteRecursively() }
+    }
+
     private fun choiceAdaptation() = NativeAdaptation(sourceSha256 = "a".repeat(64), state = listOf(
         ConversationStateDefinition("phase", "阶段", ConversationStateValueType.STRING, initialValue = JsonPrimitive("探索中"), allowedStrings = listOf("探索中", "营地")),
         ConversationStateDefinition("outcome", "结果", ConversationStateValueType.STRING, initialValue = JsonPrimitive("进行中"), allowedStrings = listOf("进行中", "已撤离"))),

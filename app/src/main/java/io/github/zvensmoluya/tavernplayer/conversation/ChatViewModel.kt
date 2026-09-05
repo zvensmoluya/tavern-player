@@ -23,6 +23,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,6 +62,7 @@ data class ChatMessageState(
     val openingSourceIndex: Int? = null,
     val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
     val nativeStateAfter: Map<String, kotlinx.serialization.json.JsonElement>? = null,
+    val memoriesAfter: Map<String, ConversationMemory> = emptyMap(),
 )
 
 data class NativeOpeningChoice(val sourceIndex: Int, val title: String, val selected: Boolean)
@@ -76,6 +79,8 @@ data class GenerationTraceState(
 )
 
 data class ChatUiState(
+    val memories: Map<String, ConversationMemory> = emptyMap(),
+    val memorySaving: Boolean = false,
     val conversationId: String? = null,
     val character: CharacterSnapshot = EMPTY_CHARACTER,
     val persona: Persona = Persona("traveler", "旅人"),
@@ -102,7 +107,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving || choiceSaving || loadingConversation
+    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || loadingConversation
     val openingChoices: List<NativeOpeningChoice> get() {
         val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
         return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
@@ -181,7 +186,7 @@ class ChatViewModel(
     }
 
     fun loadConversation(conversationId: String) {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
         if (conversationRepository?.get(conversationId) == null) return
         if (generationJob != null || persistenceJob != null || persistenceDirty) {
             _uiState.update { it.copy(loadingConversation = true) }
@@ -219,7 +224,7 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
         record = record.withDraft(value)
         _uiState.update { it.copy(input = value, message = null, nativeChoices = NativePlayerChoiceController().options(record)) }
         schedulePersist()
@@ -561,6 +566,7 @@ class ChatViewModel(
                         runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore,
                     )
                 }
+                record = NativeMemoryController.invalidate(record, selected.id)
                 val retainedMessageIds = record.turns
                     .flatMap { item -> item.variants.map { it.message.id } }
                     .toSet()
@@ -622,7 +628,7 @@ class ChatViewModel(
     }
 
     fun resetConversation() {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving) return
         generationJob?.cancel()
         val previous = record
         record = fallbackRecord(
@@ -830,6 +836,7 @@ class ChatViewModel(
         persistNow()
 
         generationJob = viewModelScope.launch {
+            var replyCompleted = false
             try {
                 generator.stream(connection, finalPlan).collect { event ->
                     applyEvent(
@@ -844,15 +851,26 @@ class ChatViewModel(
                 }
                 reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 finishIfStreamEnded(variant.id)
-            } catch (cancelled: CancellationException) {
-                withContext(NonCancellable) {
-                    reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                replyCompleted = record.findVariant(variant.id)?.status == PersistedMessageStatus.COMPLETE
+                if (replyCompleted && record.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) {
+                    persistNow()
+                    updateMemories(connection)
                 }
-                finishFailure(variant.id, cancelled = true, error = null)
+            } catch (cancelled: CancellationException) {
+                if (!replyCompleted) {
+                    withContext(NonCancellable) {
+                        reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                    }
+                    finishFailure(variant.id, cancelled = true, error = null)
+                } else {
+                    _uiState.update { it.copy(message = "已停止记忆更新，正文已保留") }
+                }
                 throw cancelled
             } catch (error: Exception) {
-                reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
-                finishFailure(variant.id, cancelled = false, error = error)
+                if (!replyCompleted) {
+                    reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                    finishFailure(variant.id, cancelled = false, error = error)
+                } else _uiState.update { it.copy(message = "正文后的保存或记忆更新失败：${error.userMessage()}") }
             } finally {
                 withContext(NonCancellable) {
                     try {
@@ -867,6 +885,78 @@ class ChatViewModel(
                         _uiState.update { it.copy(running = false) }
                     }
                 }
+            }
+        }
+    }
+
+    fun refreshMemories() {
+        if (_uiState.value.busy) return
+        val connection = _uiState.value.selectedConnection ?: return
+        _uiState.update { it.copy(running = true) }
+        generationJob = viewModelScope.launch {
+            try {
+                persistNow()
+                updateMemories(connection, force = true)
+            } catch (cancelled: CancellationException) {
+                _uiState.update { it.copy(message = "已停止记忆更新") }
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "记忆更新失败：${error.userMessage()}") }
+            } finally {
+                withContext(NonCancellable) {
+                    try { persistNow() } catch (_: Exception) { _uiState.update { it.copy(message = "对话保存失败") } }
+                }
+                generationJob = null
+                _uiState.update { it.copy(running = false) }
+            }
+        }
+    }
+
+    private suspend fun updateMemories(connection: StoredConnection, force: Boolean = false) {
+        val adaptation = record.character.nativeAdaptation ?: return
+        if (adaptation.memories.isEmpty()) return
+        for (definition in adaptation.memories) {
+            currentCoroutineContext().ensureActive()
+            try {
+                val request = NativeMemoryController.prepare(record, definition.id, force) ?: continue
+                _uiState.update { it.copy(message = "正在更新记忆：${definition.title}") }
+                val validation = generator.validateTokens(connection, request.plan)
+                val limit = request.plan.declaredContextTokens
+                require(validation == null || limit == null || validation.inputTokens.toLong() + request.plan.maxOutputTokens <= limit) {
+                    "记忆上下文超限"
+                }
+                val output = StringBuilder()
+                var finished = false
+                var usage: GenerationUsage? = null
+                generator.stream(connection, request.plan).collect { event -> when (event) {
+                    is GenerationEvent.TextDelta -> {
+                        require(output.length.toLong() + event.text.length <= NativeMemoryController.MAX_CONTENT_CHARS)
+                        output.append(event.text)
+                    }
+                    is GenerationEvent.Usage -> usage = event.value
+                    is GenerationEvent.Finished -> finished = event.reason in setOf("completed", "stop", "end_turn", "STOP")
+                    else -> Unit
+                } }
+                check(finished) { "记忆分析没有完整结束" }
+                _uiState.update { it.copy(memorySaving = true) }
+                try {
+                    val scheduled = persistenceJob
+                    persistenceJob = null
+                    scheduled?.cancelAndJoin()
+                    withContext(NonCancellable) {
+                        val proposed = NativeMemoryController.commit(request, record, output.toString(), connection.selectedModel,
+                            usage?.inputTokens, usage?.outputTokens)
+                        record = conversationRepository?.save(proposed) ?: proposed
+                        persistenceDirty = false
+                        syncRecord(running = true, message = "记忆已更新：${definition.title}", trace = _uiState.value.lastTrace)
+                    }
+                } finally { _uiState.update { it.copy(memorySaving = false) } }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) {
+                val reason = if (error is IllegalArgumentException) "对话已变化、资料无效或上下文超限" else error.userMessage()
+                _uiState.update { it.copy(message = "记忆更新失败（${definition.title}）：$reason；原记忆保留，可在详情中重试") }
+                updateTrace { copy(streamDiagnostics = (streamDiagnostics + "记忆 ${definition.id} 更新失败：$reason").takeLast(30)) }
+                return
             }
         }
     }
@@ -1138,7 +1228,8 @@ class ChatViewModel(
             lastTrace = trace,
             displayContents = displayCache,
             displayReasoning = displayReasoningCache,
-        ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving)
+        ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving,
+            memorySaving = current.memorySaving)
     }
 
     private fun showCompilationFailure(
@@ -1390,6 +1481,7 @@ private fun ConversationRecord.toUiState(
             playerChoiceCommits = variant.playerChoiceCommits,
             nativeStateAfter = if (turn.role == MessageRole.ASSISTANT && variant.status != PersistedMessageStatus.STREAMING &&
                 character.nativeAdaptation?.status != null) variant.runtimeStateAfter?.conversationState?.values else null,
+            memoriesAfter = variant.runtimeStateAfter?.memories.orEmpty(),
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
                 NativeAdaptationRuntime().projectAssistantMessage(
@@ -1412,6 +1504,7 @@ private fun ConversationRecord.toUiState(
     message = message,
     lastTrace = lastTrace ?: persistedTrace(),
     conversationState = runtimeState.conversationState.values,
+    memories = runtimeState.memories,
     nativeStatus = character.nativeAdaptation?.status,
     nativeScenes = character.nativeAdaptation?.scenes.orEmpty(),
     nativeCollections = character.nativeAdaptation?.collections.orEmpty(),

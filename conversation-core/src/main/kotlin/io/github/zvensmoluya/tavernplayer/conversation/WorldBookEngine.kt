@@ -22,6 +22,7 @@ data class WorldBookInjection(
     val outletName: String = "",
     val content: String,
     val entryIds: List<String>,
+    val literal: Boolean = false,
 )
 
 data class WorldBookActivationResult(
@@ -50,6 +51,7 @@ class WorldBookEngine(
         activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turnIndex: Int,
         inputBudgetTokens: Int,
+        literalEntryIds: Set<String> = emptySet(),
     ): WorldBookActivationResult {
         if (books.isEmpty()) {
             return WorldBookActivationResult(emptyList(), emptyList(), previousState, emptyList(), emptyList(), 0, 0)
@@ -125,6 +127,7 @@ class WorldBookEngine(
         }
 
         val evaluated = activated.mapNotNull { entry ->
+            if (entry.id in literalEntryIds) return@mapNotNull entry to entry.content
             val regexed = regexEngine.apply(
                 text = entry.content,
                 rules = regexRules,
@@ -140,7 +143,7 @@ class WorldBookEngine(
             expanded.text.takeIf(String::isNotBlank)?.let { entry to it }
         }
         val injections = evaluated
-            .groupBy { (entry, _) -> InjectionKey(entry.position, entry.depth, entry.role, entry.outletName) }
+            .groupBy { (entry, _) -> InjectionKey(entry.position, entry.depth, entry.role, entry.outletName, entry.id in literalEntryIds) }
             .map { (key, values) ->
                 WorldBookInjection(
                     position = key.position,
@@ -149,6 +152,7 @@ class WorldBookEngine(
                     outletName = key.outletName,
                     content = values.sortedBy { it.first.insertionOrder }.joinToString("\n") { it.second },
                     entryIds = values.map { it.first.id },
+                    literal = key.literal,
                 )
             }
 
@@ -470,6 +474,7 @@ class WorldBookEngine(
         val depth: Int,
         val role: ContentRole,
         val outletName: String,
+        val literal: Boolean,
     )
 
     private data class BookActivationCandidates(

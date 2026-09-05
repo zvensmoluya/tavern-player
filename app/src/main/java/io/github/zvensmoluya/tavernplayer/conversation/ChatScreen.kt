@@ -87,6 +87,7 @@ fun ChatRoute(
             previewPlayerChoice = viewModel::previewPlayerChoice,
             confirmPlayerChoice = viewModel::confirmPlayerChoice,
             cancelPlayerChoice = viewModel::cancelPlayerChoice,
+            refreshMemories = viewModel::refreshMemories,
         ),
     )
 }
@@ -111,6 +112,7 @@ data class ChatScreenActions(
     val previewPlayerChoice: (String) -> Unit = {},
     val confirmPlayerChoice: () -> Unit = {},
     val cancelPlayerChoice: () -> Unit = {},
+    val refreshMemories: () -> Unit = {},
 )
 
 private data class PendingMessageEdit(
@@ -201,7 +203,7 @@ fun ChatScreen(
         },
         bottomBar = {
             Column {
-                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide) {
+                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide || state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) {
                     TextButton(
                         onClick = { nativeDetailsVisible = true },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("openNativeDetails"),
@@ -352,6 +354,26 @@ fun ChatScreen(
                     NativeSceneCard(scene, state.conversationState) { resolveAssetPath(state.character.assetId, it) }
                 } }
                 state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.conversationState) } }
+                if (state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("对话记忆", style = MaterialTheme.typography.titleLarge)
+                        Text("模型依据已发生的对话整理的分析，会影响后续回复。切换候选时随之恢复。", style = MaterialTheme.typography.bodySmall)
+                        state.character.nativeAdaptation?.memories.orEmpty().forEach { definition ->
+                            Text(definition.title, style = MaterialTheme.typography.titleMedium)
+                            val note = state.memories[definition.id]
+                            if (note == null) Text("尚未生成") else {
+                                Text("更新于第 ${note.assistantReplyCount} 条助手回复 · ${note.model}", style = MaterialTheme.typography.labelSmall)
+                                var expanded by remember(definition.id, note) { mutableStateOf(false) }
+                                TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("memory-toggle-${definition.id}")) {
+                                    Text(if (expanded) "收起分析" else "查看分析")
+                                }
+                                if (expanded) Text(note.content, modifier = Modifier.testTag("memory-body-${definition.id}"))
+                            }
+                        }
+                        OutlinedButton(onClick = actions.refreshMemories, enabled = !state.busy && state.selectedConnection != null && state.messages.lastOrNull()?.metadata != null,
+                            modifier = Modifier.testTag("refreshConversationMemories")) { Text("更新记忆") }
+                    }
+                }
             }
         }
     }
@@ -363,7 +385,7 @@ fun ChatScreen(
     state.messages.firstOrNull { it.message.id == historicalStateMessageId }?.let { historical ->
         val status = state.nativeStatus
         val values = historical.nativeStateAfter
-        if (status != null && values != null) ModalBottomSheet(onDismissRequest = { historicalStateMessageId = null },
+        if ((status != null && values != null) || historical.memoriesAfter.isNotEmpty()) ModalBottomSheet(onDismissRequest = { historicalStateMessageId = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             LazyColumn(Modifier.fillMaxWidth().testTag("historicalNativeState"), contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -372,7 +394,11 @@ fun ChatScreen(
                     if (historical.stateUnconfirmed) Text("本轮状态未确认，显示保留下来的记录", color = MaterialTheme.colorScheme.error)
                     if (historical.playerChoiceCommits.isNotEmpty()) Text("包含你在此候选中确认的选择", style = MaterialTheme.typography.bodySmall)
                 }
-                item { NativeStatusCard(status.copy(title = ""), values) }
+                if (status != null && values != null) item { NativeStatusCard(status.copy(title = ""), values) }
+                historical.memoriesAfter.forEach { (id, note) -> item {
+                    Text(state.character.nativeAdaptation?.memories?.find { it.id == id }?.title ?: id, style = MaterialTheme.typography.titleMedium)
+                    Text(note.content)
+                } }
             }
         }
     }
@@ -630,7 +656,7 @@ private fun MessageBubble(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (state.nativeStateAfter != null) {
+                        if (state.nativeStateAfter != null || state.memoriesAfter.isNotEmpty()) {
                             TextButton(onClick = onViewState, modifier = Modifier.testTag("viewNativeState-${state.message.id}")) { Text("状态") }
                         }
                         if (state.edited) {

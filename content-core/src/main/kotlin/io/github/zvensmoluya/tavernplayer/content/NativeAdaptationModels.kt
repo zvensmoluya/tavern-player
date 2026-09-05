@@ -27,8 +27,23 @@ data class NativeAdaptation(
     val worldBookTextSelections: List<NativeWorldBookTextSelection> = emptyList(),
     val playerChoices: List<NativePlayerChoice> = emptyList(),
     val guide: NativeGuideView? = null,
+    val memories: List<NativeMemoryDefinition> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
 )
+
+/** 固定的对话记忆刷新流程；引用分析要求和资料，不提供脚本、动作或网络配置。 */
+@Serializable
+data class NativeMemoryDefinition(
+    val id: String,
+    val title: String,
+    val instruction: NativeWorldBookReference,
+    val references: List<NativeWorldBookReference> = emptyList(),
+    val firstReply: Int,
+    val everyReplies: Int,
+)
+
+@Serializable
+data class NativeWorldBookReference(val bookId: String, val entryId: String, val sourceContentSha256: String)
 
 /** 只读说明书：引用同一原卡显示规则中的静态文字，不运行该规则或网页。 */
 @Serializable

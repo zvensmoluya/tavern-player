@@ -50,12 +50,73 @@
     "sourcePrefix":{"start":0,"endExclusive":46},
     "sourceSuffix":{"start":689,"endExclusive":706}
   }],
+  "memories":[
+    {
+      "id": "yun-relationship",
+      "title": "云知意关系记忆",
+      "instruction": {
+        "bookId": "book-b7cf04e3198ffc3a",
+        "entryId": "book-b7cf04e3198ffc3a:entry:10",
+        "sourceContentSha256": "d66abbc15458d65e473d56edd538bd1e548acb1a88c708f110abc0debafc2035"
+      },
+      "references": [
+        {
+          "bookId": "book-b7cf04e3198ffc3a",
+          "entryId": "book-b7cf04e3198ffc3a:entry:0",
+          "sourceContentSha256": "ae0f5ae0915fab9506648aadabaac2ff2cc1b934d45a745718faeb860aaa74f6"
+        }
+      ],
+      "firstReply": 5,
+      "everyReplies": 15
+    },
+    {
+      "id": "lin-relationship",
+      "title": "林纾璃关系记忆",
+      "instruction": {
+        "bookId": "book-b7cf04e3198ffc3a",
+        "entryId": "book-b7cf04e3198ffc3a:entry:11",
+        "sourceContentSha256": "a97048924a89d8caac25d0186ccad8c2eec082d27a4336a15417652c89309117"
+      },
+      "references": [
+        {
+          "bookId": "book-b7cf04e3198ffc3a",
+          "entryId": "book-b7cf04e3198ffc3a:entry:2",
+          "sourceContentSha256": "56afb464e20236d41ca2226bd8d7d6cbc5bf2eeed3c1d92710baf045bc37181c"
+        }
+      ],
+      "firstReply": 10,
+      "everyReplies": 15
+    },
+    {
+      "id": "shared-relationship",
+      "title": "双人关系记忆",
+      "instruction": {
+        "bookId": "book-b7cf04e3198ffc3a",
+        "entryId": "book-b7cf04e3198ffc3a:entry:12",
+        "sourceContentSha256": "1f736f4238974691a7d3afc100118d633d58536680a06ad3cba7c36b681da2aa"
+      },
+      "references": [
+        {
+          "bookId": "book-b7cf04e3198ffc3a",
+          "entryId": "book-b7cf04e3198ffc3a:entry:0",
+          "sourceContentSha256": "ae0f5ae0915fab9506648aadabaac2ff2cc1b934d45a745718faeb860aaa74f6"
+        },
+        {
+          "bookId": "book-b7cf04e3198ffc3a",
+          "entryId": "book-b7cf04e3198ffc3a:entry:2",
+          "sourceContentSha256": "56afb464e20236d41ca2226bd8d7d6cbc5bf2eeed3c1d92710baf045bc37181c"
+        }
+      ],
+      "firstReply": 15,
+      "everyReplies": 15
+    }
+  ],
   "report":{
     "status":"PARTIAL",
     "summary":"原卡九项状态、好感范围、带剧情锁的关系阶段与每幕资料交给 Player 固定领域。世界书和角色文本保留，模型继续推进剧情。",
-    "restoredBehaviors":["世界日期、时间、天气、两名角色的好感和心情随消息候选保存","好感限制在 0 到 100，天气保留原卡五种选项","关系阶段由好感阈值与隐藏事件共同决定，模型不能直接改写派生阶段","原卡 stat_data 读取包含实时派生阶段","每幕的氛围、日历、心境与袖中语从原回复提取为原生资料，不作为当前持久状态伪造","当前关系阶段选出动态态度原文，保留公共角色指向与标签，不向 Prompt 同时注入其他阶段"],
+    "restoredBehaviors":["世界日期、时间、天气、两名角色的好感和心情随消息候选保存","好感限制在 0 到 100，天气保留原卡五种选项","关系阶段由好感阈值与隐藏事件共同决定，模型不能直接改写派生阶段","原卡 stat_data 读取包含实时派生阶段","每幕的氛围、日历、心境与袖中语从原回复提取为原生资料，不作为当前持久状态伪造","当前关系阶段选出动态态度原文，保留公共角色指向与标签，不向 Prompt 同时注入其他阶段","三份来源绑定的关系分析改用对话记忆，周期刷新并随候选保存，分析文本影响后续 Prompt"],
     "degradedPresentation":["网页字体、动画、折叠布局改为 Player 原生资料面板","按氛围切换的远程图片暂以氛围文字保留，不宣称已经恢复 CG"],
-    "unsupportedBehaviors":["任意 JavaScript、远程 MVU 模块、后台 RUBY 分析任务和宿主按钮未迁移","旧协议 delta/insert/remove 未执行；模型回写使用白名单 replace","动态资源获取未迁移"],
+    "unsupportedBehaviors":["任意 JavaScript、远程 MVU 模块和 RUBY 任意配置未迁移；原生记忆不复刻外部摘要位置及同名资料查找","旧协议 delta/insert/remove 未执行；模型回写使用白名单 replace","动态资源获取未迁移"],
     "warnings":["源文件哈希绑定的手工适配，不是卡名特判","每轮好感增减和事件是否发生仍由原卡剧情规则约束模型，与原卡分工一致；Player 确定性执行范围限制和阶段判定"]
   }
 }
