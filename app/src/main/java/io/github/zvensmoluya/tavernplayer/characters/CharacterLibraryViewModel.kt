@@ -106,11 +106,7 @@ class CharacterLibraryViewModel(
             runCatching { shelfTransferReceiver.receive(transferUrl) }
                 .onSuccess { transfer ->
                     when (transfer.manifest.kind) {
-                        "character" -> importShelfCharacter(
-                            transfer.sourceBytes,
-                            transfer.manifest.filename,
-                            transfer.adaptationBytes,
-                        )
+                        "character" -> importShelfCharacter(transfer.sourceBytes, transfer.manifest.filename)
                         "preset" -> importShelfPreset(transfer.sourceBytes, transfer.manifest.filename)
                         "worldbook" -> _uiState.update {
                             it.copy(importing = false, message = "已识别世界书；当前版本暂不支持独立世界书导入")
@@ -126,16 +122,19 @@ class CharacterLibraryViewModel(
         }
     }
 
-    private suspend fun importShelfCharacter(bytes: ByteArray, fileName: String, adaptationBytes: ByteArray?) {
+    private suspend fun importShelfCharacter(bytes: ByteArray, fileName: String) {
         when (val result = characterRepository.import(bytes, fileName)) {
             is CharacterSaveResult.Saved -> {
-                val adaptation = adaptationBytes?.let { characterRepository.installAdaptation(it) }
                 _uiState.update {
                     it.copy(
                         importing = false,
                         selectedCharacterId = result.character.id,
                         importDiagnostics = result.diagnostics,
-                        message = shelfCharacterMessage(result, adaptation),
+                        message = if (result.duplicate) {
+                            "Shelf 中的这张角色卡已经导入"
+                        } else {
+                            "已从 Shelf 导入 ${result.character.name}"
+                        },
                     )
                 }
             }
@@ -147,19 +146,6 @@ class CharacterLibraryViewModel(
                 )
             }
         }
-    }
-
-    private fun shelfCharacterMessage(
-        result: CharacterSaveResult.Saved,
-        adaptation: AdaptationInstallResult?,
-    ): String = when (adaptation) {
-        is AdaptationInstallResult.Installed -> "已从 Shelf 导入 ${result.character.name}，并启用原生适配"
-        is AdaptationInstallResult.Rejected -> {
-            val reason = adaptation.issues.firstOrNull()?.message ?: "校验失败"
-            "已导入 ${result.character.name}；原生适配未启用：$reason"
-        }
-        AdaptationInstallResult.SourceNotFound -> "已导入 ${result.character.name}；原生适配与原件不匹配"
-        null -> if (result.duplicate) "Shelf 中的这张角色卡已经导入" else "已从 Shelf 导入 ${result.character.name}"
     }
 
     private suspend fun importShelfPreset(bytes: ByteArray, fileName: String) {
@@ -215,6 +201,9 @@ class CharacterLibraryViewModel(
     }
 
     fun avatarPath(characterId: String): String? = characterRepository.avatarFile(characterId)?.absolutePath
+
+    fun assetPath(characterId: String, assetId: String): String? =
+        characterRepository.assetFile(characterId, assetId)?.absolutePath
 
     class Factory(
         private val characterRepository: CharacterRepository,

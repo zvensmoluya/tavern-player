@@ -1,13 +1,15 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
-import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
-import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationView
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateAdapterDefinition
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateMapping
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType
+import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
+import io.github.zvensmoluya.tavernplayer.content.NativeFormField
+import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetControlSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
@@ -101,7 +103,56 @@ class PromptCompilerTest {
             stateMessage.content,
         )
         assertTrue(result.plan.messages.takeWhile { it.role == MessageRole.SYSTEM }.contains(stateMessage))
-        assertTrue(result.plan.trace.any { it.stage == "conversation-state" && "2 scalar values" in it.decision })
+        assertTrue(result.plan.trace.any { it.stage == "conversation-state" && "2 state values" in it.decision })
+    }
+
+    @Test
+    fun `declared legacy adapter projects one bounded model-side state contract`() {
+        val input = baseInput().copy(
+            character = baseInput().character.copy(
+                nativeAdaptation = NativeAdaptation(
+                    sourceSha256 = "a".repeat(64),
+                    state = listOf(
+                        ConversationStateDefinition(
+                            key = "world-day",
+                            type = ConversationStateValueType.NUMBER,
+                            initialValue = JsonPrimitive(1),
+                        ),
+                    ),
+                    assistantStateAdapters = listOf(
+                        AssistantStateAdapterDefinition(
+                            dialect = LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1,
+                            mappings = listOf(AssistantStateMapping("/世界/日期", "world-day")),
+                        ),
+                    ),
+                ),
+            ),
+            runtimeState = ConversationRuntimeState(
+                conversationState = ConversationStateSnapshot(mapOf("world-day" to JsonPrimitive(1))),
+            ),
+        )
+
+        val result = compiler.compile(input) as CompilationResult.Success
+        val contractMessage = result.plan.messages.single { it.origin.sourceIds == listOf("assistantStateContract") }
+        val stateMessage = contractMessage.content
+
+        assertTrue(stateMessage.contains("有状态变化时，回复必须以且只以一个完整的 <UpdateVariable> 块开头"))
+        assertTrue(stateMessage.contains("状态块放在长正文之后"))
+        assertTrue(stateMessage.contains("UPDATE_VARIABLE_JSON_PATCH_V1"))
+        assertTrue(stateMessage.contains("/世界/日期 -> world-day (NUMBER)"))
+        assertTrue(stateMessage.contains("{\"op\":\"replace\""))
+        assertTrue(stateMessage.contains("一个非空的有效 JSON 数组"))
+        assertTrue(stateMessage.contains("必须依次输出 </JSONPatch> 和 </UpdateVariable>"))
+        assertTrue(stateMessage.contains("完整空块，以确认本轮是 no-op"))
+        assertTrue(stateMessage.contains("<JSONPatch>\n[]\n</JSONPatch>"))
+        assertFalse(stateMessage.contains("ALLOWED_JSON_POINTER"))
+        assertFalse(stateMessage.contains("NEW_SCALAR"))
+        assertFalse(stateMessage.contains("\"op\":\"add\""))
+        assertEquals(contractMessage, result.plan.messages.takeWhile { it.role == MessageRole.SYSTEM }.last())
+        val reminder = result.plan.messages.single { it.origin.sourceIds == listOf("assistantStateReminder") }
+        assertEquals(MessageRole.SYSTEM, reminder.role)
+        assertEquals(reminder, result.plan.messages.last())
+        assertTrue(reminder.content.contains("完整空块确认 no-op"))
     }
 
     @Test
@@ -281,31 +332,37 @@ class PromptCompilerTest {
     }
 
     @Test
-    fun `native attachment suppresses claimed character markup regex and removes its marker`() {
+    fun `native form suppresses claimed character markup regex and removes its marker`() {
         val input = baseInput()
-        val marker = "<StatusPlaceHolderImpl/>"
+        val marker = "<NavPage/>\n<CharCreationForm/>"
         val character = input.character.copy(
             regexScripts = listOf(
                 RegexDefinition(
-                    id = "status-html",
-                    name = "Status HTML",
-                    findRegex = marker,
-                    replaceString = "<html><script>unsafe()</script><div>legacy status</div></html>",
+                    id = "navigation-html",
+                    name = "Navigation HTML",
+                    findRegex = "/<NavPage\\/>/g",
+                    replaceString = "<html><script>unsafe()</script><div>legacy navigation</div></html>",
+                    placements = setOf(RegexPlacement.AI_OUTPUT),
+                    markdownOnly = true,
+                ),
+                RegexDefinition(
+                    id = "form-html",
+                    name = "Form HTML",
+                    findRegex = "/<CharCreationForm\\/>/g",
+                    replaceString = "<html><script>unsafe()</script><div>legacy form</div></html>",
                     placements = setOf(RegexPlacement.AI_OUTPUT),
                     markdownOnly = true,
                 ),
             ),
-            adaptation = AdaptationArtifact(
+            nativeAdaptation = NativeAdaptation(
                 sourceSha256 = "a".repeat(64),
-                compiler = AdaptationCompiler("fixture", "1"),
-                status = AdaptationStatus.PARTIAL,
-                requiredCapabilities = listOf("ui.native"),
-                views = listOf(
-                    AdaptationView(
+                forms = listOf(
+                    NativeFormView(
                         id = "status-view",
-                        placement = AdaptationViewPlacement.MESSAGE_ATTACHMENT,
-                        trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_CONTAINS, marker),
-                        nodes = emptyList(),
+                        title = "Form",
+                        marker = marker,
+                        fields = listOf(NativeFormField("name", NativeFormFieldType.TEXT, "Name")),
+                        draftTemplate = "{{form.name}}",
                     ),
                 ),
             ),
@@ -539,6 +596,39 @@ class PromptCompilerTest {
             ),
             preset = basePreset(),
         )
+    }
+
+    @Test
+    fun `adaptation state meaning is projected as fixed data rather than an authored prompt`() {
+        val input = baseInput().copy(
+            character = baseInput().character.copy(
+                nativeAdaptation = NativeAdaptation(
+                    sourceSha256 = "a".repeat(64),
+                    state = listOf(
+                        ConversationStateDefinition(
+                            key = "world-day",
+                            label = "世界日期",
+                            type = ConversationStateValueType.NUMBER,
+                            description = "故事内已经经过的天数。",
+                            initialValue = JsonPrimitive(1),
+                        ),
+                    ),
+                ),
+            ),
+            runtimeState = ConversationRuntimeState(
+                conversationState = ConversationStateSnapshot(mapOf("world-day" to JsonPrimitive(2))),
+            ),
+        )
+
+        val plan = (compiler.compile(input) as CompilationResult.Success).plan
+        val stateMessage = plan.messages.single { it.origin.sourceIds == listOf("conversationState") }.content
+
+        assertTrue(stateMessage.contains("\"key\":\"world-day\""))
+        assertTrue(stateMessage.contains("\"label\":\"世界日期\""))
+        assertTrue(stateMessage.contains("\"type\":\"NUMBER\""))
+        assertTrue(stateMessage.contains("\"description\":\"故事内已经经过的天数。\""))
+        assertTrue(stateMessage.contains("\"values\":{\"world-day\":2}"))
+        assertFalse(stateMessage.contains("initialValue"))
     }
 
     private fun baseAsset() = CharacterAsset(

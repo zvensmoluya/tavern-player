@@ -25,8 +25,9 @@ class GenerationRequestMapperTest {
     fun `OpenAI adapters preserve structured roles and disable hosted state`() {
         val responses = GenerationRequestMapper.map(connection(ModelProtocol.OPENAI_RESPONSES), plan())
             as PreparedGenerationRequest.Responses
-        assertEquals(listOf("system", "system", "user", "system", "assistant", "user"), responses.request.input.map { it.role.wire })
-        assertNull(responses.request.instructions)
+        assertEquals(listOf("user", "system", "assistant", "user"), responses.request.input.map { it.role.wire })
+        assertEquals("system one\n\nsystem two", responses.request.instructions)
+        assertEquals(responses.request.instructions, responses.preview.systemInstruction)
         assertNull(responses.request.previousResponseId)
         assertEquals(false, responses.request.store)
         assertFalse(responses.preview.usesHostedState)
@@ -36,6 +37,37 @@ class GenerationRequestMapperTest {
         assertEquals(listOf("system", "system", "user", "system", "assistant", "user"), chat.request.messages.map { it.role.wire })
         assertEquals(false, chat.request.store)
         assertEquals(512, chat.request.maxCompletionTokens)
+    }
+
+    @Test
+    fun `Responses gives the Player owned state contract top level authority`() {
+        val base = plan()
+        val contract = PreparedMessage(
+            role = MessageRole.SYSTEM,
+            content = "player state contract",
+            origin = PromptOrigin("assistant-state-contract", listOf("assistantStateContract")),
+        )
+        val state = PreparedMessage(
+            role = MessageRole.SYSTEM,
+            content = "player current state",
+            origin = PromptOrigin("conversation-state", listOf("conversationState")),
+        )
+        val prepared = GenerationRequestMapper.map(
+            connection(ModelProtocol.OPENAI_RESPONSES),
+            base.copy(messages = base.messages.toMutableList().apply {
+                add(2, state)
+                add(3, contract)
+            }),
+        ) as PreparedGenerationRequest.Responses
+
+        assertEquals("player current state\n\nplayer state contract", prepared.request.instructions)
+        assertFalse(prepared.request.input.any { it.text == "player state contract" })
+        assertFalse(prepared.request.input.any { it.text == "player current state" })
+        assertEquals(
+            listOf("developer", "developer", "user", "developer", "assistant", "user"),
+            prepared.request.input.map { it.role.wire },
+        )
+        assertEquals(prepared.request.instructions, prepared.preview.systemInstruction)
     }
 
     @Test

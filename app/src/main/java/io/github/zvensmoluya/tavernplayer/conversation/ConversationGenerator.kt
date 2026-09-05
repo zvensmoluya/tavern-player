@@ -88,6 +88,7 @@ sealed interface GenerationEvent {
     data class ReasoningSignature(val signature: String) : GenerationEvent
     data object ReasoningFinished : GenerationEvent
     data class Usage(val value: GenerationUsage) : GenerationEvent
+    data class AssistantStateConfirmed(val envelope: String) : GenerationEvent
     data class Finished(val reason: String?) : GenerationEvent
     data class Diagnostic(val summary: String) : GenerationEvent
 }
@@ -292,7 +293,10 @@ internal sealed interface PreparedGenerationRequest {
 
 internal fun PreparedGenerationRequest.conservativeInputTokens(): Int {
     val payloads = when (this) {
-        is PreparedGenerationRequest.Responses -> request.input.flatMap { listOf(it.role.wire, it.text) }
+        is PreparedGenerationRequest.Responses -> buildList {
+            request.instructions?.let(::add)
+            request.input.forEach { addAll(listOf(it.role.wire, it.text)) }
+        }
         is PreparedGenerationRequest.Chat -> request.messages.flatMap { listOf(it.role.wire, it.content) }
         is PreparedGenerationRequest.Anthropic -> buildList {
             request.system?.let(::add)
@@ -397,10 +401,33 @@ internal object GenerationRequestMapper {
                 report.applied("verbosity")
                 ResponsesTextConfig(verbosity.wireValue.lowercase())
             }
-        val messages = plan.messages.map { message ->
+        val playerOwnedContract = plan.messages.singleOrNull { message ->
+            message.role == MessageRole.SYSTEM && message.origin.stage == "assistant-state-contract"
+        }
+        val playerOwnedInstructions = if (playerOwnedContract != null) {
+            plan.messages.filter { message ->
+                message.role == MessageRole.SYSTEM &&
+                    message.origin.stage in PLAYER_OWNED_RESPONSES_INSTRUCTION_STAGES
+            }
+        } else {
+            emptyList()
+        }
+        val leadingSystem = plan.messages.takeWhile { it.role == MessageRole.SYSTEM }
+        val instructions = playerOwnedInstructions.joinToString("\n\n") { it.content }.ifBlank { null }
+            ?: leadingSystem.joinToString("\n\n") { it.content }.ifBlank { null }
+        val transportMessages = if (playerOwnedContract != null) {
+            plan.messages.filterNot { message -> playerOwnedInstructions.any { it === message } }
+        } else {
+            plan.messages.drop(leadingSystem.size)
+        }
+        val messages = transportMessages.map { message ->
             ResponsesInputMessage(
                 role = when (message.role) {
-                    MessageRole.SYSTEM -> ResponsesRole.SYSTEM
+                    MessageRole.SYSTEM -> if (playerOwnedContract != null) {
+                        ResponsesRole.DEVELOPER
+                    } else {
+                        ResponsesRole.SYSTEM
+                    }
                     MessageRole.USER -> ResponsesRole.USER
                     MessageRole.ASSISTANT -> ResponsesRole.ASSISTANT
                 },
@@ -411,7 +438,7 @@ internal object GenerationRequestMapper {
             request = ResponsesRequest(
                 model = connection.selectedModel,
                 input = messages,
-                instructions = null,
+                instructions = instructions,
                 maxOutputTokens = plan.maxOutputTokens.takeIf {
                     settings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)
                 },
@@ -422,9 +449,14 @@ internal object GenerationRequestMapper {
                 topP = topP,
                 store = false,
             ),
-            preview = preview(connection, plan, system = null, messages.map { it.role.wire to it.text }, report = report),
+            preview = preview(connection, plan, system = instructions, messages.map { it.role.wire to it.text }, report = report),
         )
     }
+
+    private val PLAYER_OWNED_RESPONSES_INSTRUCTION_STAGES = setOf(
+        "conversation-state",
+        "assistant-state-contract",
+    )
 
     private fun chat(
         connection: StoredConnection,

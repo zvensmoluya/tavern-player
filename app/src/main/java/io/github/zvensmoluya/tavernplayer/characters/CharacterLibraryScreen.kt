@@ -359,6 +359,25 @@ fun CharacterDetailScreen(
                     modifier = Modifier.fillMaxWidth().testTag("newConversation"),
                 ) { Text("开始新对话") }
             }
+            item("native-adaptation") {
+                DetailSection("原生适配") {
+                    val adaptation = character.nativeAdaptation
+                    if (adaptation == null) {
+                        Text("暂无原生适配；原始卡片仍可按文字角色卡使用。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text(adaptation.report.summary.ifBlank { "已安装经过本地校验的原生适配。" })
+                        if (adaptation.report.restoredBehaviors.isNotEmpty()) {
+                            Text("已恢复：${adaptation.report.restoredBehaviors.joinToString("；")}")
+                        }
+                        if (adaptation.report.degradedPresentation.isNotEmpty()) {
+                            Text("表现降级：${adaptation.report.degradedPresentation.joinToString("；")}")
+                        }
+                        if (adaptation.report.unsupportedBehaviors.isNotEmpty()) {
+                            Text("暂不支持：${adaptation.report.unsupportedBehaviors.joinToString("；")}")
+                        }
+                    }
+                }
+            }
             if (character.creatorNotes.isNotBlank()) {
                 item("notes") { DetailSection("作者说明") { SafeMarkdownText(character.creatorNotes) } }
             }

@@ -223,9 +223,9 @@ class CharacterCardImporter(
             regexScripts = regexScripts,
             assets = buildList {
                 if (format == CharacterSourceFormat.PNG) {
-                    add(CharacterAssetReference("icon", "ccdefault:", "main", "png"))
+                    add(assetReference("icon", "ccdefault:", "main", "png", 0))
                 }
-                addAll(parseAssets(data["assets"], diagnostics))
+                addAll(parseAssets(data["assets"], diagnostics, if (format == CharacterSourceFormat.PNG) 1 else 0))
             },
             extensions = extensions,
             rawCard = raw,
@@ -462,6 +462,7 @@ class CharacterCardImporter(
     private fun parseAssets(
         element: JsonElement?,
         diagnostics: MutableList<CompatibilityDiagnostic>,
+        indexOffset: Int,
     ): List<CharacterAssetReference> {
         if (element == null || element is JsonNull) return emptyList()
         val array = element as? JsonArray ?: run {
@@ -487,9 +488,26 @@ class CharacterCardImporter(
                         "资产 $name 不是受支持的内联 PNG/JPEG/WebP data image；URI 已保留但不会解码",
                     )
                 }
-                CharacterAssetReference(type, uri, name, ext)
+                assetReference(type, uri, name, ext, index + indexOffset)
             }
         }
+    }
+
+    private fun assetReference(
+        type: String,
+        uri: String,
+        name: String,
+        extension: String,
+        index: Int,
+    ): CharacterAssetReference {
+        val identitySource = listOf(index.toString(), type, name, extension, uri).joinToString("\u0000")
+        return CharacterAssetReference(
+            id = "asset-${identitySource.encodeToByteArray().sha256().take(24)}",
+            type = type,
+            uri = uri,
+            name = name,
+            extension = extension,
+        )
     }
 
     private fun detectOpaqueCapabilities(

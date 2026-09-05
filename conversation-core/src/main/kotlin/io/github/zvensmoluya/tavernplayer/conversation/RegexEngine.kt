@@ -103,6 +103,31 @@ class CharacterRegexEngine(
         return RegexApplicationResult(current, diagnostics.distinctBy { it.code to it.sourceId }, applied)
     }
 
+    /** Checks ownership of a literal marker without evaluating the authored replacement. */
+    internal fun matchesWithoutReplacement(
+        text: String,
+        rule: RegexDefinition,
+        placement: RegexPlacement,
+        projection: RegexProjection,
+        depth: Int?,
+        context: MacroContext,
+        transaction: MacroTransaction,
+    ): Boolean {
+        if (!rule.applies(placement, projection, depth, isEdit = false)) return false
+        val result = executionStrategy.execute(ruleTimeoutMillis) {
+            val patternSource = when (rule.substitutionMode) {
+                RegexSubstitutionMode.NONE -> rule.findRegex
+                RegexSubstitutionMode.RAW -> macroEngine.evaluate(rule.findRegex, context, transaction.fork()).text
+                RegexSubstitutionMode.ESCAPED -> MACRO_PATTERN.replace(rule.findRegex) { match ->
+                    Pattern.quote(macroEngine.evaluate(match.value, context, transaction.fork()).text)
+                }
+            }
+            val compiled = compileJavascriptPattern(patternSource, mutableListOf(), rule.id) ?: return@execute false
+            compiled.pattern.matcher(InterruptibleCharSequence(text)).find()
+        }
+        return (result as? RegexExecutionResult.Success)?.value == true
+    }
+
     private fun runRule(
         input: String,
         rule: RegexDefinition,

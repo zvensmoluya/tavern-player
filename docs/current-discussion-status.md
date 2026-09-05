@@ -108,7 +108,8 @@
 - Provider 的 function / tool calling 协议表达可以独立存在或预留，但不表示产品支持 Tools。只有未来明确增加原生工具时，才建立执行语义。
 - Preset 中依赖 ST Tool runtime 的 `function_calling`、tool recursion 和相关字段当前不产生能力。
 - 不运行第三方脚本、扩展事件系统或任意扩展 Macro。未来是否把某项扩展能力重新实现为原生能力，必须另行明确决定。
-- 已明确加入的第一组 Native 适配能力是有界 Compose UI、assistant 消息状态摄入与聊天草稿写入。消息摄入只接受 artifact 白名单映射的 `UPDATE_VARIABLE_SET_V1` primitive 操作，经专用 Legacy State Adapter 产生原子 `ConversationStatePatch`；Native Form 只生成待用户确认的草稿，不允许通过通用 Action 脱离消息时间线直接改状态。这些能力只能来自匹配原件 SHA-256 且通过 capability/type/size/reference 校验的 `AdaptationArtifact`，不代表运行原脚本或开放通用工具执行。
+- 已明确加入的第一组 Native 适配能力是 Player 固定的 Status / Scene / Collection / Form、assistant 消息状态摄入、本地静态图片与聊天草稿写入。消息摄入只接受手工适配白名单映射的 `UPDATE_VARIABLE_SET_V1` 或 `UPDATE_VARIABLE_JSON_PATCH_V1` scalar 操作，经专用 Legacy State Adapter 产生 `ConversationStatePatch`；Native Form 只生成待用户确认的草稿，不允许通过通用 Action 脱离消息时间线直接改状态。Native 内容必须匹配原件 SHA-256 并通过类型、大小和引用校验，不代表运行原脚本或开放通用工具执行。
+- Conversation Runtime 已加入书本级与条目级 World Book activation override，以及只属于该领域的强类型原子控制器。覆盖跟随消息 checkpoint、swipe、regenerate、历史截断、持久化和进程恢复；普通 Form 与 Legacy Adapter 都不能调用它，也不存在通用 Operation dispatcher 或 Trigger。
 
 ## 7. 当前交付边界
 
@@ -116,5 +117,6 @@
 - 单一默认 Persona 已可编辑并持久化；多身份资产管理、选择与绑定仍不进入当前阶段。
 - 全局 Preset 资产库、ST OpenAI Preset 导入 / 导出、受控编辑、五协议参数映射和聊天快捷切换已经形成实现契约。
 - 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
-- 复杂卡可以旁挂不改写原件的 Native 适配产物。当前两条真实闭环分别是“开场 marker → Native 表单 → 草稿写入”和“状态 marker → Native 状态栏 → assistant 白名单变量更新”；同一份选中候选状态还会由 Player 以稳定、不可配置的 JSON system projection 提供给下一轮模型。Shelf 已具备脱敏 `ProgramView`（含去说明文字的 primitive 状态提示）、来源绑定的确定性产物校验、DeepSeek Responses 编译与 repair、派生存储，以及原件 + 可选适配附件的局域网传输。Player 安装时会从收到的原件独立重建 `ProgramView`，复核产物中的 marker、状态路径、类型与初始值。更多变量方言和复杂交互仍按真实样本逐项加入，不建立通用脚本逃生口。
-- 后续先继续稳定 Versioned Conversation State、Legacy State Adapter 与 Prompt Projection，再扩展 Record / Collection 和更广的内容资产管理；这些工作不自动重新打开已经冻结的安全和兼容边界。
+- 复杂卡可以旁挂不改写原件的手工 `NativeAdaptation`。当前真实闭环是“opening marker → Native Form → Draft”、“assistant JSON Patch-shaped 状态块 → 白名单 State Patch → 固定 Status”和“本地静态资产 → Native Decoder → 固定 Scene”。同一份选中候选状态以稳定、不可配置的 `{definitions, values}` JSON system projection 提供给下一轮模型。当前不建设 ProgramView、自动编译、repair、派生缓存或 Shelf 适配附件；DeepSeek 只用于真实对话验收。
+- `source/复杂压测卡.png` 的开发夹具由兼容工程师手工审计，明确区分 restored、degraded 和 unsupported。真实卡用于证伪 Player 的闭门设计，不通过出现频率或单卡实现反推通用 Runtime。
+- 后续先继续稳定 Versioned Conversation State、Legacy State Adapter、Prompt Projection 与强类型领域生命周期，再考虑自动适配或更多状态写入能力；这些工作不自动重新打开已经冻结的安全和兼容边界。

@@ -47,11 +47,19 @@ data class CharacterDepthPrompt(
 
 @Serializable
 data class CharacterAssetReference(
+    val id: String,
     val type: String,
     val uri: String,
     val name: String,
     val extension: String,
-)
+) {
+    val isLocallyMaterializableImage: Boolean
+        get() = uri == "ccdefault:" || SAFE_INLINE_IMAGE_PREFIX.matches(uri.substringBefore(','))
+
+    private companion object {
+        val SAFE_INLINE_IMAGE_PREFIX = Regex("(?i)data:image/(?:png|jpeg|webp);base64")
+    }
+}
 
 @Serializable
 enum class WorldBookPosition {
@@ -192,7 +200,7 @@ data class CharacterAsset(
     val extensions: JsonObject = JsonObject(emptyMap()),
     val rawCard: JsonObject = JsonObject(emptyMap()),
     val diagnostics: List<CompatibilityDiagnostic> = emptyList(),
-    val adaptation: AdaptationArtifact? = null,
+    val nativeAdaptation: NativeAdaptation? = null,
 ) {
     val promptName: String
         get() = nickname?.takeIf(String::isNotBlank) ?: name
@@ -233,8 +241,9 @@ data class CharacterAsset(
                 raw = JsonObject(regex.raw.toMap()),
             )
         },
+        assets = assets.map { it.copy() },
         diagnostics = diagnostics.toList(),
-        adaptation = adaptation,
+        nativeAdaptation = nativeAdaptation,
     )
 }
 
@@ -258,8 +267,9 @@ data class CharacterSnapshot(
     val depthPrompt: CharacterDepthPrompt?,
     val worldBooks: List<WorldBookDefinition>,
     val regexScripts: List<RegexDefinition>,
+    val assets: List<CharacterAssetReference> = emptyList(),
     val diagnostics: List<CompatibilityDiagnostic>,
-    val adaptation: AdaptationArtifact? = null,
+    val nativeAdaptation: NativeAdaptation? = null,
 )
 
 enum class CharacterImportStatus {

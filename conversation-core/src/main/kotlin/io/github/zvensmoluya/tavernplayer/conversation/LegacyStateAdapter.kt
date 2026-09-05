@@ -1,10 +1,12 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateMapping
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType
+import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -15,35 +17,35 @@ data class LegacyStateDecodeResult(
 )
 
 interface LegacyStateAdapter {
-    val dialect: AdaptationMessageStateDialect
+    val dialect: LegacyStateDialect
 
     fun decode(
         sourceText: String,
-        mappings: List<AdaptationMessageStateMapping>,
-        definitions: Map<String, AdaptationStateDefinition>,
+        mappings: List<AssistantStateMapping>,
+        definitions: Map<String, ConversationStateDefinition>,
         maxUpdates: Int,
     ): LegacyStateDecodeResult
 }
 
 class UpdateVariableSetV1Adapter : LegacyStateAdapter {
-    override val dialect: AdaptationMessageStateDialect = AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1
+    override val dialect: LegacyStateDialect = LegacyStateDialect.UPDATE_VARIABLE_SET_V1
 
     override fun decode(
         sourceText: String,
-        mappings: List<AdaptationMessageStateMapping>,
-        definitions: Map<String, AdaptationStateDefinition>,
+        mappings: List<AssistantStateMapping>,
+        definitions: Map<String, ConversationStateDefinition>,
         maxUpdates: Int,
     ): LegacyStateDecodeResult {
         if (sourceText.isEmpty() || maxUpdates <= 0) {
             return LegacyStateDecodeResult(ConversationStatePatch(), 0)
         }
-        val mappingsBySource = mappings.associateBy(AdaptationMessageStateMapping::sourcePath)
+        val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
         val assignments = linkedMapOf<String, JsonPrimitive>()
         var applied = 0
-        for (update in parseUpdateVariableBlocks(sourceText, maxUpdates)) {
+        for (update in parseUpdateVariableBlock(sourceText, maxUpdates)) {
             val mapping = mappingsBySource[update.path] ?: continue
-            val definition = definitions[mapping.target] ?: continue
-            val value = coerceMessageValue(definition, update.value) ?: continue
+            val definition = definitions[mapping.targetStateKey] ?: continue
+            val value = coerceMappedScalar(definition, update.value) ?: continue
             assignments[definition.key] = value
             applied += 1
             if (applied >= maxUpdates) break
@@ -51,33 +53,13 @@ class UpdateVariableSetV1Adapter : LegacyStateAdapter {
         return LegacyStateDecodeResult(ConversationStatePatch(assignments), applied)
     }
 
-    private fun coerceMessageValue(
-        definition: AdaptationStateDefinition,
-        value: JsonPrimitive,
-    ): JsonPrimitive? = when (definition.type) {
-        AdaptationStateType.STRING -> value.takeIf(JsonPrimitive::isString)?.let { JsonPrimitive(it.content) }
-        AdaptationStateType.NUMBER -> value.takeUnless(JsonPrimitive::isString)
-            ?.takeIf { it.booleanOrNull == null }
-            ?.doubleOrNull
-            ?.takeIf(Double::isFinite)
-            ?.let(::JsonPrimitive)
-        AdaptationStateType.BOOLEAN -> value.takeUnless(JsonPrimitive::isString)?.booleanOrNull?.let(::JsonPrimitive)
-    }
-
-    private fun parseUpdateVariableBlocks(source: String, maxUpdates: Int): List<DialectUpdate> {
-        val bounded = source.takeLast(MAX_MESSAGE_SOURCE_CHARS)
+    private fun parseUpdateVariableBlock(source: String, maxUpdates: Int): List<DialectUpdate> {
+        val block = source.singleTaggedContent(UPDATE_BLOCK_OPEN, UPDATE_BLOCK_CLOSE)
+            ?.takeIf { it.length <= MAX_UPDATE_BLOCK_CHARS }
+            ?: return emptyList()
         val result = mutableListOf<DialectUpdate>()
-        var offset = 0
-        while (result.size < maxUpdates) {
-            val start = bounded.indexOf(UPDATE_BLOCK_OPEN, offset)
-            if (start < 0) break
-            val contentStart = start + UPDATE_BLOCK_OPEN.length
-            val end = bounded.indexOf(UPDATE_BLOCK_CLOSE, contentStart)
-            if (end < 0) break
-            bounded.substring(contentStart, end).lineSequence().forEach { line ->
-                if (result.size < maxUpdates) parseUpdateLine(line)?.let(result::add)
-            }
-            offset = end + UPDATE_BLOCK_CLOSE.length
+        block.lineSequence().forEach { line ->
+            if (result.size < maxUpdates) parseUpdateLine(line)?.let(result::add)
         }
         return result
     }
@@ -185,7 +167,7 @@ class UpdateVariableSetV1Adapter : LegacyStateAdapter {
     private data class DialectUpdate(val path: String, val value: JsonPrimitive)
 
     private companion object {
-        private const val MAX_MESSAGE_SOURCE_CHARS = 128 * 1024
+        private const val MAX_UPDATE_BLOCK_CHARS = 128 * 1024
         private const val MAX_DIALECT_SCALAR_CHARS = 8_192
         private const val UPDATE_BLOCK_OPEN = "<UpdateVariable>"
         private const val UPDATE_BLOCK_CLOSE = "</UpdateVariable>"
@@ -194,3 +176,91 @@ class UpdateVariableSetV1Adapter : LegacyStateAdapter {
         private val DIALECT_NUMBER = Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
     }
 }
+
+/**
+ * A deliberately small anti-corruption adapter for the legacy JSON Patch-shaped message block.
+ *
+ * This is not a JSON Patch runtime. It accepts one complete UpdateVariable/JSONPatch envelope,
+ * reads only scalar `replace` operations, and maps exact whitelisted JSON pointers to flat Player
+ * state. add/remove/move, arrays, objects, pointer traversal, and expressions are never executed.
+ */
+class UpdateVariableJsonPatchV1Adapter : LegacyStateAdapter {
+    override val dialect: LegacyStateDialect = LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1
+
+    override fun decode(
+        sourceText: String,
+        mappings: List<AssistantStateMapping>,
+        definitions: Map<String, ConversationStateDefinition>,
+        maxUpdates: Int,
+    ): LegacyStateDecodeResult {
+        if (sourceText.isEmpty() || maxUpdates <= 0) return emptyDecode()
+        val updateBlock = sourceText.singleTaggedContent(UPDATE_BLOCK_OPEN, UPDATE_BLOCK_CLOSE)
+            ?.takeIf { it.length <= MAX_UPDATE_BLOCK_CHARS }
+            ?: return emptyDecode()
+        val payload = updateBlock.singleTaggedContent(JSON_PATCH_OPEN, JSON_PATCH_CLOSE)
+            ?.takeIf { it.length <= MAX_JSON_PATCH_CHARS }
+            ?: return emptyDecode()
+        val operations = runCatching { Json.parseToJsonElement(payload) as? JsonArray }.getOrNull()
+            ?.takeIf { it.size <= MAX_JSON_PATCH_OPERATIONS }
+            ?: return emptyDecode()
+        val mappingsBySource = mappings.associateBy(AssistantStateMapping::sourcePath)
+        val updates = operations.mapNotNull { element ->
+            val operation = element as? JsonObject ?: return@mapNotNull null
+            val op = operation.stringValue("op") ?: return@mapNotNull null
+            if (op != "replace") return@mapNotNull null
+            val path = operation.stringValue("path") ?: return@mapNotNull null
+            val mapping = mappingsBySource[path] ?: return@mapNotNull null
+            val definition = definitions[mapping.targetStateKey] ?: return@mapNotNull null
+            val value = operation["value"] as? JsonPrimitive ?: return@mapNotNull null
+            val coerced = coerceMappedScalar(definition, value) ?: return@mapNotNull null
+            mapping.targetStateKey to coerced
+        }
+        if (updates.size > maxUpdates) return emptyDecode()
+        val assignments = linkedMapOf<String, JsonPrimitive>()
+        updates.forEach { (key, value) -> assignments[key] = value }
+        return LegacyStateDecodeResult(
+            patch = ConversationStatePatch(assignments),
+            appliedUpdates = updates.size,
+        )
+    }
+
+    private fun JsonObject.stringValue(key: String): String? =
+        (get(key) as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content
+
+    private companion object {
+        private const val MAX_UPDATE_BLOCK_CHARS = 128 * 1024
+        private const val MAX_JSON_PATCH_CHARS = 64 * 1024
+        private const val MAX_JSON_PATCH_OPERATIONS = 256
+        private const val UPDATE_BLOCK_OPEN = "<UpdateVariable>"
+        private const val UPDATE_BLOCK_CLOSE = "</UpdateVariable>"
+        private const val JSON_PATCH_OPEN = "<JSONPatch>"
+        private const val JSON_PATCH_CLOSE = "</JSONPatch>"
+    }
+}
+
+internal fun String.singleTaggedContent(open: String, close: String): String? {
+    val start = indexOf(open, ignoreCase = true)
+    if (start < 0 || indexOf(open, start + open.length, ignoreCase = true) >= 0) return null
+    val contentStart = start + open.length
+    val end = indexOf(close, contentStart, ignoreCase = true)
+    if (end < 0 || indexOf(close, end + close.length, ignoreCase = true) >= 0) return null
+    return substring(contentStart, end)
+}
+
+private fun coerceMappedScalar(
+    definition: ConversationStateDefinition,
+    value: JsonPrimitive,
+): JsonPrimitive? = when (definition.type) {
+    ConversationStateValueType.STRING -> value.takeIf(JsonPrimitive::isString)?.let { JsonPrimitive(it.content) }
+    ConversationStateValueType.NUMBER -> value.takeUnless(JsonPrimitive::isString)
+        ?.takeIf { it.booleanOrNull == null }
+        ?.doubleOrNull
+        ?.takeIf(Double::isFinite)
+        ?.let(::JsonPrimitive)
+    ConversationStateValueType.BOOLEAN -> value.takeUnless(JsonPrimitive::isString)?.booleanOrNull?.let(::JsonPrimitive)
+    ConversationStateValueType.RECORD,
+    ConversationStateValueType.COLLECTION,
+    -> null
+}
+
+private fun emptyDecode() = LegacyStateDecodeResult(ConversationStatePatch(), 0)

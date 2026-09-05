@@ -23,23 +23,11 @@ data class ShelfTransferManifest(
     val mediaType: String,
     val sourceUrl: String,
     val expiresAt: String,
-    val adaptation: ShelfTransferAdaptation? = null,
-)
-
-@Serializable
-data class ShelfTransferAdaptation(
-    val schemaVersion: Int,
-    val filename: String,
-    val size: Long,
-    val sha256: String,
-    val mediaType: String,
-    val url: String,
 )
 
 data class ShelfTransfer(
     val manifest: ShelfTransferManifest,
     val sourceBytes: ByteArray,
-    val adaptationBytes: ByteArray? = null,
 )
 
 fun interface ShelfTransferReceiver {
@@ -69,17 +57,7 @@ class ShelfTransferClient(
         if (!actualHash.equals(manifest.sha256, ignoreCase = true)) {
             throw ShelfTransferException("Shelf 资源完整性校验失败")
         }
-        val adaptation = manifest.adaptation?.let { attachment ->
-            val bytes = get(attachment.url, MAX_ADAPTATION_BYTES, "无法下载 Shelf 原生适配")
-            if (bytes.size.toLong() != attachment.size) {
-                throw ShelfTransferException("Shelf 原生适配大小与传输信息不一致")
-            }
-            if (!bytes.sha256().equals(attachment.sha256, ignoreCase = true)) {
-                throw ShelfTransferException("Shelf 原生适配完整性校验失败")
-            }
-            bytes
-        }
-        ShelfTransfer(manifest, source, adaptation)
+        ShelfTransfer(manifest, source)
     }
 
     private fun validate(manifest: ShelfTransferManifest, transferUrl: String) {
@@ -96,19 +74,6 @@ class ShelfTransferClient(
             throw ShelfTransferException("Shelf 传输信息中的 SHA-256 无效")
         }
         validateResourceUrl(manifest.sourceUrl, transferUrl)
-        manifest.adaptation?.let { attachment ->
-            if (manifest.kind != "character") throw ShelfTransferException("只有角色卡可以携带原生适配")
-            if (attachment.schemaVersion != 1 || attachment.filename.isBlank() || attachment.url.isBlank()) {
-                throw ShelfTransferException("Shelf 原生适配信息不完整")
-            }
-            if (attachment.size !in 0..MAX_ADAPTATION_BYTES.toLong()) {
-                throw ShelfTransferException("Shelf 原生适配超过 2 MiB 上限")
-            }
-            if (!SHA256.matches(attachment.sha256)) {
-                throw ShelfTransferException("Shelf 原生适配 SHA-256 无效")
-            }
-            validateResourceUrl(attachment.url, transferUrl)
-        }
     }
 
     private fun validateResourceUrl(resourceUrl: String, transferUrl: String) {
@@ -170,7 +135,6 @@ class ShelfTransferClient(
         const val VERSION = 1
         const val MAX_MANIFEST_BYTES = 64 * 1024
         const val MAX_SOURCE_BYTES = 32 * 1024 * 1024
-        const val MAX_ADAPTATION_BYTES = 2 * 1024 * 1024
         val SHA256 = Regex("^[0-9a-fA-F]{64}$")
     }
 }

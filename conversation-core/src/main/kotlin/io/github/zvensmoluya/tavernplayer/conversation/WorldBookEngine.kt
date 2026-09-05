@@ -47,6 +47,7 @@ class WorldBookEngine(
         macroContext: MacroContext,
         transaction: MacroTransaction,
         previousState: Map<String, WorldBookEntryRuntimeState>,
+        activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turnIndex: Int,
         inputBudgetTokens: Int,
     ): WorldBookActivationResult {
@@ -62,6 +63,16 @@ class WorldBookEngine(
 
         books.forEach { book ->
             if (remainingGlobal <= 0) return@forEach
+            activationOverrides.books[book.id]?.let { enabled ->
+                trace += CompilationTraceEntry(
+                    stage = "world-book-activation-override",
+                    sourceIds = listOf(book.id),
+                    decision = "book ${if (enabled) "enabled" else "disabled"} by conversation override",
+                )
+            }
+            if (!activationOverrides.isBookEnabled(book.id)) {
+                return@forEach
+            }
             val candidates = activateBook(
                 book,
                 characterText,
@@ -71,6 +82,7 @@ class WorldBookEngine(
                 transaction,
                 diagnostics,
                 trace,
+                activationOverrides,
             )
             val grouped = selectGroups(book.id, candidates, states, transaction, trace)
             val bookBudget = (book.tokenBudget ?: remainingGlobal).coerceAtMost(remainingGlobal).coerceAtLeast(0)
@@ -160,6 +172,7 @@ class WorldBookEngine(
         transaction: MacroTransaction,
         diagnostics: MutableList<CompilationDiagnostic>,
         trace: MutableList<CompilationTraceEntry>,
+        activationOverrides: WorldBookActivationOverrides,
     ): BookActivationCandidates {
         val result = linkedMapOf<String, WorldBookEntryDefinition>()
         val scores = mutableMapOf<String, Int>()
@@ -167,7 +180,25 @@ class WorldBookEngine(
         var recursion = 0
         while (true) {
             val newlyActivated = book.entries.filter { entry ->
-                if (entry.id in result || !entry.enabled) return@filter false
+                if (entry.id in result) return@filter false
+                val entryOverride = activationOverrides.entries[book.id]?.get(entry.id)
+                if (recursion == 0 && entryOverride != null) {
+                    trace += CompilationTraceEntry(
+                        stage = "world-book-activation-override",
+                        sourceIds = listOf(book.id, entry.id),
+                        decision = "entry ${if (entryOverride) "enabled" else "disabled"} by conversation override",
+                    )
+                }
+                if (!activationOverrides.isEntryEnabled(book.id, entry.id, entry.enabled)) {
+                    if (recursion == 0 && entryOverride == null) {
+                        trace += CompilationTraceEntry(
+                            stage = "world-book",
+                            sourceIds = listOf(book.id, entry.id),
+                            decision = "entry disabled by character snapshot",
+                        )
+                    }
+                    return@filter false
+                }
                 val stateKey = runtimeStateKey(book.id, entry.id)
                 val state = states[stateKey] ?: WorldBookEntryRuntimeState()
                 if (state.stickyRemaining > 0) return@filter true

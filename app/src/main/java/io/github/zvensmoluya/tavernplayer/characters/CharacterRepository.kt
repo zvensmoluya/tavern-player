@@ -3,14 +3,14 @@ package io.github.zvensmoluya.tavernplayer.characters
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
+import io.github.zvensmoluya.tavernplayer.content.CharacterAssetReference
 import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CharacterImportResult
 import io.github.zvensmoluya.tavernplayer.content.CharacterSourceFormat
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
-import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
-import io.github.zvensmoluya.tavernplayer.content.AdaptationValidationIssue
-import io.github.zvensmoluya.tavernplayer.content.AdaptationValidator
-import io.github.zvensmoluya.tavernplayer.content.ProgramViewExtractor
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptationValidationIssue
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptationValidator
 import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
 import java.io.File
 import java.util.Base64
@@ -27,12 +27,22 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 private data class CharacterManifest(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val character: CharacterAsset,
     val originalFileName: String,
     val sourceFileName: String,
     val avatarFileName: String? = null,
+    val localAssets: List<LocalCharacterAsset> = emptyList(),
     val importedAtEpochMillis: Long,
+)
+
+@Serializable
+private data class LocalCharacterAsset(
+    val assetId: String,
+    val fileName: String,
+    val mediaType: String,
+    val width: Int,
+    val height: Int,
 )
 
 sealed interface CharacterSaveResult {
@@ -45,27 +55,39 @@ sealed interface CharacterSaveResult {
     data class Rejected(val diagnostics: List<CompatibilityDiagnostic>) : CharacterSaveResult
 }
 
-sealed interface AdaptationInstallResult {
-    data class Installed(val character: CharacterAsset) : AdaptationInstallResult
-    data class Rejected(val issues: List<AdaptationValidationIssue>) : AdaptationInstallResult
-    data object SourceNotFound : AdaptationInstallResult
+sealed interface NativeAdaptationInstallResult {
+    data class Installed(val character: CharacterAsset) : NativeAdaptationInstallResult
+    data class Rejected(val issues: List<NativeAdaptationValidationIssue>) : NativeAdaptationInstallResult
 }
 
-class CharacterRepository(
+internal data class StaticImageInfo(val width: Int, val height: Int, val mediaType: String)
+
+internal fun interface StaticImageInspector {
+    fun inspect(bytes: ByteArray): StaticImageInfo?
+}
+
+private object AndroidStaticImageInspector : StaticImageInspector {
+    override fun inspect(bytes: ByteArray): StaticImageInfo? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val mediaType = bounds.outMimeType?.lowercase() ?: return null
+        return StaticImageInfo(bounds.outWidth, bounds.outHeight, mediaType)
+    }
+}
+
+class CharacterRepository internal constructor(
     filesDir: File,
     private val importer: CharacterCardImporter = CharacterCardImporter(),
-    private val adaptationValidator: AdaptationValidator = AdaptationValidator(),
+    private val adaptationValidator: NativeAdaptationValidator = NativeAdaptationValidator(),
     private val now: () -> Long = System::currentTimeMillis,
+    private val imageInspector: StaticImageInspector = AndroidStaticImageInspector,
 ) {
     private val root = File(filesDir, "tavern/characters")
     private val mutex = Mutex()
     private val json = Json {
         encodeDefaults = true
         ignoreUnknownKeys = true
-    }
-    private val adaptationJson = Json {
-        encodeDefaults = true
-        ignoreUnknownKeys = false
     }
     private val _characters = MutableStateFlow<List<CharacterAsset>>(emptyList())
     val characters: StateFlow<List<CharacterAsset>> = _characters.asStateFlow()
@@ -94,11 +116,13 @@ class CharacterRepository(
                         val sourceName = if (character.sourceFormat == CharacterSourceFormat.PNG) "source.png" else "source.json"
                         File(temporary, sourceName).writeBytes(decoded.sourceBytes)
                         val avatarName = createAvatar(temporary, character, decoded.sourceBytes)
+                        val localAssets = materializeAssets(temporary, character, decoded.sourceBytes, sourceName)
                         val manifest = CharacterManifest(
                             character = character,
                             originalFileName = originalFileName,
                             sourceFileName = sourceName,
                             avatarFileName = avatarName,
+                            localAssets = localAssets,
                             importedAtEpochMillis = now(),
                         )
                         writeAtomic(File(temporary, MANIFEST_FILE), json.encodeToString(manifest))
@@ -126,32 +150,37 @@ class CharacterRepository(
         return File(File(root, characterId), manifest.sourceFileName).takeIf(File::isFile)
     }
 
-    suspend fun installAdaptation(bytes: ByteArray): AdaptationInstallResult = withContext(Dispatchers.IO) {
+    suspend fun installNativeAdaptation(
+        characterId: String,
+        adaptation: NativeAdaptation,
+    ): NativeAdaptationInstallResult = withContext(Dispatchers.IO) {
         mutex.withLock {
-            if (bytes.size > MAX_ADAPTATION_BYTES) {
-                return@withLock AdaptationInstallResult.Rejected(
-                    listOf(AdaptationValidationIssue("", "ARTIFACT_TOO_LARGE", "适配产物超过 2 MiB")),
+            val directory = File(root, characterId)
+            val manifest = readManifest(directory)
+                ?: return@withLock NativeAdaptationInstallResult.Rejected(
+                    listOf(NativeAdaptationValidationIssue("characterId", "UNKNOWN_CHARACTER", "角色不存在")),
                 )
-            }
-            val artifact = runCatching { adaptationJson.decodeFromString<AdaptationArtifact>(bytes.toString(Charsets.UTF_8)) }
-                .getOrElse {
-                    return@withLock AdaptationInstallResult.Rejected(
-                        listOf(AdaptationValidationIssue("", "INVALID_ARTIFACT", "无法解析适配产物")),
-                    )
-                }
-            val structuralValidation = adaptationValidator.validate(artifact)
-            if (!structuralValidation.valid) return@withLock AdaptationInstallResult.Rejected(structuralValidation.issues)
-            val existing = _characters.value.firstOrNull { it.sourceSha256 == artifact.sourceSha256 }
-                ?: return@withLock AdaptationInstallResult.SourceNotFound
-            val validation = adaptationValidator.validateAgainstProgramView(artifact, ProgramViewExtractor().extract(existing))
-            if (!validation.valid) return@withLock AdaptationInstallResult.Rejected(validation.issues)
-            val updated = existing.copy(adaptation = artifact)
-            val directory = File(root, existing.id)
-            val manifest = readManifest(directory) ?: return@withLock AdaptationInstallResult.SourceNotFound
+            val validation = adaptationValidator.validate(
+                adaptation = adaptation,
+                expectedSourceSha256 = manifest.character.sourceSha256,
+                availableAssetIds = manifest.localAssets.mapTo(mutableSetOf(), LocalCharacterAsset::assetId),
+            )
+            if (!validation.valid) return@withLock NativeAdaptationInstallResult.Rejected(validation.issues)
+            val updated = manifest.character.copy(nativeAdaptation = adaptation)
             writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(manifest.copy(character = updated)))
-            _characters.value = _characters.value.map { if (it.id == updated.id) updated else it }.sortedWith(CHARACTER_ORDER)
-            AdaptationInstallResult.Installed(updated)
+            _characters.value = _characters.value.map { if (it.id == characterId) updated else it }.sortedWith(CHARACTER_ORDER)
+            NativeAdaptationInstallResult.Installed(updated)
         }
+    }
+
+    fun assetFile(characterId: String, assetId: String): File? {
+        val directory = File(root, characterId)
+        val manifest = readManifest(directory) ?: return null
+        val fileName = manifest.localAssets.firstOrNull { it.assetId == assetId }?.fileName ?: return null
+        val file = File(directory, fileName)
+        val rootPath = directory.canonicalFile.toPath()
+        val filePath = file.canonicalFile.toPath()
+        return file.takeIf { filePath.startsWith(rootPath) && filePath != rootPath && it.isFile }
     }
 
     private fun loadAll(): List<CharacterAsset> = root.listFiles()
@@ -205,11 +234,54 @@ class CharacterRepository(
         return AVATAR_FILE
     }
 
-    private fun String.decodeDataUri(): ByteArray? {
+    private fun materializeAssets(
+        directory: File,
+        character: CharacterAsset,
+        sourceBytes: ByteArray,
+        sourceFileName: String,
+    ): List<LocalCharacterAsset> = character.assets.mapNotNull { asset ->
+        when {
+            asset.uri == "ccdefault:" && character.sourceFormat == CharacterSourceFormat.PNG -> {
+                inspectImage(asset, sourceBytes, sourceFileName, "image/png")
+            }
+            asset.uri.startsWith("data:") -> {
+                val mediaType = asset.uri.substringAfter("data:").substringBefore(';').lowercase()
+                val extension = SAFE_IMAGE_TYPES[mediaType] ?: return@mapNotNull null
+                val bytes = asset.uri.decodeDataUri(MAX_INLINE_ASSET_BASE64) ?: return@mapNotNull null
+                if (bytes.size > MAX_INLINE_ASSET_BYTES) return@mapNotNull null
+                val relativeName = "assets/${asset.id}.$extension"
+                val inspected = inspectImage(asset, bytes, relativeName, mediaType) ?: return@mapNotNull null
+                val file = File(directory, relativeName)
+                check(file.parentFile?.mkdirs() == true || file.parentFile?.isDirectory == true) {
+                    "无法创建角色资产目录"
+                }
+                file.writeBytes(bytes)
+                inspected
+            }
+            else -> null
+        }
+    }
+
+    private fun inspectImage(
+        asset: CharacterAssetReference,
+        bytes: ByteArray,
+        fileName: String,
+        expectedMediaType: String,
+    ): LocalCharacterAsset? {
+        val info = imageInspector.inspect(bytes) ?: return null
+        val width = info.width
+        val height = info.height
+        val mediaType = IMAGE_MIME_ALIASES[info.mediaType.lowercase()] ?: return null
+        if (mediaType != expectedMediaType || width <= 0 || height <= 0) return null
+        if (width > MAX_ASSET_EDGE || height > MAX_ASSET_EDGE || width.toLong() * height > MAX_ASSET_PIXELS) return null
+        return LocalCharacterAsset(asset.id, fileName, mediaType, width, height)
+    }
+
+    private fun String.decodeDataUri(maxBase64Chars: Int = MAX_INLINE_AVATAR_BASE64): ByteArray? {
         val comma = indexOf(',')
         if (comma < 0 || !substring(0, comma).contains(";base64", ignoreCase = true)) return null
         val encoded = substring(comma + 1)
-        if (encoded.length > MAX_INLINE_AVATAR_BASE64) return null
+        if (encoded.length > maxBase64Chars) return null
         return runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
     }
 
@@ -222,7 +294,22 @@ class CharacterRepository(
         private const val AVATAR_FILE = "avatar.png"
         private const val AVATAR_MAX_SIZE = 512
         private const val MAX_INLINE_AVATAR_BASE64 = 6 * 1024 * 1024
-        private const val MAX_ADAPTATION_BYTES = 2 * 1024 * 1024
+        private const val MAX_INLINE_ASSET_BASE64 = 12 * 1024 * 1024
+        private const val MAX_INLINE_ASSET_BYTES = 8 * 1024 * 1024
+        private const val MAX_ASSET_EDGE = 8_192
+        private const val MAX_ASSET_PIXELS = 32_000_000L
+        private val SAFE_IMAGE_TYPES = mapOf(
+            "image/png" to "png",
+            "image/jpeg" to "jpg",
+            "image/webp" to "webp",
+        )
+        private val IMAGE_MIME_ALIASES = mapOf(
+            "image/png" to "image/png",
+            "image/x-png" to "image/png",
+            "image/jpeg" to "image/jpeg",
+            "image/jpg" to "image/jpeg",
+            "image/webp" to "image/webp",
+        )
         private val CHARACTER_ORDER = compareBy<CharacterAsset> { it.name.lowercase() }.thenBy(CharacterAsset::id)
     }
 }

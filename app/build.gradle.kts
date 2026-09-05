@@ -29,6 +29,23 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+
+    sourceSets.named("androidTest") {
+        assets.directories.add("src/test/resources")
+        assets.directories.add("build/manualAndroidTestAssets")
+    }
+}
+
+val preparePressureCardAndroidTestAsset by tasks.registering(Copy::class) {
+    from(rootProject.layout.projectDirectory.file("source/复杂压测卡.png"))
+    into(layout.buildDirectory.dir("manualAndroidTestAssets"))
+    rename { "pressure-card.png" }
+}
+
+tasks.matching { task ->
+    task.name == "generateDebugAndroidTestAssets" || task.name == "mergeDebugAndroidTestAssets"
+}.configureEach {
+    dependsOn(preparePressureCardAndroidTestAsset)
 }
 
 dependencies {

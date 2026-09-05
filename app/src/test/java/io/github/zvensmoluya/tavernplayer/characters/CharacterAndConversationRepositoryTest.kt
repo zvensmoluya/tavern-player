@@ -2,24 +2,15 @@ package io.github.zvensmoluya.tavernplayer.characters
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
-import io.github.zvensmoluya.tavernplayer.content.AdaptationAction
-import io.github.zvensmoluya.tavernplayer.content.AdaptationActionType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
-import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
-import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
-import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateRule
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
-import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNode
-import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNodeType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationView
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateAdapterDefinition
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateMapping
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType
+import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
+import io.github.zvensmoluya.tavernplayer.content.NativeFormField
+import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
@@ -41,10 +32,10 @@ import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
 import io.github.zvensmoluya.tavernplayer.conversation.PromptDefinition
 import io.github.zvensmoluya.tavernplayer.conversation.PromptOrderEntry
+import io.github.zvensmoluya.tavernplayer.conversation.WorldBookActivationOverrides
 import java.io.File
+import java.util.Base64
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -85,39 +76,42 @@ class CharacterAndConversationRepositoryTest {
     }
 
     @Test
-    fun `adaptation installs beside immutable source and is captured by new conversations`() = runTest {
-        val root = temporary.newFolder("adaptation")
-        val characters = CharacterRepository(root)
-        val source = """
-            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Native Form","first_mes":"<GAMESTART/>","extensions":{"regex_scripts":[{"id":"opening","scriptName":"Opening","findRegex":"<GAMESTART/>","replaceString":"<form></form>","disabled":false,"placement":[2]}]}}}
+    fun `safe inline image assets are materialized behind stable ids`() = runTest {
+        val root = temporary.newFolder("character-assets")
+        val inspector = StaticImageInspector { StaticImageInfo(2, 2, "image/png") }
+        val repository = CharacterRepository(root, imageInspector = inspector)
+        val imageBytes = byteArrayOf(1, 2, 3, 4)
+        val png = Base64.getEncoder().encodeToString(imageBytes)
+        val bytes = """
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Scene","assets":[
+              {"type":"background","uri":"data:image/png;base64,$png","name":"beach","ext":"png"},
+              {"type":"background","uri":"https://example.invalid/forest.png","name":"forest","ext":"png"}
+            ]}}
         """.trimIndent().encodeToByteArray()
-        val saved = characters.import(source, "native-form.json") as CharacterSaveResult.Saved
-        val artifact = adaptation(saved.character.sourceSha256)
 
-        val installed = characters.installAdaptation(
-            Json { encodeDefaults = true }.encodeToString(artifact).encodeToByteArray(),
-        ) as AdaptationInstallResult.Installed
+        val saved = repository.import(bytes, "scene.json") as CharacterSaveResult.Saved
+        val beach = saved.character.assets.first { it.name == "beach" }
+        val forest = saved.character.assets.first { it.name == "forest" }
 
-        assertEquals(artifact, installed.character.adaptation)
-        assertArrayEquals(source, characters.sourceFile(saved.character.id)?.readBytes())
-        val restoredCharacters = CharacterRepository(root)
-        assertEquals(artifact, restoredCharacters.get(saved.character.id)?.adaptation)
-
-        val conversations = ConversationRepository(root, PromptCompiler(), idFactory = { "adapted-conversation" })
-        val conversation = conversations.create(installed.character, Persona("persona", "Traveler"), preset())
-        assertEquals(artifact, conversation.character.adaptation)
-        assertEquals("ready", conversation.runtimeState.conversationState.values["phase"]?.content)
+        assertTrue(beach.id.startsWith("asset-"))
+        val characterDirectory = File(root, "tavern/characters/${saved.character.id}")
+        assertTrue(
+            "asset=${beach.id} files=${characterDirectory.walkTopDown().map { it.relativeTo(characterDirectory).path }.toList()} " +
+                "manifest=${File(characterDirectory, "manifest.json").readText()}",
+            repository.assetFile(saved.character.id, beach.id)?.isFile == true,
+        )
+        assertEquals(null, repository.assetFile(saved.character.id, forest.id))
+        assertTrue(CharacterRepository(root, imageInspector = inspector).assetFile(saved.character.id, beach.id)?.isFile == true)
     }
 
     @Test
     fun `opening assistant update commits adaptation state`() = runTest {
         val root = temporary.newFolder("opening-state")
-        val artifact = adaptation("a".repeat(64)).copy(
-            requiredCapabilities = listOf("ui.native", "chat.setDraft", "state.ingest"),
-            messageStateRules = listOf(
-                AdaptationMessageStateRule(
-                    dialect = AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
-                    mappings = listOf(AdaptationMessageStateMapping("world.phase", "phase")),
+        val artifact = nativeAdaptation("a".repeat(64)).copy(
+            assistantStateAdapters = listOf(
+                AssistantStateAdapterDefinition(
+                    dialect = LegacyStateDialect.UPDATE_VARIABLE_SET_V1,
+                    mappings = listOf(AssistantStateMapping("world.phase", "phase")),
                 ),
             ),
         )
@@ -130,43 +124,26 @@ class CharacterAndConversationRepositoryTest {
                 _.set('world.phase', 'ready', 'started');
                 </UpdateVariable>
             """.trimIndent(),
-            adaptation = artifact,
+            nativeAdaptation = artifact,
         )
         val repository = ConversationRepository(root, PromptCompiler(), idFactory = { "opening-state-id" })
 
         val conversation = repository.create(character, Persona("persona", "Traveler"), preset())
 
-        assertEquals("started", conversation.runtimeState.conversationState.values["phase"]?.content)
-        assertEquals("started", conversation.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase")?.content)
-    }
-
-    @Test
-    fun `adaptation rejects unknown executable surface`() = runTest {
-        val root = temporary.newFolder("strict-adaptation")
-        val characters = CharacterRepository(root)
-        val source = cardJson("Strict", "source")
-        val saved = characters.import(source, "strict.json") as CharacterSaveResult.Saved
-        val encoded = Json { encodeDefaults = true }.encodeToString(adaptation(saved.character.sourceSha256))
-        val unknown = encoded.dropLast(1) + ",\"script\":\"alert(1)\"}"
-
-        val result = characters.installAdaptation(unknown.encodeToByteArray())
-
-        assertTrue(result is AdaptationInstallResult.Rejected)
-        assertEquals("INVALID_ARTIFACT", (result as AdaptationInstallResult.Rejected).issues.single().code)
-        assertEquals(null, characters.get(saved.character.id)?.adaptation)
+        assertEquals("started", (conversation.runtimeState.conversationState.values["phase"] as JsonPrimitive).content)
+        assertEquals("started", (conversation.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase") as JsonPrimitive).content)
     }
 
     @Test
     fun `selected conversation state candidate survives process restore`() = runTest {
         val root = temporary.newFolder("conversation-state-restore")
-        val stateful = adaptation("a".repeat(64)).copy(
-            requiredCapabilities = listOf("state.ingest"),
-            views = emptyList(),
-            state = listOf(AdaptationStateDefinition("phase", AdaptationStateType.STRING, JsonPrimitive("ready"))),
-            messageStateRules = listOf(
-                AdaptationMessageStateRule(
-                    AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
-                    listOf(AdaptationMessageStateMapping("game.phase", "phase")),
+        val stateful = nativeAdaptation("a".repeat(64)).copy(
+            forms = emptyList(),
+            state = listOf(ConversationStateDefinition("phase", type = ConversationStateValueType.STRING, initialValue = JsonPrimitive("ready"))),
+            assistantStateAdapters = listOf(
+                AssistantStateAdapterDefinition(
+                    LegacyStateDialect.UPDATE_VARIABLE_SET_V1,
+                    listOf(AssistantStateMapping("game.phase", "phase")),
                 ),
             ),
         )
@@ -179,7 +156,7 @@ class CharacterAndConversationRepositoryTest {
                 alternateFirstMessages = listOf(
                     "<UpdateVariable>\n_.set('game.phase', 'ready', 'alternate');\n</UpdateVariable>",
                 ),
-                adaptation = stateful,
+                nativeAdaptation = stateful,
             ),
             Persona("persona", "Traveler"),
             preset(),
@@ -196,8 +173,8 @@ class CharacterAndConversationRepositoryTest {
         val restored = ConversationRepository(root, PromptCompiler()).get(record.id)!!
 
         assertEquals(1, restored.turns.single().selectedVariantIndex)
-        assertEquals("alternate", restored.runtimeState.conversationState.values["phase"]?.content)
-        assertEquals("alternate", restored.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase")?.content)
+        assertEquals("alternate", (restored.runtimeState.conversationState.values["phase"] as JsonPrimitive).content)
+        assertEquals("alternate", (restored.turns.single().selected.runtimeStateAfter?.conversationState?.values?.get("phase") as JsonPrimitive).content)
     }
 
     @Test
@@ -258,6 +235,10 @@ class CharacterAndConversationRepositoryTest {
                 turns = record.turns + ConversationTurn("turn", MessageRole.ASSISTANT, listOf(streaming)),
                 runtimeState = ConversationRuntimeState(
                     localVariables = mapOf("mood" to MacroValue("warm")),
+                    worldBookActivationOverrides = WorldBookActivationOverrides(
+                        books = mapOf("book" to false),
+                        entries = mapOf("book" to mapOf("entry" to true)),
+                    ),
                     conversationState = ConversationStateSnapshot(mapOf("affection" to JsonPrimitive(30))),
                 ),
             ),
@@ -274,6 +255,8 @@ class CharacterAndConversationRepositoryTest {
         assertEquals(2, loaded.turns.size)
         assertEquals(PersistedMessageStatus.INTERRUPTED, loaded.turns.last().selected.status)
         assertEquals("warm", loaded.runtimeState.localVariables["mood"]?.text)
+        assertEquals(false, loaded.runtimeState.worldBookActivationOverrides.books["book"])
+        assertEquals(true, loaded.runtimeState.worldBookActivationOverrides.entries["book"]?.get("entry"))
         assertEquals(JsonPrimitive(30), loaded.runtimeState.conversationState.values["affection"])
         assertEquals("lore", loaded.character.worldBooks.single().entries.single().content)
         assertEquals("regex", loaded.character.regexScripts.single().id)
@@ -283,27 +266,16 @@ class CharacterAndConversationRepositoryTest {
         {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"$name","description":"$description"}}
     """.trimIndent().encodeToByteArray()
 
-    private fun adaptation(sourceSha256: String) = AdaptationArtifact(
+    private fun nativeAdaptation(sourceSha256: String) = NativeAdaptation(
         sourceSha256 = sourceSha256,
-        compiler = AdaptationCompiler("fixture", "1"),
-        status = AdaptationStatus.FULL,
-        requiredCapabilities = listOf("ui.native", "chat.setDraft"),
-        state = listOf(AdaptationStateDefinition("phase", AdaptationStateType.STRING, JsonPrimitive("ready"))),
-        views = listOf(
-            AdaptationView(
+        state = listOf(ConversationStateDefinition("phase", type = ConversationStateValueType.STRING, initialValue = JsonPrimitive("ready"))),
+        forms = listOf(
+            NativeFormView(
                 id = "opening-form",
-                placement = AdaptationViewPlacement.MESSAGE_REPLACEMENT,
-                trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_EXACT, "<GAMESTART/>"),
-                nodes = listOf(
-                    AdaptationUiNode(
-                        id = "form",
-                        type = AdaptationUiNodeType.FORM,
-                        fields = listOf(AdaptationFormField("name", AdaptationFormFieldType.TEXT, "Name")),
-                    ),
-                ),
-                submitActions = listOf(
-                    AdaptationAction(AdaptationActionType.CHAT_SET_DRAFT, template = "Name: {{form.name}}"),
-                ),
+                title = "Opening",
+                marker = "<GAMESTART/>",
+                fields = listOf(NativeFormField("name", NativeFormFieldType.TEXT, "Name")),
+                draftTemplate = "Name: {{form.name}}",
             ),
         ),
     )

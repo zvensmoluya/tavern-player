@@ -153,6 +153,62 @@ class WorldBookEngineTest {
     }
 
     @Test
+    fun `conversation overrides disable books and can enable disabled entries`() {
+        val book = WorldBookDefinition(
+            id = "book",
+            entries = listOf(
+                entry("default-on", constant = true, content = "on"),
+                entry("default-off", constant = true, content = "off").copy(enabled = false),
+            ),
+        )
+
+        val bookDisabled = activate(
+            book,
+            emptyList(),
+            overrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
+        )
+        val entryEnabled = activate(
+            book,
+            emptyList(),
+            overrides = WorldBookActivationOverrides(
+                entries = mapOf("book" to mapOf("default-on" to false, "default-off" to true)),
+            ),
+        )
+
+        assertTrue(bookDisabled.activatedEntryIds.isEmpty())
+        assertTrue(bookDisabled.trace.any { it.decision.contains("book disabled") })
+        assertEquals(listOf("default-off"), entryEnabled.activatedEntryIds)
+        assertTrue(
+            entryEnabled.trace.any {
+                it.sourceIds == listOf("book", "default-on") &&
+                    it.decision == "entry disabled by conversation override"
+            },
+        )
+        assertTrue(
+            entryEnabled.trace.any {
+                it.sourceIds == listOf("book", "default-off") &&
+                    it.decision == "entry enabled by conversation override"
+            },
+        )
+    }
+
+    @Test
+    fun `timed state advances while its book is disabled`() {
+        val book = WorldBookDefinition(
+            id = "book",
+            entries = listOf(entry("entry", constant = true, content = "active")),
+        )
+        val result = activate(
+            book,
+            emptyList(),
+            state = mapOf("book:entry" to WorldBookEntryRuntimeState(cooldownRemaining = 2)),
+            overrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
+        )
+
+        assertEquals(1, result.runtimeState.getValue("book:entry").cooldownRemaining)
+    }
+
+    @Test
     fun `outlet names and placements remain available to prompt macros`() {
         val book = WorldBookDefinition(
             id = "book",
@@ -219,6 +275,7 @@ class WorldBookEngineTest {
         book: WorldBookDefinition,
         history: List<ConversationMessage>,
         state: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
+        overrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turn: Int = 0,
         budget: Int = 10_000,
     ) = engine.activate(
@@ -233,6 +290,7 @@ class WorldBookEngineTest {
         ),
         transaction = MacroTransaction(seed = "attempt-$turn"),
         previousState = state,
+        activationOverrides = overrides,
         turnIndex = turn,
         inputBudgetTokens = budget,
     )

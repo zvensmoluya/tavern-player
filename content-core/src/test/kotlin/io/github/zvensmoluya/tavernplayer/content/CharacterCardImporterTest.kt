@@ -76,6 +76,7 @@ class CharacterCardImporterTest {
         assertEquals("Fallback", result.character.name)
         assertEquals(CharacterCardGeneration.V2, result.character.cardGeneration)
         assertTrue(result.character.assets.any { it.type == "icon" && it.name == "main" && it.uri == "ccdefault:" })
+        assertTrue(result.character.assets.single().id.startsWith("asset-"))
     }
 
     @Test

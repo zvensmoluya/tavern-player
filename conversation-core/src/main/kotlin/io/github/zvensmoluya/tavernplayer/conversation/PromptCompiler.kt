@@ -1,7 +1,5 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
-import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
@@ -375,6 +373,7 @@ class PromptCompiler(
             macroContext = baseContext,
             transaction = transaction,
             previousState = input.runtimeState.worldBookEntries,
+            activationOverrides = input.runtimeState.worldBookActivationOverrides,
             turnIndex = input.runtimeState.generationIndex,
             inputBudgetTokens = (contextLimit - outputLimit).coerceAtLeast(0),
         )
@@ -473,7 +472,10 @@ class PromptCompiler(
                 }
             }
         }.toMutableList()
-        statePromptProjector.project(input.runtimeState.conversationState)?.let { content ->
+        statePromptProjector.project(
+            input.runtimeState.conversationState,
+            input.character.nativeAdaptation,
+        )?.let { content ->
             val insertionIndex = compiled.indexOfFirst { it.role != MessageRole.SYSTEM }
                 .takeIf { it >= 0 }
                 ?: compiled.size
@@ -488,7 +490,41 @@ class PromptCompiler(
             trace += CompilationTraceEntry(
                 stage = "conversation-state",
                 sourceIds = listOf(CONVERSATION_STATE_SOURCE),
-                decision = "projected ${input.runtimeState.conversationState.values.size} scalar values",
+                decision = "projected ${input.runtimeState.conversationState.values.size} state values",
+                role = MessageRole.SYSTEM,
+                content = content,
+            )
+        }
+        statePromptProjector.projectAdapterContract(input.character.nativeAdaptation)?.let { content ->
+            val insertionIndex = compiled.indexOfFirst { it.role != MessageRole.SYSTEM }
+                .takeIf { it >= 0 }
+                ?: compiled.size
+            compiled.add(
+                insertionIndex,
+                PreparedMessage(
+                    role = MessageRole.SYSTEM,
+                    content = content,
+                    origin = PromptOrigin("assistant-state-contract", listOf(ASSISTANT_STATE_CONTRACT_SOURCE)),
+                ),
+            )
+            trace += CompilationTraceEntry(
+                stage = "assistant-state-contract",
+                sourceIds = listOf(ASSISTANT_STATE_CONTRACT_SOURCE),
+                decision = "projected fixed adapter reply contract",
+                role = MessageRole.SYSTEM,
+                content = content,
+            )
+        }
+        statePromptProjector.projectAdapterCompletionReminder(input.character.nativeAdaptation)?.let { content ->
+            compiled += PreparedMessage(
+                role = MessageRole.SYSTEM,
+                content = content,
+                origin = PromptOrigin("assistant-state-reminder", listOf(ASSISTANT_STATE_REMINDER_SOURCE)),
+            )
+            trace += CompilationTraceEntry(
+                stage = "assistant-state-reminder",
+                sourceIds = listOf(ASSISTANT_STATE_REMINDER_SOURCE),
+                decision = "appended fixed adapter completion reminder",
                 role = MessageRole.SYSTEM,
                 content = content,
             )
@@ -571,6 +607,7 @@ class PromptCompiler(
                 runtimeState = nextRuntime,
                 tokenAccounting = budget.report,
                 activatedWorldBookEntries = activation.activatedEntryIds,
+                nativeAdaptation = input.character.nativeAdaptation,
             ),
         )
     }
@@ -637,23 +674,31 @@ class PromptCompiler(
         diagnostics: MutableList<CompilationDiagnostic>,
     ): String {
         val textContext = context.copy(inputText = text)
-        val nativeAttachmentMarkers = if (placement == RegexPlacement.AI_OUTPUT && projection == RegexProjection.DISPLAY) {
-            character.adaptation?.views.orEmpty()
-                .filter { view ->
-                    view.placement == AdaptationViewPlacement.MESSAGE_ATTACHMENT &&
-                        view.trigger.type != AdaptationTriggerType.ALWAYS &&
-                        view.matchesMessage(text)
-                }
-                .map { it.trigger.value }
+        val nativeFormMarkers = if (placement == RegexPlacement.AI_OUTPUT && projection == RegexProjection.DISPLAY) {
+            character.nativeAdaptation?.forms.orEmpty()
+                .filter { form -> form.matchesMessage(text) }
+                .map { it.marker }
                 .filter(String::isNotEmpty)
                 .toSet()
         } else {
             emptySet()
         }
-        val characterRules = if (nativeAttachmentMarkers.isEmpty()) {
+        val characterRules = if (nativeFormMarkers.isEmpty()) {
             character.regexScripts
         } else {
-            character.regexScripts.filterNot { it.findRegex.trim() in nativeAttachmentMarkers }
+            character.regexScripts.filterNot { rule ->
+                nativeFormMarkers.any { marker ->
+                    regexEngine.matchesWithoutReplacement(
+                        text = marker,
+                        rule = rule,
+                        placement = placement,
+                        projection = projection,
+                        depth = depth,
+                        context = textContext,
+                        transaction = transaction,
+                    )
+                }
+            }
         }
         val regexed = regexEngine.apply(
             text,
@@ -666,7 +711,7 @@ class PromptCompiler(
             conversationId,
         )
         diagnostics += regexed.diagnostics
-        val markerFreeText = nativeAttachmentMarkers.fold(regexed.text) { current, marker -> current.replace(marker, "") }
+        val markerFreeText = nativeFormMarkers.fold(regexed.text) { current, marker -> current.replace(marker, "") }
         val expanded = macroEngine.evaluate(markerFreeText, textContext, transaction)
         diagnostics += expanded.diagnostics
         return expanded.text
@@ -1059,6 +1104,8 @@ class PromptCompiler(
         private const val NEW_EXAMPLE_SOURCE = "newExampleChatPrompt"
         private const val ASSISTANT_PREFILL_SOURCE = "assistantPrefill"
         private const val CONVERSATION_STATE_SOURCE = "conversationState"
+        private const val ASSISTANT_STATE_CONTRACT_SOURCE = "assistantStateContract"
+        private const val ASSISTANT_STATE_REMINDER_SOURCE = "assistantStateReminder"
         private val SUPPORTED_MARKERS = setOf(
             WORLD_INFO_BEFORE_MARKER,
             WORLD_INFO_AFTER_MARKER,

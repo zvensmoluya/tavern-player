@@ -11,6 +11,7 @@ import io.github.zvensmoluya.tavernplayer.characters.CharacterRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.conversation.StateConfirmingConversationGenerator
 import io.github.zvensmoluya.tavernplayer.personas.PersonaRepository
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferClient
@@ -36,5 +37,7 @@ class AppGraph(context: Context) {
         filesDir = appContext.filesDir,
         compiler = promptCompiler,
     )
-    val conversationGenerator = ModelGatewayConversationGenerator(gateway, connectionRepository)
+    val conversationGenerator = StateConfirmingConversationGenerator(
+        ModelGatewayConversationGenerator(gateway, connectionRepository),
+    )
 }

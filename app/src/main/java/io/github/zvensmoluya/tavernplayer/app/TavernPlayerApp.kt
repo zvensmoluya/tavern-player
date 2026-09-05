@@ -101,6 +101,7 @@ fun TavernPlayerApp(
         AppSurface.CHAT -> ChatRoute(
             viewModel = chatViewModel,
             presetViewModel = presetViewModel,
+            resolveAssetPath = characterLibraryViewModel::assetPath,
             onBack = { surface = AppSurface.CHARACTER_DETAIL },
             onOpenModels = ::openModels,
             onOpenPresets = ::openPresets,

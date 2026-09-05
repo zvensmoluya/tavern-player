@@ -8,8 +8,10 @@ import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
-import io.github.zvensmoluya.tavernplayer.content.AdaptationView
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
+import io.github.zvensmoluya.tavernplayer.content.NativeCollectionView
+import io.github.zvensmoluya.tavernplayer.content.NativeFormView
+import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
+import io.github.zvensmoluya.tavernplayer.content.NativeStatusView
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.time.Instant
 import java.time.ZoneId
@@ -50,7 +52,7 @@ data class ChatMessageState(
     val displayContent: String = message.content,
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
     val edited: Boolean = false,
-    val adaptationViews: List<AdaptationView> = emptyList(),
+    val nativeForms: List<NativeFormView> = emptyList(),
 )
 
 data class GenerationTraceState(
@@ -83,7 +85,9 @@ data class ChatUiState(
     val message: String? = null,
     val lastTrace: GenerationTraceState? = null,
     val conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
-    val headerAdaptationViews: List<AdaptationView> = emptyList(),
+    val nativeStatus: NativeStatusView? = null,
+    val nativeScenes: List<NativeSceneView> = emptyList(),
+    val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
@@ -100,7 +104,7 @@ class ChatViewModel(
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val now: () -> Long = System::currentTimeMillis,
     private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
-    private val adaptationRuntime: AdaptationRuntime = AdaptationRuntime(),
+    private val adaptationRuntime: NativeAdaptationRuntime = NativeAdaptationRuntime(),
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -121,6 +125,7 @@ class ChatViewModel(
     private var persistenceJob: Job? = null
     private var persistenceDirty = false
     private var rawAssistant = ""
+    private var rawStateConfirmation: String? = null
     private val rawReasoning = mutableListOf<ReasoningBlock>()
     private var pendingPlanRuntime: ConversationRuntimeState? = null
     private var pendingAssistantRuntime: ConversationRuntimeState? = null
@@ -175,23 +180,19 @@ class ChatViewModel(
         _uiState.update { it.copy(input = value, message = null) }
     }
 
-    fun submitAdaptation(viewId: String, values: Map<String, List<String>>) {
+    fun submitNativeForm(formId: String, values: Map<String, List<String>>) {
         if (_uiState.value.running) return
-        val artifact = record.character.adaptation ?: return
+        val adaptation = record.character.nativeAdaptation ?: return
         when (
-            val result = adaptationRuntime.execute(
-                artifact = artifact,
-                submission = AdaptationFormSubmission(viewId, values),
-                runtimeState = record.runtimeState,
+            val result = adaptationRuntime.submitForm(
+                adaptation = adaptation,
+                submission = NativeFormSubmission(formId, values),
                 userName = record.persona.name,
                 characterName = record.character.promptName,
             )
         ) {
-            is AdaptationExecutionResult.Failure -> _uiState.update { it.copy(message = result.message) }
-            is AdaptationExecutionResult.Success -> {
-                val draft = result.effects.lastOrNull { it.type == AdaptationEffectType.CHAT_SET_DRAFT }?.value
-                syncRecord(input = draft ?: _uiState.value.input, message = null)
-            }
+            is NativeFormSubmissionResult.Rejected -> _uiState.update { it.copy(message = result.message) }
+            is NativeFormSubmissionResult.Draft -> syncRecord(input = result.text, message = null)
         }
     }
 
@@ -372,11 +373,13 @@ class ChatViewModel(
                         }
                     }
                     MessageRole.ASSISTANT -> {
+                        val adaptation = record.character.nativeAdaptation
+                        val narrativeSource = adaptationRuntime.projectAssistantMessage(adaptation, sourceText).narrativeText
                         val projectionRuntime = selected.projectionRuntimeStateBefore
                             ?: selected.generationPlan?.runtimeState
                             ?: runtimeBefore
                         val projected = compiler.projectAssistantOutput(
-                            rawText = sourceText,
+                            rawText = narrativeSource,
                             rawReasoning = emptyList(),
                             character = record.character,
                             persona = record.persona,
@@ -387,7 +390,7 @@ class ChatViewModel(
                             generationId = generationId,
                             modelId = modelId,
                         )
-                        val projectedRuntime = record.character.adaptation?.let { adaptation ->
+                        val projectedRuntime = adaptation?.let {
                             adaptationRuntime.ingestAssistantMessage(adaptation, sourceText, projected.runtimeState).runtimeState
                         } ?: projected.runtimeState
                         if (mode == MessageEditMode.TEXT_ONLY) {
@@ -403,6 +406,7 @@ class ChatViewModel(
                                 message = selected.message.copy(
                                     content = projected.storageText,
                                     sourceText = sourceText,
+                                    stateConfirmation = null,
                                     reasoning = emptyList(),
                                     adapterId = null,
                                 ),
@@ -519,7 +523,8 @@ class ChatViewModel(
                 depthPrompt = record.character.depthPrompt,
                 worldBooks = record.character.worldBooks,
                 regexScripts = record.character.regexScripts,
-                adaptation = record.character.adaptation,
+                assets = record.character.assets,
+                nativeAdaptation = record.character.nativeAdaptation,
             ),
             record.persona,
             presetSource.captureActive(),
@@ -684,6 +689,7 @@ class ChatViewModel(
             )
         }
         rawAssistant = ""
+        rawStateConfirmation = null
         rawReasoning.clear()
         pendingPlanRuntime = finalPlan.runtimeState
         pendingAssistantRuntime = null
@@ -783,6 +789,11 @@ class ChatViewModel(
                 updateVariant(variantId) { it.copy(inputTokens = event.value.inputTokens, outputTokens = event.value.outputTokens) }
                 updateTrace { copy(usage = event.value) }
             }
+            is GenerationEvent.AssistantStateConfirmed -> {
+                rawStateConfirmation = event.envelope
+                reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId)
+                schedulePersist()
+            }
             is GenerationEvent.Finished -> {
                 pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
                 pendingAssistantRuntime = null
@@ -818,9 +829,15 @@ class ChatViewModel(
         evaluationZoneId: ZoneId,
     ) {
         val history = record.selectedMessages().dropLast(1)
+        val adaptation = record.character.nativeAdaptation
+        val narrativeSource = adaptationRuntime.projectAssistantMessage(
+            adaptation = adaptation,
+            sourceText = rawAssistant,
+            stateConfirmedSeparately = rawStateConfirmation != null,
+        ).narrativeText
         val projection = withContext(projectionDispatcher) {
             compiler.projectAssistantOutput(
-                rawText = rawAssistant,
+                rawText = narrativeSource,
                 rawReasoning = rawReasoning.map(ReasoningBlock::text),
                 character = record.character,
                 persona = record.persona,
@@ -834,8 +851,9 @@ class ChatViewModel(
                 evaluationZoneId = evaluationZoneId,
             )
         }
-        val projectedRuntime = record.character.adaptation?.let { adaptation ->
-            adaptationRuntime.ingestAssistantMessage(adaptation, rawAssistant, projection.runtimeState).runtimeState
+        val projectedRuntime = adaptation?.let {
+            val stateSource = rawStateConfirmation ?: rawAssistant
+            adaptationRuntime.ingestAssistantMessage(adaptation, stateSource, projection.runtimeState).runtimeState
         } ?: projection.runtimeState
         pendingAssistantRuntime = projectedRuntime
         val messageId = record.findVariant(variantId)?.message?.id
@@ -857,6 +875,7 @@ class ChatViewModel(
                 message = variant.message.copy(
                     content = projection.storageText,
                     sourceText = rawAssistant,
+                    stateConfirmation = rawStateConfirmation,
                     reasoning = reasoning,
                 ),
                 generationPlan = plan,
@@ -1098,11 +1117,12 @@ class ChatViewModel(
     ): ConversationRecord {
         val snapshot = characterAsset.snapshot()
         val timestamp = now()
-        val initialRuntime = adaptationRuntime.initialState(snapshot.adaptation)
+        val initialRuntime = adaptationRuntime.initialState(snapshot.nativeAdaptation)
         val variants = (listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages).mapIndexedNotNull { index, greeting ->
             if (greeting.isBlank()) return@mapIndexedNotNull null
+            val narrativeSource = adaptationRuntime.projectAssistantMessage(snapshot.nativeAdaptation, greeting).narrativeText
             val expanded = compiler.projectAssistantText(
-                text = greeting,
+                text = narrativeSource,
                 projection = RegexProjection.STORAGE,
                 character = snapshot,
                 persona = persona,
@@ -1113,7 +1133,7 @@ class ChatViewModel(
                 generationId = "fallback-opening-$index",
                 modelId = "",
             ) as TextExpansionResult.Success
-            val expandedRuntime = snapshot.adaptation?.let { adaptation ->
+            val expandedRuntime = snapshot.nativeAdaptation?.let { adaptation ->
                 adaptationRuntime.ingestAssistantMessage(adaptation, greeting, expanded.runtimeState).runtimeState
             } ?: expanded.runtimeState
             MessageVariant(
@@ -1214,9 +1234,8 @@ private fun ConversationRecord.toUiState(
             variantIndex = turn.selectedVariantIndex,
             variantCount = turn.variants.size,
             edited = variant.edited,
-            adaptationViews = character.adaptation?.views.orEmpty().filter { view ->
-                view.placement != AdaptationViewPlacement.CONVERSATION_HEADER &&
-                    view.matchesMessage(variant.message.sourceText)
+            nativeForms = character.nativeAdaptation?.forms.orEmpty().filter { form ->
+                form.matchesMessage(variant.message.sourceText)
             },
         )
     },
@@ -1234,9 +1253,9 @@ private fun ConversationRecord.toUiState(
     message = message,
     lastTrace = lastTrace ?: persistedTrace(),
     conversationState = runtimeState.conversationState.values,
-    headerAdaptationViews = character.adaptation?.views.orEmpty().filter { view ->
-        view.placement == AdaptationViewPlacement.CONVERSATION_HEADER && view.matchesMessage("")
-    },
+    nativeStatus = character.nativeAdaptation?.status,
+    nativeScenes = character.nativeAdaptation?.scenes.orEmpty(),
+    nativeCollections = character.nativeAdaptation?.collections.orEmpty(),
 )
 
 private data class RenderedMessage(

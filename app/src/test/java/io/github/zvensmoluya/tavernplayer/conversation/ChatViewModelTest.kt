@@ -14,14 +14,14 @@ import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
-import io.github.zvensmoluya.tavernplayer.content.AdaptationArtifact
-import io.github.zvensmoluya.tavernplayer.content.AdaptationCompiler
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateDialect
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateMapping
-import io.github.zvensmoluya.tavernplayer.content.AdaptationMessageStateRule
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateDefinition
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStateType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationStatus
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateAdapterDefinition
+import io.github.zvensmoluya.tavernplayer.content.AssistantStateMapping
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateDefinition
+import io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType
+import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
+import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
+import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.io.IOException
 import java.nio.file.Files
@@ -84,11 +84,36 @@ class ChatViewModelTest {
                 emit(GenerationEvent.Finished("stop"))
             }
         }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
 
         viewModel.updateInput("继续")
         viewModel.send()
 
+        assertEquals(2.0, (viewModel.uiState.value.conversationState["world-day"] as JsonPrimitive).double, 0.0)
+        assertEquals("正文", viewModel.uiState.value.messages.last().message.content)
+        assertTrue(viewModel.uiState.value.messages.last().message.sourceText.orEmpty().contains("<UpdateVariable>"))
+    }
+
+    @Test
+    fun `separate state confirmation is persisted and applied without changing assistant prose`() = runTest {
+        val adaptation = dayAdaptation()
+        val confirmation = "<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"
+        val generator = FakeGenerator { _, _ ->
+            flow {
+                emit(GenerationEvent.TextDelta("只有正文。"))
+                emit(GenerationEvent.AssistantStateConfirmed(confirmation))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
+
+        viewModel.updateInput("继续")
+        viewModel.send()
+
+        val message = viewModel.uiState.value.messages.last().message
+        assertEquals("只有正文。", message.content)
+        assertEquals("只有正文。", message.sourceText)
+        assertEquals(confirmation, message.stateConfirmation)
         assertEquals(2.0, (viewModel.uiState.value.conversationState["world-day"] as JsonPrimitive).double, 0.0)
     }
 
@@ -101,7 +126,7 @@ class ChatViewModelTest {
                 error("stream failed")
             }
         }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
 
         viewModel.updateInput("继续")
         viewModel.send()
@@ -122,7 +147,7 @@ class ChatViewModelTest {
                 emit(GenerationEvent.Finished("stop"))
             }
         }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = adaptation))
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
 
         viewModel.updateInput("继续")
         viewModel.send()
@@ -145,6 +170,239 @@ class ChatViewModelTest {
         viewModel.send()
         assertEquals(3, plans.size)
         assertTrue(plans[2].projectedConversationState().contains("\"world-day\":2"))
+    }
+
+    @Test
+    fun `world book overrides replay from the assistant checkpoint and follow the selected swipe`() = runTest {
+        val directory = Files.createTempDirectory("tavern-chat-world-book-swipe").toFile()
+        try {
+            val compiler = PromptCompiler()
+            var repositoryId = 0
+            val conversations = ConversationRepository(
+                directory,
+                compiler,
+                idFactory = { "world-book-repository-${repositoryId++}" },
+                ioDispatcher = mainDispatcherRule.dispatcher,
+            )
+            val character = DemoConversationContent.character.copy(
+                firstMessage = "opening",
+                alternateFirstMessages = emptyList(),
+                worldBooks = listOf(
+                    WorldBookDefinition(
+                        id = "book",
+                        entries = listOf(
+                            WorldBookEntryDefinition(id = "entry", content = "constant lore", constant = true),
+                        ),
+                    ),
+                ),
+            )
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val enabled = created.runtimeState.copy(
+                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to true)),
+            )
+            val disabled = enabled.copy(
+                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
+            )
+            val userTurn = ConversationTurn(
+                id = "seed-user-turn",
+                role = MessageRole.USER,
+                variants = listOf(
+                    MessageVariant(
+                        id = "seed-user-variant",
+                        message = ConversationMessage("seed-user", MessageRole.USER, "choose", "Traveler"),
+                        runtimeStateBefore = enabled,
+                        projectionRuntimeStateBefore = enabled,
+                        runtimeStateAfter = enabled,
+                    ),
+                ),
+            )
+            val assistantTurn = ConversationTurn(
+                id = "seed-assistant-turn",
+                role = MessageRole.ASSISTANT,
+                variants = listOf(
+                    MessageVariant(
+                        id = "disabled-variant",
+                        message = ConversationMessage("disabled-message", MessageRole.ASSISTANT, "disabled", character.promptName),
+                        runtimeStateBefore = enabled,
+                        projectionRuntimeStateBefore = enabled,
+                        runtimeStateAfter = disabled,
+                    ),
+                    MessageVariant(
+                        id = "enabled-variant",
+                        message = ConversationMessage("enabled-message", MessageRole.ASSISTANT, "enabled", character.promptName),
+                        runtimeStateBefore = enabled,
+                        projectionRuntimeStateBefore = enabled,
+                        runtimeStateAfter = enabled,
+                    ),
+                ),
+            )
+            val seeded = conversations.save(
+                created.copy(
+                    turns = created.turns + userTurn + assistantTurn,
+                    runtimeState = disabled,
+                ),
+            )
+            val plans = mutableListOf<GenerationPlan>()
+            val generator = FakeGenerator { _, plan ->
+                plans += plan
+                flow {
+                    emit(GenerationEvent.TextDelta("response"))
+                    emit(GenerationEvent.Finished("stop"))
+                }
+            }
+            var messageId = 0
+            val viewModel = ChatViewModel(
+                repository = repository(),
+                compiler = compiler,
+                generator = generator,
+                conversationRepository = conversations,
+                presetSource = FixedPresetSource(),
+                characterAsset = character,
+                idGenerator = { "world-book-message-${messageId++}" },
+                projectionDispatcher = mainDispatcherRule.dispatcher,
+            )
+            viewModel.loadConversation(seeded.id)
+
+            viewModel.regenerate()
+
+            assertEquals(listOf("entry"), plans.single().activatedWorldBookEntries)
+
+            viewModel.previousVariant()
+            viewModel.previousVariant()
+            viewModel.updateInput("continue from disabled candidate")
+            viewModel.send()
+
+            assertTrue(plans.last().activatedWorldBookEntries.isEmpty())
+            assertEquals(
+                false,
+                conversations.get(seeded.id)?.runtimeState?.worldBookActivationOverrides?.books?.get("book"),
+            )
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `history restart discards future world book overrides and restores its checkpoint`() = runTest {
+        val directory = Files.createTempDirectory("tavern-chat-world-book-history").toFile()
+        try {
+            val compiler = PromptCompiler()
+            var repositoryId = 0
+            val conversations = ConversationRepository(
+                directory,
+                compiler,
+                idFactory = { "world-book-history-repository-${repositoryId++}" },
+                ioDispatcher = mainDispatcherRule.dispatcher,
+            )
+            val character = DemoConversationContent.character.copy(
+                firstMessage = "opening",
+                alternateFirstMessages = emptyList(),
+                worldBooks = listOf(
+                    WorldBookDefinition(
+                        id = "book",
+                        entries = listOf(
+                            WorldBookEntryDefinition(id = "entry", content = "constant lore", constant = true),
+                        ),
+                    ),
+                ),
+            )
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val disabled = created.runtimeState.copy(
+                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
+            )
+            val enabled = disabled.copy(
+                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to true)),
+            )
+            val firstUser = ConversationTurn(
+                id = "first-user-turn",
+                role = MessageRole.USER,
+                variants = listOf(
+                    MessageVariant(
+                        id = "first-user-variant",
+                        message = ConversationMessage("first-user", MessageRole.USER, "first", "Traveler"),
+                        runtimeStateBefore = disabled,
+                        projectionRuntimeStateBefore = disabled,
+                        runtimeStateAfter = disabled,
+                    ),
+                ),
+            )
+            val firstAssistant = ConversationTurn(
+                id = "first-assistant-turn",
+                role = MessageRole.ASSISTANT,
+                variants = listOf(
+                    MessageVariant(
+                        id = "first-assistant-variant",
+                        message = ConversationMessage("first-assistant", MessageRole.ASSISTANT, "first reply", character.promptName),
+                        runtimeStateBefore = disabled,
+                        projectionRuntimeStateBefore = disabled,
+                        runtimeStateAfter = disabled,
+                    ),
+                ),
+            )
+            val laterUser = ConversationTurn(
+                id = "later-user-turn",
+                role = MessageRole.USER,
+                variants = listOf(
+                    MessageVariant(
+                        id = "later-user-variant",
+                        message = ConversationMessage("later-user", MessageRole.USER, "later", "Traveler"),
+                        runtimeStateBefore = disabled,
+                        projectionRuntimeStateBefore = disabled,
+                        runtimeStateAfter = enabled,
+                    ),
+                ),
+            )
+            val laterAssistant = ConversationTurn(
+                id = "later-assistant-turn",
+                role = MessageRole.ASSISTANT,
+                variants = listOf(
+                    MessageVariant(
+                        id = "later-assistant-variant",
+                        message = ConversationMessage("later-assistant", MessageRole.ASSISTANT, "later reply", character.promptName),
+                        runtimeStateBefore = enabled,
+                        projectionRuntimeStateBefore = enabled,
+                        runtimeStateAfter = enabled,
+                    ),
+                ),
+            )
+            val seeded = conversations.save(
+                created.copy(
+                    turns = created.turns + firstUser + firstAssistant + laterUser + laterAssistant,
+                    runtimeState = enabled,
+                ),
+            )
+            val plans = mutableListOf<GenerationPlan>()
+            val generator = FakeGenerator { _, plan ->
+                plans += plan
+                flow {
+                    emit(GenerationEvent.TextDelta("replacement reply"))
+                    emit(GenerationEvent.Finished("stop"))
+                }
+            }
+            var messageId = 0
+            val viewModel = ChatViewModel(
+                repository = repository(),
+                compiler = compiler,
+                generator = generator,
+                conversationRepository = conversations,
+                presetSource = FixedPresetSource(),
+                characterAsset = character,
+                idGenerator = { "world-book-history-message-${messageId++}" },
+                projectionDispatcher = mainDispatcherRule.dispatcher,
+            )
+            viewModel.loadConversation(seeded.id)
+
+            viewModel.editMessage("first-user", "changed first", MessageEditMode.RESTART)
+
+            assertEquals(3, viewModel.uiState.value.messages.size)
+            assertTrue(plans.single().activatedWorldBookEntries.isEmpty())
+            assertEquals(
+                false,
+                conversations.get(seeded.id)?.runtimeState?.worldBookActivationOverrides?.books?.get("book"),
+            )
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test
@@ -228,7 +486,7 @@ class ChatViewModelTest {
                 emit(GenerationEvent.Finished("stop"))
             }
         }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(adaptation = dayAdaptation()))
+        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = dayAdaptation()))
 
         viewModel.updateInput("{{setvar::route::old}}first")
         viewModel.send()
@@ -645,16 +903,13 @@ class ChatViewModelTest {
         )
     }
 
-    private fun dayAdaptation() = AdaptationArtifact(
+    private fun dayAdaptation() = NativeAdaptation(
         sourceSha256 = "a".repeat(64),
-        compiler = AdaptationCompiler("fixture", "1"),
-        status = AdaptationStatus.FULL,
-        requiredCapabilities = listOf("state.ingest"),
-        state = listOf(AdaptationStateDefinition("world-day", AdaptationStateType.NUMBER, JsonPrimitive(1))),
-        messageStateRules = listOf(
-            AdaptationMessageStateRule(
-                AdaptationMessageStateDialect.UPDATE_VARIABLE_SET_V1,
-                listOf(AdaptationMessageStateMapping("世界.日期", "world-day")),
+        state = listOf(ConversationStateDefinition("world-day", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(1))),
+        assistantStateAdapters = listOf(
+            AssistantStateAdapterDefinition(
+                LegacyStateDialect.UPDATE_VARIABLE_SET_V1,
+                listOf(AssistantStateMapping("世界.日期", "world-day")),
             ),
         ),
     )

@@ -2,6 +2,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.CharacterDepthPrompt
 import io.github.zvensmoluya.tavernplayer.content.ContentRole
+import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetInjectionPosition
@@ -10,6 +11,8 @@ import io.github.zvensmoluya.tavernplayer.content.PresetPromptOrderEntry
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 
 typealias CharacterAsset = io.github.zvensmoluya.tavernplayer.content.CharacterAsset
@@ -86,6 +89,7 @@ data class ConversationMessage(
     val content: String,
     val authorName: String,
     val sourceText: String = content,
+    val stateConfirmation: String? = null,
     val reasoning: List<ReasoningBlock> = emptyList(),
     val adapterId: String? = null,
     val createdAtEpochMillis: Long = 0,
@@ -104,21 +108,33 @@ data class WorldBookEntryRuntimeState(
 )
 
 @Serializable
+data class WorldBookActivationOverrides(
+    val books: Map<String, Boolean> = emptyMap(),
+    val entries: Map<String, Map<String, Boolean>> = emptyMap(),
+) {
+    fun isBookEnabled(bookId: String): Boolean = books[bookId] ?: true
+
+    fun isEntryEnabled(bookId: String, entryId: String, definitionEnabled: Boolean): Boolean =
+        isBookEnabled(bookId) && (entries[bookId]?.get(entryId) ?: definitionEnabled)
+}
+
+@Serializable
 data class ConversationStateSnapshot(
-    val values: Map<String, JsonPrimitive> = emptyMap(),
+    val values: Map<String, JsonElement> = emptyMap(),
 ) {
     fun applying(patch: ConversationStatePatch): ConversationStateSnapshot =
         if (patch.assignments.isEmpty()) this else copy(values = values + patch.assignments)
 }
 
 data class ConversationStatePatch(
-    val assignments: Map<String, JsonPrimitive> = emptyMap(),
+    val assignments: Map<String, JsonElement> = emptyMap(),
 )
 
 @Serializable
 data class ConversationRuntimeState(
     val localVariables: Map<String, MacroValue> = emptyMap(),
     val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
+    val worldBookActivationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
     val conversationState: ConversationStateSnapshot = ConversationStateSnapshot(),
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
@@ -210,6 +226,7 @@ data class GenerationPlan(
     val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
     val tokenAccounting: TokenAccountingReport? = null,
     val activatedWorldBookEntries: List<String> = emptyList(),
+    @Transient val nativeAdaptation: NativeAdaptation? = null,
 )
 
 sealed interface CompilationResult {

@@ -53,13 +53,14 @@ class ConversationRepository(
             val capturedPreset = preset.snapshot()
             val snapshot = character.snapshot()
             val greetings = listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages
-            val adaptationRuntime = AdaptationRuntime()
-            val initialRuntime = adaptationRuntime.initialState(snapshot.adaptation)
+            val adaptationRuntime = NativeAdaptationRuntime()
+            val initialRuntime = adaptationRuntime.initialState(snapshot.nativeAdaptation)
             var committedRuntime = initialRuntime
             val variants = greetings.mapIndexedNotNull { index, greeting ->
                 if (greeting.isBlank()) return@mapIndexedNotNull null
+                val narrativeSource = adaptationRuntime.projectAssistantMessage(snapshot.nativeAdaptation, greeting).narrativeText
                 val projected = compiler.projectAssistantText(
-                    text = greeting,
+                    text = narrativeSource,
                     projection = RegexProjection.STORAGE,
                     character = snapshot,
                     persona = persona,
@@ -71,7 +72,7 @@ class ConversationRepository(
                     modelId = "",
                     depth = 0,
                 ) as TextExpansionResult.Success
-                val projectedRuntime = snapshot.adaptation?.let { adaptation ->
+                val projectedRuntime = snapshot.nativeAdaptation?.let { adaptation ->
                     adaptationRuntime.ingestAssistantMessage(adaptation, greeting, projected.runtimeState).runtimeState
                 } ?: projected.runtimeState
                 if (index == 0) committedRuntime = projectedRuntime

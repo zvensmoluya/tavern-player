@@ -1,22 +1,19 @@
 # Native 内容适配边界 v1
 
-> 状态：现有过渡实现契约。它不是角色卡公共格式或创作者 SDK；后续收敛方向见 [`Tavern Player Native Adaptation 设计原则0903.md`](Tavern%20Player%20Native%20Adaptation%20设计原则0903.md)。
+> 状态：开发期内部契约，不是角色卡公共格式或创作者 SDK。产品方向见 [`Tavern Player Native Adaptation 设计原则0903.md`](Tavern%20Player%20Native%20Adaptation%20设计原则0903.md)，运行行为边界见 [`Tavern Player Native Domain Operations 设计草案.md`](Tavern%20Player%20Native%20Domain%20Operations%20设计草案.md)。
 
-## 目标
+## 当前方法
 
-Tavern Player 在导入边界理解社区卡依赖的 HTML、JavaScript、Tavern Helper 和宿主 API，将可恢复的可观察玩法表达为受限的 Native 适配产物。原始卡片始终按原始字节保存，适配产物可以删除、替换和重新生成。
+第一阶段由兼容工程师直接阅读原始角色卡与 Player 实现，手工填写 `NativeAdaptation`，再由确定性代码校验和执行：
 
 ```text
 Original source (immutable)
         │
         ▼
-ProgramView (minimal and redacted)
+Manual behavior audit
         │
         ▼
-AI semantic compiler
-        │
-        ▼
-AdaptationArtifact candidate
+NativeAdaptation candidate
         │
         ▼
 Deterministic validation
@@ -25,106 +22,135 @@ Deterministic validation
 Native playback
 ```
 
-AI 负责提出语义映射。确定性代码负责格式、能力、资源消耗和权限裁决。AI 输出本身始终是不可信输入。
+当前不建设 `ProgramView`、AI compiler、repair、派生缓存或 Shelf 分发协议。真实模型只用于测试对话玩法；它不参与生成适配，也不拥有 Runtime 设计权。等 Native View、Versioned Conversation State、Legacy State Adapter 和验证边界稳定后，再单独设计 Android 导入期的自动适配流程。
 
-## 原件与派生产物
+## 原件、安装与 Conversation Snapshot
 
-- `sourceSha256` 标识不可变原件；适配产物必须绑定同一哈希。
-- 非 `ALWAYS` marker、消息状态方言、路径、类型与初始值必须能回溯到同一原件确定性提取出的 `ProgramView`。
-- 适配不会重写 PNG、JSON、Character Card extension 或原始 Shelf 文件。
-- Player 创建 Conversation 时捕获当时采用的 Character 与 Adaptation snapshot，之后重新编译不改写已有对话。
-- Shelf 可以为同一原件缓存不同 compiler/runtime 版本的派生产物，但运行时状态不属于 Shelf。
+- `sourceSha256` 把 Native 内容绑定到不可变原件；安装时必须与已导入 Character 的哈希完全相同。
+- 适配只旁挂到 app-private Character manifest，不修改 `source.png`、`source.json` 或 Character Card extension。
+- 安装先验证完整候选；失败时不写入部分结果。
+- 新建 Conversation 捕获当时的 Character 与 Native Adaptation snapshot。之后替换 Character 上的适配不会改写旧 Conversation。
+- 手工 fixture 是开发期测试材料，可以随核心设计重做，不承诺跨版本兼容。
 
-当前 Shelf 实现把 `program-view-v1.json` 与 `adaptation-v1.json` 保存在原件目录的 `derived/` 下，通过 SQLite 记录原件/派生物哈希与编译状态。角色卡传输 manifest 可携带可选 adaptation；Player 分别校验附件长度、哈希、严格 JSON schema 和 `sourceSha256` 后才挂载。
+## NativeAdaptation v1
 
-## ProgramView v1
-
-`ProgramView` 只包含理解程序行为所需的信息：
-
-- 会产生主动 HTML/CSS/JavaScript 的 Regex replacement；
-- Tavern Helper 等 script container 中的程序正文；
-- Regex trigger、placement 与启用状态；
-- 可供产物引用的 World Book opaque handle、名称、大小和摘要；
-- 从受支持变量规则中确定性提取的状态方言、点分路径、primitive 类型和初始值；
-- 程序中观察到的宿主能力和变量引用；
-- 远程依赖的去凭据 locator；
-- 被省略叙事字段的名称、字符数和摘要。
-
-它默认不包含 Character description、personality、scenario、opening、examples、system prompt、post-history prompt、creator notes 或 World Book 正文。唯一的 World Book 例外是可识别的变量协议：`[InitVar]` JSON 只保留叶子节点第一个 primitive，丢弃说明文本；变量更新规则只保留方言、变量名和合法路径，不把规则正文交给模型。
-
-确定性提取器在模型调用前处理：
-
-- URL query、fragment 和 user-info；
-- bearer token 与常见 credential assignment；
-- Windows/macOS/Linux 用户目录路径；
-- inline data URI。
-
-远程 URL 在程序正文中替换为 `dependency://<id>`。依赖表保留去凭据、去 query/fragment 的地址，供模型识别依赖类型；该地址不会因此获得联网权限。
-
-## AdaptationArtifact v1
-
-当前 capability 白名单：
-
-| Capability | 含义 |
-| --- | --- |
-| `ui.native` | 渲染有界 Native 组件树 |
-| `chat.setDraft` | 由用户提交 Native 表单后设置聊天草稿 |
-| `state.ingest` | 从 assistant 原始回复中的受限操作方言写入声明过的适配状态 |
-
-当前 UI 节点：
-
-- `SECTION`
-- `TEXT`
-- `STATUS`
-- `FORM`
-
-当前表单字段：
-
-- `TEXT`
-- `MULTILINE_TEXT`
-- `NUMBER`
-- `SINGLE_SELECT`
-- `MULTI_SELECT`
-- `TOGGLE`
-
-当前动作：
-
-- `CHAT_SET_DRAFT`
-
-旧 schema 中的 `STATE_SET`、`STATE_INCREMENT`、`STATE_TOGGLE` 枚举值仍可被解码，但校验与执行都会拒绝。Native Form 默认只生成待用户确认的聊天草稿，不能脱离消息时间线直接修改状态。
-
-模板只能读取当前表单和已声明状态：
+`NativeAdaptation` 只描述 Player 已经拥有的内容和固定界面：
 
 ```text
-{{form.name}}
-{{state.affection}}
-{{user}}
-{{char}}
+NativeAdaptation
+├── state
+├── assistantStateAdapters
+├── status
+├── scenes
+├── collections
+├── forms
+└── report
 ```
 
-首个消息状态方言为 `UPDATE_VARIABLE_SET_V1`。Artifact 必须逐项声明 `sourcePath -> target state key` 映射；专用 `UpdateVariableSetV1Adapter` 只在完整 `<UpdateVariable>...</UpdateVariable>` 块内接受单行 `_.set('点分路径', oldScalar, newScalar)`，并且 new value 只能是字符串、有限数字或布尔值。Adapter 输出受控 `ConversationStatePatch`，由 Conversation Runtime 一次应用。这里的 `_.set` 只是沿用社区卡已有文本协议的语法外形：Player 不解释 JavaScript，也不执行函数、对象、数组、表达式、未知路径或块外文本。
+不存在通用 component tree、binding、condition、event、trigger、action、capability 或脚本字段。
 
-当前选中候选的 scalar Conversation State 会由 Player 按 key 排序、编码为固定 JSON system projection，并进入下一轮 Prompt。Artifact 不能提供 Prompt 模板、role、插入位置或条件表达式。
+### Conversation State
 
-不支持任意表达式、函数、循环、递归、动态 capability、文件、网络、DOM、WebView、反射或代码加载。
+状态类型为 `STRING`、`NUMBER`、`BOOLEAN`、`RECORD` 和 `COLLECTION`。`RECORD` 与 `COLLECTION` 使用有限、强类型的 scalar field shape。当前 assistant 消息摄入只写入顶层 scalar；结构化状态已经可以被保存和固定 View 读取，但新增、删除集合成员等写操作尚未形成 Player 领域契约。
+
+Conversation State 位于 `ConversationRuntimeState`，每个消息候选保存处理前、投影前和处理后的完整快照。它与 Macro local variables、World Book timed state 和 World Book activation overrides 一起参与 swipe、regenerate、历史截断、持久化和进程恢复。
+
+### Legacy State Adapter
+
+当前只有两个专用反腐层：
+
+- `UPDATE_VARIABLE_SET_V1`：在完整 `<UpdateVariable>` 块中识别 scalar `_.set(path, old, new)`；
+- `UPDATE_VARIABLE_JSON_PATCH_V1`：在唯一且完整的 `<UpdateVariable><JSONPatch>...</JSONPatch></UpdateVariable>` 中识别 RFC 6902 外形的 scalar `replace`。
+
+两者只接受适配中逐项声明的精确 `sourcePath -> targetStateKey` 白名单，并按目标状态类型校验值。函数、表达式、对象、数组、动态路径和未声明目标不会执行。JSON Patch 形态不是通用 JSON Patch Runtime；`add`、`remove`、`move` 等操作不获得语义。
+
+Adapter 只返回 `ConversationStatePatch`。只有完整、唯一且符合已声明 dialect 的块才会应用；空块是经确认的 no-op，缺块本身不再被解释成“没有变化”。它不渲染 UI、不发消息、不修改 World Book，也不形成事件系统。
+
+正常对话生成缺少、未闭合或给出畸形状态块时，App 的固定状态确认层会使用同一模型再发起一次短请求。该请求只包含 Player 当前状态、已经校验的 Adapter 白名单，以及作为 JSON 数据转义的本轮 user / assistant 证据；它只接收一个完整 envelope，不生成或修改 `NativeAdaptation`，也不改写主回复。补取成功后，原始主回复原样保存在 `sourceText`，确认块独立保存在 `stateConfirmation`，两次 usage 合并；失败时不猜测状态，并写入生成诊断。主回复已经给出合法块时不会发生第二次调用。
+
+`sourceText` 保留主模型原始输出，`stateConfirmation` 保留可选的独立确认结果，两者不会混写。对于声明了对应 Adapter 的角色，Player 在 Macro / Regex 和聊天存储投影之前剥离已识别的机器状态块；流式阶段已经开始但尚未闭合的状态块会被缓冲，避免协议文本闪入聊天 UI。主回复中的单个畸形块只有在独立确认成功后才从 canonical 展示中移除；原始文本仍可诊断。歧义的多个块不被静默隐藏，也不会直接写入状态。
+
+### State → Conversation Semantics
+
+当前选中候选的 State 由 Player 以固定 system projection 提供给下一轮模型：
+
+```json
+{
+  "definitions": [
+    {
+      "key": "affection",
+      "label": "好感度",
+      "type": "NUMBER",
+      "description": "角色当前对玩家的好感。",
+      "fields": []
+    }
+  ],
+  "values": {
+    "affection": 80
+  }
+}
+```
+
+key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转义，不经过 Character Macro 或 Regex。适配不能提供 Prompt 模板、role、插入位置、条件或动态计算。声明 Legacy Adapter 时，Player 还会生成固定的 assistant 状态回写契约；它只列出已校验 dialect、白名单路径和 scalar 类型。模型应在长剧情正文之前先输出并闭合一个机器状态块，没有变化时也用空块明确确认 no-op。在 OpenAI Responses 边界，Player-owned 的当前状态投影与回写契约共同占据顶层 `instructions`；卡片、World Book 与 Preset 的 system 内容保留原有时序，但以较低的 `developer` 权限发送，不能改写 Player 的当前事实或放宽可执行状态协议。
+
+## Player 固定 Native View
+
+### Status View
+
+只读展示少量 scalar 状态。可选的 `min/max` 只允许用于 `NUMBER`，由 Player 决定列表与进度表现。
+
+### Scene View
+
+以一个 scalar State 的精确值选择一张已安装的本地静态图片。布局、缩放与空态由 Player 决定。
+
+### Collection View
+
+只读展示一个 `COLLECTION` 中具有同一声明 shape 的 records。列表、卡片、滚动和详情属于 Player UI，不进入适配。
+
+### Form View
+
+表单只有一个结果：把经校验的字段值投影为聊天输入框 Draft。Draft 需要用户确认后才作为普通 Conversation Turn 发送；提交表单不会直接写 State、修改历史、swipe、regenerate、调用模型或切换 World Book。
+
+表单模板只接受 `{{form.field}}`、`{{user}}` 和 `{{char}}`。所有字段都必须进入 Draft，不能收集后静默丢弃。Form marker 只负责把固定表单附着到匹配的原始消息；它不是可订阅 Trigger。
+
+## 本地静态 Assets
+
+角色卡中的 `ccdefault:` 图片以及受支持的内嵌 `data:` PNG、JPEG、WebP 可以成为稳定 `assetId` 对应的 app-private 文件。导入执行媒体类型、字节数、边长和像素数限制；显示使用 Android Native Decoder 与有界采样，不使用 WebView。
+
+远程图片、HTTP、cookie、凭据继承、SVG、脚本和动态资源加载不属于 v1。允许显示像素不等于允许执行或联网。
+
+## World Book Domain Runtime
+
+`WorldBookActivationOverrides` 是 Conversation Runtime 的 Player-owned 能力，不是通用 Adaptation action。当前有两个强类型 intent：
+
+- `SetBookEnabled(bookId, enabled)`
+- `SetEntryEnabled(bookId, entryId, enabled)`
+
+执行器先验证全部 snapshot 引用，再原子返回新的 Runtime State；不存在通用 dispatcher。World Book Engine 读取有效覆盖并在 Prompt trace 中说明由 Conversation override 造成的启停。普通 Form 和 Legacy State Adapter 都不能调用这些 intent；正式 Setup 生命周期尚未建立。
 
 ## 确定性验证
 
-候选产物在进入仓库与进入 Player 时都必须验证：
+安装前至少校验：
 
-- schema version 与原件 SHA-256；
-- capability 白名单及声明完整性；
-- state 初始值类型；
-- view、node、field 和 state ID 的唯一性；
-- trigger、文本、模板、节点、字段、选项和动作数量上限；
-- state binding 与 template reference 可解析；
-- 消息状态路径、映射数量、目标类型与 capability 最小声明；
-- URL、data URI 和本地资源 URI 不得出现在可执行产物中。
+- schema version、原件 SHA-256 与可用本地 asset ID；
+- State key、类型、完整 Record shape 和资源数量上限；
+- Adapter dialect、精确路径语法、白名单映射与 scalar 目标；
+- View ID、Form marker、field、option 和 scene value 唯一性；
+- Status/Scene/Collection 的 State 类型；
+- Form 输入类型、默认值、Draft reference 和长度上限；
+- compatibility report 明确区分 restored、degraded 与 unsupported。
 
-校验失败的候选不会部分执行。模型认为存在但 v1 不支持的行为必须进入 compatibility report，而不能创造新 operation。
+验证成功不证明手工适配语义正确。它只证明候选落在 Player 已授权的有限能力空间；玩法正确性仍由人工审计、确定性测试、真实卡证伪和真实对话测试共同验证。
 
-## v1 真实样本
+## 当前真实样本
 
-首个纵切使用社区卡中常见的 `<GAMESTART/>` / `<GAMESTRAT/>` 开场表单：HTML 表单收集字段，原脚本将格式化文本写入 SillyTavern textarea。适配结果将其恢复为 Compose 表单和 `chat.setDraft`，不运行 jQuery、DOM 操作或原始脚本。
+开发夹具 `pressure-card-manual.json` 手工适配本机 `source/复杂压测卡.png`：
 
-第二个纵切是 `<StatusPlaceHolderImpl/>` 状态栏：Shelf 从 `[InitVar]` 和 `<UpdateVariable>` 规则提取最小状态协议，AI 将 HTML 状态栏映射为 Native 文本与 `STATUS` 进度条，Player 从 assistant 原始回复摄入白名单更新。Native attachment 接管该字面 marker 后，同入口的 Character HTML replacement 不再参与显示投影，叙事正文仍保留。状态随 Conversation checkpoint、regenerate 和 swipe 分支恢复；远程变量脚本、DOM、样式和折叠交互仍不执行。
+- 19 个 scalar 状态和一个严格 JSON Patch-shaped Adapter；
+- 固定 Status View；
+- 自定义开局 Form → Draft；
+- opening candidates 保留给现有 swipe；
+- PNG 卡面作为可验证本地静态资产；
+- HTML/CSS/JavaScript、宿主 API、自动发送、历史改写、动态 World Book 切换等明确标为降级或不支持。
+
+该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。

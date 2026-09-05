@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
 @Composable
@@ -53,11 +52,13 @@ fun ChatRoute(
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
+    resolveAssetPath: (characterId: String, assetId: String) -> String? = { _, _ -> null },
 ) {
     val state by viewModel.uiState.collectAsState()
     val presetState by presetViewModel.uiState.collectAsState()
     ChatScreen(
         state = state,
+        resolveAssetPath = resolveAssetPath,
         presets = presetState.presets,
         actions = ChatScreenActions(
             updateInput = viewModel::updateInput,
@@ -74,7 +75,7 @@ fun ChatRoute(
             openModels = onOpenModels,
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
-            submitAdaptation = viewModel::submitAdaptation,
+            submitNativeForm = viewModel::submitNativeForm,
         ),
     )
 }
@@ -94,7 +95,7 @@ data class ChatScreenActions(
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
-    val submitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit = { _, _ -> },
+    val submitNativeForm: (formId: String, values: Map<String, List<String>>) -> Unit = { _, _ -> },
 )
 
 private data class PendingMessageEdit(
@@ -111,6 +112,7 @@ fun ChatScreen(
     state: ChatUiState,
     actions: ChatScreenActions,
     presets: List<PresetAsset> = emptyList(),
+    resolveAssetPath: (characterId: String, assetId: String) -> String? = { _, _ -> null },
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
@@ -120,7 +122,8 @@ fun ChatScreen(
     var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
     val messageListState = rememberLazyListState()
     val latestMessage = state.messages.lastOrNull()
-    val scrollAnchorIndex = state.headerAdaptationViews.size + state.messages.size +
+    val scrollAnchorIndex = (if (state.nativeStatus != null) 1 else 0) + state.nativeScenes.size +
+        state.nativeCollections.size + state.messages.size +
         (if (state.message != null) 1 else 0) +
         (if (state.retryAvailable) 1 else 0) +
         (if ((state.regenerateAvailable || state.variantNavigationAvailable) && !state.running) 1 else 0)
@@ -178,29 +181,31 @@ fun ChatScreen(
     ) { padding ->
         LazyColumn(
             state = messageListState,
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("chatContent"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            state.headerAdaptationViews.forEach { view ->
-                item("adaptation-header-${view.id}") {
-                    NativeAdaptationView(
-                        view = view,
+            state.nativeStatus?.let { status ->
+                item("native-status") { NativeStatusCard(status, state.conversationState) }
+            }
+            state.nativeScenes.forEach { scene ->
+                item("native-scene-${scene.id}") {
+                    NativeSceneCard(
+                        view = scene,
                         state = state.conversationState,
-                        userName = state.persona.name,
-                        characterName = state.character.promptName,
-                        enabled = !state.running,
-                        onSubmit = { values -> actions.submitAdaptation(view.id, values) },
+                        resolveAssetPath = { assetId -> resolveAssetPath(state.character.assetId, assetId) },
                     )
+                }
+            }
+            state.nativeCollections.forEach { collection ->
+                item("native-collection-${collection.id}") {
+                    NativeCollectionCard(collection, state.conversationState)
                 }
             }
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
                 MessageBubble(
                     state = message,
-                    conversationState = state.conversationState,
-                    userName = state.persona.name,
-                    characterName = state.character.promptName,
-                    onSubmitAdaptation = actions.submitAdaptation,
+                    onSubmitNativeForm = actions.submitNativeForm,
                     editable = !state.running,
                     editingText = editingText.takeIf { editingMessageId == message.message.id },
                     onStartEdit = {
@@ -397,10 +402,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
 @Composable
 private fun MessageBubble(
     state: ChatMessageState,
-    conversationState: Map<String, kotlinx.serialization.json.JsonElement>,
-    userName: String,
-    characterName: String,
-    onSubmitAdaptation: (viewId: String, values: Map<String, List<String>>) -> Unit,
+    onSubmitNativeForm: (formId: String, values: Map<String, List<String>>) -> Unit,
     editable: Boolean,
     editingText: String?,
     onStartEdit: () -> Unit,
@@ -410,8 +412,6 @@ private fun MessageBubble(
     onRestart: () -> Unit,
 ) {
     val user = state.message.role == MessageRole.USER
-    val replacementViews = state.adaptationViews.filter { it.placement == AdaptationViewPlacement.MESSAGE_REPLACEMENT }
-    val attachedViews = state.adaptationViews.filter { it.placement == AdaptationViewPlacement.MESSAGE_ATTACHMENT }
     var reasoningVisible by remember(state.message.id) { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -442,17 +442,6 @@ private fun MessageBubble(
                         minLines = 2,
                         maxLines = 12,
                     )
-                } else if (replacementViews.isNotEmpty()) {
-                    replacementViews.forEach { view ->
-                        NativeAdaptationView(
-                            view = view,
-                            state = conversationState,
-                            userName = userName,
-                            characterName = characterName,
-                            enabled = editable,
-                            onSubmit = { values -> onSubmitAdaptation(view.id, values) },
-                        )
-                    }
                 } else if (state.displayContent.isNotEmpty()) {
                     SafeMarkdownText(state.displayContent)
                 } else if (state.status == ChatMessageStatus.STREAMING) {
@@ -463,14 +452,11 @@ private fun MessageBubble(
                     )
                 }
                 if (editingText == null) {
-                    attachedViews.forEach { view ->
-                        NativeAdaptationView(
-                            view = view,
-                            state = conversationState,
-                            userName = userName,
-                            characterName = characterName,
+                    state.nativeForms.forEach { form ->
+                        NativeFormCard(
+                            form = form,
                             enabled = editable,
-                            onSubmit = { values -> onSubmitAdaptation(view.id, values) },
+                            onSubmit = { values -> onSubmitNativeForm(form.id, values) },
                         )
                     }
                 }

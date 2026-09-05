@@ -19,17 +19,14 @@ import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
-import io.github.zvensmoluya.tavernplayer.content.AdaptationAction
-import io.github.zvensmoluya.tavernplayer.content.AdaptationActionType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationFormField
-import io.github.zvensmoluya.tavernplayer.content.AdaptationFormFieldType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationFormOption
-import io.github.zvensmoluya.tavernplayer.content.AdaptationTriggerType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNode
-import io.github.zvensmoluya.tavernplayer.content.AdaptationUiNodeType
-import io.github.zvensmoluya.tavernplayer.content.AdaptationView
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewPlacement
-import io.github.zvensmoluya.tavernplayer.content.AdaptationViewTrigger
+import io.github.zvensmoluya.tavernplayer.content.NativeFormField
+import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
+import io.github.zvensmoluya.tavernplayer.content.NativeFormOption
+import io.github.zvensmoluya.tavernplayer.content.NativeFormView
+import io.github.zvensmoluya.tavernplayer.content.NativeStatusItem
+import io.github.zvensmoluya.tavernplayer.content.NativeStatusView
+import io.github.zvensmoluya.tavernplayer.content.NativeSceneAsset
+import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -72,46 +69,39 @@ class ChatScreenTest {
     @Test
     fun `native opening form replaces marker and submits structured values`() {
         var submitted: Pair<String, Map<String, List<String>>>? = null
-        val view = AdaptationView(
+        val view = NativeFormView(
             id = "opening-form",
             title = "预约申请单",
-            placement = AdaptationViewPlacement.MESSAGE_REPLACEMENT,
-            trigger = AdaptationViewTrigger(AdaptationTriggerType.MESSAGE_EXACT, "<GAMESTART/>"),
-            nodes = listOf(
-                AdaptationUiNode(
-                    id = "form",
-                    type = AdaptationUiNodeType.FORM,
-                    fields = listOf(
-                        AdaptationFormField("name", AdaptationFormFieldType.TEXT, "姓名"),
-                        AdaptationFormField(
-                            "reason",
-                            AdaptationFormFieldType.MULTI_SELECT,
-                            "预约理由",
-                            options = listOf(AdaptationFormOption("chat", "单纯想聊天")),
-                        ),
-                    ),
+            marker = "<GAMESTART/>",
+            fields = listOf(
+                NativeFormField("name", NativeFormFieldType.TEXT, "姓名"),
+                NativeFormField(
+                    "reason",
+                    NativeFormFieldType.MULTI_SELECT,
+                    "预约理由",
+                    options = listOf(NativeFormOption("chat", "单纯想聊天")),
                 ),
             ),
             submitLabel = "确定预约",
-            submitActions = listOf(AdaptationAction(AdaptationActionType.CHAT_SET_DRAFT, template = "{{form.name}}")),
+            draftTemplate = "{{form.name}}",
         )
         val opening = ChatMessageState(
             message = message(content = "<GAMESTART/>"),
-            adaptationViews = listOf(view),
+            nativeForms = listOf(view),
         )
         compose.setContent {
             TavernPlayerTheme {
                 ChatScreen(
                     state = state(messages = listOf(opening)),
-                    actions = actions(submitAdaptation = { id, values -> submitted = id to values }),
+                    actions = actions(submitNativeForm = { id, values -> submitted = id to values }),
                 )
             }
         }
 
         compose.onNodeWithText("预约申请单").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("adaptation-field-name").performScrollTo().performTextReplacement("米拉")
-        compose.onNodeWithTag("adaptation-option-reason-chat").performScrollTo().performClick()
-        compose.onNodeWithTag("adaptation-submit-opening-form").performScrollTo().performClick()
+        compose.onNodeWithTag("native-form-field-name").performScrollTo().performTextReplacement("米拉")
+        compose.onNodeWithTag("native-form-option-reason-chat").performScrollTo().performClick()
+        compose.onNodeWithTag("native-form-submit-opening-form").performScrollTo().performClick()
 
         assertEquals("opening-form", submitted?.first)
         assertEquals(listOf("米拉"), submitted?.second?.get("name"))
@@ -119,33 +109,53 @@ class ChatScreenTest {
     }
 
     @Test
-    fun `native attachment resolves state and identity templates`() {
-        val view = AdaptationView(
-            id = "status-view",
-            placement = AdaptationViewPlacement.MESSAGE_ATTACHMENT,
-            trigger = AdaptationViewTrigger(AdaptationTriggerType.ALWAYS),
-            nodes = listOf(
-                AdaptationUiNode(
-                    id = "world-time",
-                    type = AdaptationUiNodeType.TEXT,
-                    text = "{{user}} · 第 {{state.world-day}} 日 · {{char}}",
-                ),
-            ),
+    fun `native status is a Player owned conversation surface`() {
+        val view = NativeStatusView(
+            title = "当前状态",
+            items = listOf(NativeStatusItem("world-day", "天数")),
         )
-        val opening = ChatMessageState(message = message(), adaptationViews = listOf(view))
         compose.setContent {
             TavernPlayerTheme {
                 ChatScreen(
                     state = state(
-                        messages = listOf(opening),
                         conversationState = mapOf("world-day" to JsonPrimitive(3)),
+                        nativeStatus = view,
                     ),
                     actions = actions(),
                 )
             }
         }
 
-        compose.onNodeWithText("旅人 · 第 3 日 · 米拉").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("当前状态").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("native-state-world-day").assertTextEquals("3")
+    }
+
+    @Test
+    fun `native scene selects only a mapped character asset`() {
+        var requestedAsset: String? = null
+        val scene = NativeSceneView(
+            id = "location",
+            title = "当前场景",
+            stateKey = "location",
+            assets = listOf(NativeSceneAsset("beach", "asset-beach", "海滩")),
+            emptyLabel = "图片不可用",
+        )
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(
+                    state = state(
+                        conversationState = mapOf("location" to JsonPrimitive("beach")),
+                        nativeScenes = listOf(scene),
+                    ),
+                    actions = actions(),
+                    resolveAssetPath = { _, assetId -> requestedAsset = assetId; null },
+                )
+            }
+        }
+
+        compose.onNodeWithTag("native-scene-location").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("图片不可用").assertIsDisplayed()
+        assertEquals("asset-beach", requestedAsset)
     }
 
     @Test
@@ -407,7 +417,8 @@ class ChatScreenTest {
         readyConnections: List<StoredConnection> = listOf(connection()),
         lastTrace: GenerationTraceState? = null,
         conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
-        headerAdaptationViews: List<AdaptationView> = emptyList(),
+        nativeStatus: NativeStatusView? = null,
+        nativeScenes: List<NativeSceneView> = emptyList(),
     ) = ChatUiState(
         character = DemoConversationContent.character.snapshot(),
         persona = DemoConversationContent.persona,
@@ -419,7 +430,8 @@ class ChatScreenTest {
         running = running,
         lastTrace = lastTrace,
         conversationState = conversationState,
-        headerAdaptationViews = headerAdaptationViews,
+        nativeStatus = nativeStatus,
+        nativeScenes = nativeScenes,
     )
 
     private fun message(
@@ -467,7 +479,7 @@ class ChatScreenTest {
         selectPreset: (String) -> Unit = {},
         openPresets: () -> Unit = {},
         editMessage: (String, String, MessageEditMode) -> Unit = { _, _, _ -> },
-        submitAdaptation: (String, Map<String, List<String>>) -> Unit = { _, _ -> },
+        submitNativeForm: (String, Map<String, List<String>>) -> Unit = { _, _ -> },
     ) = ChatScreenActions(
         updateInput = updateInput,
         send = send,
@@ -481,6 +493,6 @@ class ChatScreenTest {
         selectPreset = selectPreset,
         openPresets = openPresets,
         editMessage = editMessage,
-        submitAdaptation = submitAdaptation,
+        submitNativeForm = submitNativeForm,
     )
 }

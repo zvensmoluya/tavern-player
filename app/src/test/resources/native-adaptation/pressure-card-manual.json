@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "sourceSha256": "1945abd1e2368ec332399830cd85c62be4a9a527f0c43dae6f34db9c9b3b2e1a",
+  "state": [
+    {"key":"protagonist-mana","label":"主角·魔力","type":"NUMBER","description":"欲望辉光魔力，范围 0–100。","initialValue":100,"fields":[]},
+    {"key":"protagonist-lust","label":"主角·情欲","type":"NUMBER","description":"主角当前情欲，范围 0–100。","initialValue":0,"fields":[]},
+    {"key":"protagonist-weapon","label":"主角·武器","type":"STRING","description":"当前具现武器；未具现时保持原卡固定值。","initialValue":"未具现","fields":[]},
+    {"key":"protagonist-body","label":"主角·身体","type":"STRING","description":"开局确定后不再变化：少女或 TS魔法少女。","initialValue":"少女","fields":[]},
+    {"key":"protagonist-transformation","label":"主角·变身","type":"STRING","description":"当前是否处于变身后的战斗形态。","initialValue":"已变身","fields":[]},
+    {"key":"protagonist-battle","label":"主角·战局","type":"STRING","description":"上风、对等、下风、战败或无战斗。","initialValue":"对等","fields":[]},
+
+    {"key":"arai-affection","label":"新井晴·好感度","type":"NUMBER","description":"新井晴对玩家的好感度，范围 0–100。","initialValue":20,"fields":[]},
+    {"key":"arai-thought","label":"新井晴·心里话","type":"STRING","description":"新井晴最近一次在场时的第一人称内心独白。","initialValue":"同桌今天也在发呆……放学拉她去天台比谁先跑到旗杆。","fields":[]},
+    {"key":"arai-transformation","label":"新井晴·变身","type":"STRING","description":"新井晴当前是否处于变身形态。","initialValue":"已变身","fields":[]},
+
+    {"key":"amami-affection","label":"天海咲·好感度","type":"NUMBER","description":"天海咲对玩家的好感度，范围 0–100。","initialValue":5,"fields":[]},
+    {"key":"amami-thought","label":"天海咲·心里话","type":"STRING","description":"天海咲最近一次在场时的第一人称内心独白。","initialValue":"来路不明的野路子魔法少女……必须盯紧。","fields":[]},
+    {"key":"amami-transformation","label":"天海咲·变身","type":"STRING","description":"天海咲当前是否处于变身形态。","initialValue":"已变身","fields":[]},
+
+    {"key":"hoshino-affection","label":"星野灯·好感度","type":"NUMBER","description":"星野灯对玩家的好感度，范围 0–100。","initialValue":3,"fields":[]},
+    {"key":"hoshino-thought","label":"星野灯·心里话","type":"STRING","description":"星野灯最近一次在场时的第一人称内心独白。","initialValue":"粉金色诶！好强！——就是哪里怪怪的。","fields":[]},
+    {"key":"hoshino-transformation","label":"星野灯·变身","type":"STRING","description":"星野灯当前是否处于变身形态。","initialValue":"已变身","fields":[]},
+
+    {"key":"shiratori-affection","label":"白鸟优里·好感度","type":"NUMBER","description":"白鸟优里对玩家的好感度，范围 0–100。","initialValue":2,"fields":[]},
+    {"key":"shiratori-thought","label":"白鸟优里·心里话","type":"STRING","description":"白鸟优里最近一次在场时的第一人称内心独白。","initialValue":"数据异常：战力超出记录，危险系数待观测。","fields":[]},
+    {"key":"shiratori-transformation","label":"白鸟优里·变身","type":"STRING","description":"白鸟优里当前是否处于变身形态。","initialValue":"已变身","fields":[]},
+
+    {"key":"legion-movement","label":"魔灵军团·总动向","type":"STRING","description":"魔灵军团最近一次可见战略动向摘要。","initialValue":"蛰伏：军团收缩，仅零散种子滋扰；传言魔王正在策划一场大动作。","fields":[]}
+  ],
+  "assistantStateAdapters": [
+    {
+      "dialect": "UPDATE_VARIABLE_JSON_PATCH_V1",
+      "mappings": [
+        {"sourcePath":"/主角/魔力","targetStateKey":"protagonist-mana"},
+        {"sourcePath":"/主角/情欲","targetStateKey":"protagonist-lust"},
+        {"sourcePath":"/主角/武器","targetStateKey":"protagonist-weapon"},
+        {"sourcePath":"/主角/身体","targetStateKey":"protagonist-body"},
+        {"sourcePath":"/主角/变身","targetStateKey":"protagonist-transformation"},
+        {"sourcePath":"/主角/战局","targetStateKey":"protagonist-battle"},
+        {"sourcePath":"/关系/新井晴/好感度","targetStateKey":"arai-affection"},
+        {"sourcePath":"/关系/新井晴/心里话","targetStateKey":"arai-thought"},
+        {"sourcePath":"/关系/新井晴/变身","targetStateKey":"arai-transformation"},
+        {"sourcePath":"/关系/天海咲/好感度","targetStateKey":"amami-affection"},
+        {"sourcePath":"/关系/天海咲/心里话","targetStateKey":"amami-thought"},
+        {"sourcePath":"/关系/天海咲/变身","targetStateKey":"amami-transformation"},
+        {"sourcePath":"/关系/星野灯/好感度","targetStateKey":"hoshino-affection"},
+        {"sourcePath":"/关系/星野灯/心里话","targetStateKey":"hoshino-thought"},
+        {"sourcePath":"/关系/星野灯/变身","targetStateKey":"hoshino-transformation"},
+        {"sourcePath":"/关系/白鸟优里/好感度","targetStateKey":"shiratori-affection"},
+        {"sourcePath":"/关系/白鸟优里/心里话","targetStateKey":"shiratori-thought"},
+        {"sourcePath":"/关系/白鸟优里/变身","targetStateKey":"shiratori-transformation"},
+        {"sourcePath":"/军团/魔物总动向","targetStateKey":"legion-movement"}
+      ]
+    }
+  ],
+  "status": {
+    "title": "樱见市 · 当前状态",
+    "items": [
+      {"stateKey":"protagonist-mana","label":"魔力","min":0,"max":100},
+      {"stateKey":"protagonist-lust","label":"情欲","min":0,"max":100},
+      {"stateKey":"protagonist-weapon","label":"武器"},
+      {"stateKey":"protagonist-body","label":"身体"},
+      {"stateKey":"protagonist-transformation","label":"变身"},
+      {"stateKey":"protagonist-battle","label":"战局"},
+      {"stateKey":"arai-affection","label":"新井晴·好感","min":0,"max":100},
+      {"stateKey":"amami-affection","label":"天海咲·好感","min":0,"max":100},
+      {"stateKey":"hoshino-affection","label":"星野灯·好感","min":0,"max":100},
+      {"stateKey":"shiratori-affection","label":"白鸟优里·好感","min":0,"max":100},
+      {"stateKey":"legion-movement","label":"军团动向"}
+    ]
+  },
+  "scenes": [],
+  "collections": [],
+  "forms": [
+    {
+      "id": "custom-opening-contract",
+      "title": "自定义变身契约",
+      "marker": "<NavPage/>\r\n<CharCreationForm/>",
+      "description": "填写后只生成一段可编辑的聊天草稿。原卡三条既有开场继续使用消息候选的上一条/下一条选择。",
+      "fields": [
+        {"id":"body","type":"SINGLE_SELECT","label":"身体","placeholder":"","required":true,"options":[{"value":"少女","label":"少女"},{"value":"TS魔法少女","label":"TS魔法少女"}],"initialValues":["少女"]},
+        {"id":"extra-power","type":"MULTILINE_TEXT","label":"额外力量","placeholder":"主角独有的额外力量；留空则沿用世界书默认规则。","required":false,"options":[],"initialValues":[]},
+        {"id":"contract-time","type":"TEXT","label":"契约之时","placeholder":"例如：深夜、祭典前的黄昏","required":false,"options":[],"initialValues":[]},
+        {"id":"contract-place","type":"TEXT","label":"契约之地","placeholder":"例如：樱见市旧桥下","required":false,"options":[],"initialValues":[]},
+        {"id":"opening-notes","type":"MULTILINE_TEXT","label":"第一幕要求","placeholder":"想看到的第一幕、语气和需要避开的内容。","required":false,"options":[],"initialValues":[]},
+        {"id":"witnesses","type":"MULTI_SELECT","label":"在场见证者","placeholder":"","required":false,"options":[{"value":"天海咲","label":"天海咲"},{"value":"星野灯","label":"星野灯"},{"value":"白鸟优里","label":"白鸟优里"},{"value":"新井晴","label":"新井晴"}],"initialValues":[]}
+      ],
+      "draftTemplate": "【自定义开局契约】\n身体：{{form.body}}\n额外力量：{{form.extra-power}}\n契约之时：{{form.contract-time}}\n契约之地：{{form.contract-place}}\n第一幕要求：{{form.opening-notes}}\n在场见证者：{{form.witnesses}}\n请根据以上信息自然生成第一幕；不要复述表单。",
+      "submitLabel": "写入草稿"
+    }
+  ],
+  "report": {
+    "status": "PARTIAL",
+    "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板和自定义开局输入落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
+    "restoredBehaviors": [
+      "19 个角色、关系和军团标量以带时间线的 Conversation State 保存并进入模型上下文",
+      "唯一且完整的 UpdateVariable/JSONPatch 块可将白名单 scalar replace 原子映射回 Conversation State",
+      "魔力、情欲、战局和关系好感通过 Player 固定 Status View 展示",
+      "自定义开局的身体、力量、时间、地点、第一幕要求和见证者投影为用户确认后发送的聊天草稿",
+      "原卡三个正文开场继续作为 Player 原有的 opening message candidates 保留",
+      "PNG 卡面作为经 Native Decoder 验证的本地静态资产保存，可供固定 Native View 引用"
+    ],
+    "degradedPresentation": [
+      "开局导航、变身契约书、活页手帐、变量快报和悬浮星盘的 HTML/CSS 动画及皮肤不重建",
+      "三步契约向导退化为 Player 固定字段表单；状态栏退化为 Player 固定只读列表"
+    ],
+    "unsupportedBehaviors": [
+      "Tavern Helper、MagVarUpdate、iframe、远程 module/font、宿主 API 和任意 JavaScript 不执行",
+      "JSONPatch add/remove/move、对象与数组变更不进入当前 scalar replace Adapter",
+      "表单自动 swipe、改写历史、自动发送、输入框排队以及根据选择动态启停 World Book 不迁移",
+      "EJS getvar/get_message_variable 条件模板与悬浮球主动战败按钮不执行"
+    ],
+    "warnings": [
+      "这是人工审计测试夹具，不是自动编译结果，也不构成其他卡片的兼容规则",
+      "普通 Form 只产生 Draft；身体选择要等模型在下一条完整 JSONPatch 中回写，当前不是原子 Setup Commit",
+      "预设开场请使用 Player 既有消息候选切换；此 Form 只承担自定义开局草稿"
+    ]
+  }
+}
