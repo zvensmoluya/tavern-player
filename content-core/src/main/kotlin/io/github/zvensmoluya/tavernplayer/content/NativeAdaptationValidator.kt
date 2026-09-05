@@ -15,6 +15,7 @@ class NativeAdaptationValidator {
         worldBooks: List<WorldBookDefinition>? = null,
     ): NativeAdaptationValidationResult {
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
+        issues += NativeWorldBookTextSelectionValidator.validate(adaptation, worldBooks)
 
         fun issue(path: String, code: String, message: String) {
             issues += NativeAdaptationValidationIssue(path, code, message)

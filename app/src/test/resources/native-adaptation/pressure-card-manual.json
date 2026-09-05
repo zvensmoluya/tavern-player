@@ -53,6 +53,26 @@
       ]
     }
   ],
+  "worldBookTextSelections": [
+    {
+      "bookId": "book-1945abd1e2368ec3",
+      "entryId": "book-1945abd1e2368ec3:entry:27",
+      "stateKey": "protagonist-body",
+      "sourceContentSha256": "9e785b49bacfa6fc155e05c55e2328d858c13dc47afe95b4ad88ef31325d3b54",
+      "cases": [
+        {
+          "stateValue": "TS魔法少女",
+          "sourceStart": 133,
+          "sourceEndExclusive": 433
+        },
+        {
+          "stateValue": "少女",
+          "sourceStart": 449,
+          "sourceEndExclusive": 626
+        }
+      ]
+    }
+  ],
   "status": {
     "title": "樱见市 · 当前状态",
     "items": [
@@ -106,6 +126,7 @@
       "唯一且完整的 UpdateVariable/JSONPatch 块可将白名单 scalar replace 原子映射回 Conversation State",
       "19 项状态均可在 Player 固定 Status View 查看，包括四名角色的心里话和变身状态",
       "六项数值执行 0–100 裁剪，七项字符串限制原卡枚举；身体由开局 Setup 写入，模型不可改写",
+      "身体行文指导按当前身份选取原世界书的唯一正文分支，保留原条目启用及插入规则，不执行 EJS",
       "自定义开局的身体、力量、时间、地点、第一幕要求和见证者投影为用户确认后发送的聊天草稿",
       "原卡两条预设剧情和一条自定义开场说明继续作为 opening message candidates 保留",
       "PNG 卡面作为经 Native Decoder 验证的本地静态资产保存，可供固定 Native View 引用"
@@ -119,7 +140,6 @@
       "JSONPatch add/remove/move、对象与数组变更不进入当前 scalar replace Adapter",
       "预设开场尚无完整开局设定入口；自定义开场的 Setup 不等于还原了所有开场流程",
       "开局自动 swipe、自动发送和宿主输入框排队不执行；当前原生流程需用户选择和发送",
-      "世界书身体行文指导中的 EJS 分支尚未选择，不能保证模型只收到当前身份对应的一支规则",
       "状态栏及悬浮球的主动战败入口尚未迁移：原操作会在发送前写入战局并填入草稿，且未变身时禁用",
       "变身与战局的跨字段一致性、施法消耗和剧情结算仍依赖原卡提示词，尚未完成逐项玩法验收"
     ],

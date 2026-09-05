@@ -245,6 +245,22 @@ class WorldBookEngineTest {
     }
 
     @Test
+    fun `source ignore budget entries activate after exhaustion but still consume the reported budget`() {
+        val exempt = entry("exempt", constant = true, content = "required source rule").copy(
+            extensions = kotlinx.serialization.json.JsonObject(mapOf("ignore_budget" to kotlinx.serialization.json.JsonPrimitive(true))))
+        val book = WorldBookDefinition("book", tokenBudget = 0,
+            entries = listOf(entry("ordinary", constant = true, content = "ordinary"), exempt))
+        val result = activate(book, emptyList(), budget = 0)
+        assertEquals(listOf("exempt"), result.activatedEntryIds)
+        assertTrue(result.usedBudgetTokens > result.budgetTokens)
+        assertTrue(result.trace.any { it.sourceIds == listOf("exempt") && "bypassed" in it.decision })
+        assertTrue(activate(book, emptyList(), overrides = WorldBookActivationOverrides(books = mapOf("book" to false)), budget = 0).injections.isEmpty())
+        assertTrue(activate(book.copy(entries = listOf(exempt.copy(enabled = false))), emptyList(), budget = 0).injections.isEmpty())
+        val stringFlag = exempt.copy(extensions = kotlinx.serialization.json.JsonObject(mapOf("ignore_budget" to kotlinx.serialization.json.JsonPrimitive("true"))))
+        assertTrue(activate(book.copy(entries = listOf(stringFlag)), emptyList(), budget = 0).injections.isEmpty())
+    }
+
+    @Test
     fun `inclusion groups support scoring overrides and comma separated membership`() {
         val book = WorldBookDefinition(
             id = "book",

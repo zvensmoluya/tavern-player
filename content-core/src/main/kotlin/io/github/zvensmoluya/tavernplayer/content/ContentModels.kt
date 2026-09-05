@@ -2,6 +2,7 @@ package io.github.zvensmoluya.tavernplayer.content
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 enum class CharacterSourceFormat {
@@ -129,7 +130,10 @@ data class WorldBookEntryDefinition(
     val cooldown: Int = 0,
     val delay: Int = 0,
     val extensions: JsonObject = JsonObject(emptyMap()),
-)
+) {
+    /** ST 原生条目选项。保留在源 extensions 中，旧快照也可读取，无第二份可分歧的值。 */
+    val ignoreBudget: Boolean get() = extensions["ignore_budget"] == JsonPrimitive(true)
+}
 
 @Serializable
 enum class RegexPlacement(val wireValue: Int) {

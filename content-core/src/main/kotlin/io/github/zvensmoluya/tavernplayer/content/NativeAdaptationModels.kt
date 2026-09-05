@@ -24,7 +24,26 @@ data class NativeAdaptation(
     val forms: List<NativeFormView> = emptyList(),
     val progressions: List<NativeProgressionDefinition> = emptyList(),
     val messagePanels: List<NativeMessagePanelView> = emptyList(),
+    val worldBookTextSelections: List<NativeWorldBookTextSelection> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
+)
+
+/** 世界书原文的有限分支：只读取一个枚举状态，不改变条目的启用、位置、角色或预算。 */
+@Serializable
+data class NativeWorldBookTextSelection(
+    val bookId: String,
+    val entryId: String,
+    val stateKey: String,
+    val sourceContentSha256: String,
+    val cases: List<NativeWorldBookTextCase>,
+)
+
+/** 对原始 entry.content 的 UTF-16 半开区间引用，不允许适配提供新的 Prompt 文本。 */
+@Serializable
+data class NativeWorldBookTextCase(
+    val stateValue: String,
+    val sourceStart: Int,
+    val sourceEndExclusive: Int,
 )
 
 @Serializable

@@ -361,8 +361,15 @@ class PromptCompiler(
         ).joinToString("\n") { macroEngine.evaluate(it, baseContext, scanTransaction).also { evaluation ->
             diagnostics += evaluation.diagnostics
         }.text }
+        val worldBookText = NativeWorldBookTextProjector.project(
+            input.character.worldBooks, input.character.nativeAdaptation,
+            input.character.sourceSha256, input.runtimeState.conversationState,
+        )
+        diagnostics += worldBookText.diagnostics
+        trace += worldBookText.trace
+        if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
         val activation = worldBookEngine.activate(
-            books = input.character.worldBooks,
+            books = worldBookText.books,
             characterText = characterScanText,
             projectedHistory = projectedHistory.map { message ->
                 ConversationMessage(

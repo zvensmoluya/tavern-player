@@ -44,6 +44,9 @@ NativeAdaptation
 ├── scenes
 ├── collections
 ├── forms
+├── progressions
+├── messagePanels
+├── worldBookTextSelections
 └── report
 ```
 
@@ -147,6 +150,20 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 ## World Book Domain Runtime
 
+### 原文分支选择
+
+`worldBookTextSelections` 是开发期实验契约：以一个声明了完整 `allowedStrings` 的 STRING 状态，为一个已有世界书条目选择一段原文。它是每次 Prompt 编译的只读投影，最多 8 个条目、每条最多 32 个选项；不建立 Condition、Trigger 或 Operation。
+
+每项携带 `bookId`、`entryId`、`stateKey`、条目正文的 UTF-8 SHA-256，以及各 `stateValue` 对应的 `sourceStart/sourceEndExclusive`。区间按 Kotlin String 的 UTF-16 单元计数、左闭右开，不能拆开代理对，长度不超过 8192。适配不能提供新增 Prompt 文本。分支必须非空且不含未处理的 EJS 标记；这不代表支持执行其他 EJS，也不证明人工选择的语义正确。
+
+安装时和运行时都核对唯一目标、原文哈希、区间与枚举覆盖。运行时同时核对角色原件哈希；状态缺失或非法时阻止该次生成并给出诊断，不能悄悄选默认分支或把所有分支一起发送。
+
+选择发生在 World Book Engine 的递归扫描和预算核算之前，因此未选中的正文不贡献递归关键词或 token 成本。条目的启用、关键词、角色、插入位置、优先级、概率与计时仍由已有世界书机制处理。原件与快照不改写，不产生启停覆盖；每轮都从当前 Conversation State 重新选择，检查点恢复自然影响下一轮选择。Prompt trace 记录目标条目、状态键和来源区间。
+
+### 启停覆盖
+
+原世界书条目的布尔 `extensions.ignore_budget=true` 由 `WorldBookEntryDefinition.ignoreBudget` 读取，保留在源 extensions 中，因此已存快照无需新增第二份字段。该条目即使在世界书子预算耗尽后仍可激活，消耗仍计入报告，不绕过启用、关键词或概率规则。最终整轮 context 上限与裁剪保持有效，trace 显示子预算豁免及后续裁剪；豁免不保证无限制保留所有世界书。
+
 `WorldBookActivationOverrides` 是 Conversation Runtime 的 Player-owned 能力，不是通用 Adaptation action。当前有两个强类型 intent：
 
 - `SetBookEnabled(bookId, enabled)`
@@ -178,7 +195,7 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 - 自定义开局 Setup → 本地身体状态 + Draft；
 - opening candidates 保留给现有 swipe；
 - PNG 卡面作为可验证本地静态资产；
-- 原表单预设开场的设定流程、世界书 EJS 分支选择和悬浮球主动操作仍未完整迁移；详见逐项验收清单。源码审计没有找到该卡开局动态启停 World Book 的调用，已撤回此前笼统归因。
+- 身体行文指导以有限原文分支选择进入实际 Prompt；原表单预设开场的设定流程和悬浮球主动操作仍未完整迁移，详见逐项验收清单。源码审计没有找到该卡开局动态启停 World Book 的调用，已撤回此前笼统归因。
 
 该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。
 

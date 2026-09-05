@@ -62,7 +62,6 @@ class WorldBookEngine(
         val activated = mutableListOf<WorldBookEntryDefinition>()
 
         books.forEach { book ->
-            if (remainingGlobal <= 0) return@forEach
             activationOverrides.books[book.id]?.let { enabled ->
                 trace += CompilationTraceEntry(
                     stage = "world-book-activation-override",
@@ -92,7 +91,7 @@ class WorldBookEngine(
                     .thenBy { it.id },
             ).forEach { entry ->
                 val cost = estimateTokens(entry.content, macroContext.modelId)
-                if (cost <= remainingBook) {
+                if (entry.ignoreBudget || cost <= remainingBook) {
                     activated += entry
                     remainingBook -= cost
                     remainingGlobal -= cost
@@ -112,7 +111,8 @@ class WorldBookEngine(
                     trace += CompilationTraceEntry(
                         stage = "world-book",
                         sourceIds = listOf(entry.id),
-                        decision = "activated cost=$cost remaining=$remainingGlobal",
+                        decision = "activated cost=$cost remaining=$remainingGlobal" +
+                            if (entry.ignoreBudget) "; world-book budget bypassed by source entry" else "",
                     )
                 } else {
                     trace += CompilationTraceEntry(

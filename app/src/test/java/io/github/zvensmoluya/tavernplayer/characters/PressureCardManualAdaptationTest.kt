@@ -22,6 +22,7 @@ import io.github.zvensmoluya.tavernplayer.conversation.LegacyStateReadProjection
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationStatePromptProjector
 import io.github.zvensmoluya.tavernplayer.conversation.NativeSetupController
 import io.github.zvensmoluya.tavernplayer.conversation.NativeSetupResult
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationStateSnapshot
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
@@ -57,6 +58,7 @@ class PressureCardManualAdaptationTest {
             adaptation,
             expectedSourceSha256 = character.sourceSha256,
             availableAssetIds = character.assets.filter { it.isLocallyMaterializableImage }.mapTo(mutableSetOf()) { it.id },
+            worldBooks = character.worldBooks,
         )
 
         assertTrue(validation.issues.toString(), validation.valid)
@@ -170,6 +172,39 @@ class PressureCardManualAdaptationTest {
         val status = checkNotNull(adaptation.status)
         assertEquals(adaptation.state.map { it.key }.toSet(), status.items.map { it.stateKey }.toSet())
         assertEquals(19, status.items.size)
+    }
+
+    @Test
+    fun `each identity compiles exactly its original worldbook branch from the current checkpoint`() {
+        val source = pressureCardOrNull()
+        assumeTrue("held-back pressure card is not present", source != null)
+        val imported = (CharacterCardImporter().import(checkNotNull(source).readBytes(), source.name) as CharacterImportResult.Ready).character
+        val adaptation = manualAdaptation()
+        val character = imported.copy(nativeAdaptation = adaptation)
+        val initial = NativeAdaptationRuntime().initialState(adaptation)
+        val originalEntry = character.worldBooks.single().entries.single { it.sourceId == "27" }
+        assertTrue("Source entry explicitly bypasses the worldbook sub-budget", originalEntry.ignoreBudget)
+        listOf("少女", "TS魔法少女", "少女").forEach { body ->
+            val state = initial.copy(conversationState = ConversationStateSnapshot(
+                initial.conversationState.values + ("protagonist-body" to JsonPrimitive(body))))
+            val result = PromptCompiler().compile(NormalGenerationInput(
+                character = character.snapshot(), persona = Persona("audit", "旅人"),
+                history = listOf(ConversationMessage("u", MessageRole.USER, "沿着街道散步。", "旅人")),
+                preset = BuiltInPresets.default, runtimeState = state,
+                conversationId = "branch-audit", generationId = "branch-audit", modelId = "test", modelContextTokens = 65536,
+            ))
+            assertTrue("Prompt compilation should succeed for each declared identity", result is CompilationResult.Success)
+            val plan = (result as CompilationResult.Success).plan
+            val combined = plan.messages.joinToString("\n") { it.content }
+            val expectedCase = adaptation.worldBookTextSelections.single().cases.single { it.stateValue == body }
+            val expected = originalEntry.content.substring(expectedCase.sourceStart, expectedCase.sourceEndExclusive)
+                .replace("{{user}}", "旅人")
+            assertTrue("Expected source branch must reach the actual prompt: ${plan.trace.filter { originalEntry.id in it.sourceIds }}", combined.contains(expected))
+            assertEquals(1, Regex("<身体行文指导>").findAll(combined).count())
+            assertFalse(combined.contains("<%"))
+            assertEquals(state.conversationState, plan.runtimeState.conversationState)
+        }
+        assertTrue("Original entry remains immutable", originalEntry.content.contains("<%"))
     }
 
     private fun patch(path: String, value: String): String =
