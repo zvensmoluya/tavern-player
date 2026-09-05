@@ -20,13 +20,22 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
         val adaptation = record.character.nativeAdaptation ?: return reject("没有可用的原生开局")
         val form = adaptation.forms.firstOrNull { it.id == submission.formId } ?: return reject("找不到开局表单")
         val setup = form.setup ?: return reject("这是一张普通表单")
-        if (record.turns.none { form.matchesMessage(it.selected.message.sourceText) }) return reject("当前开场没有这张表单")
-        val validation = NativeAdaptationValidator().validate(adaptation, worldBooks = record.character.worldBooks)
+        val opening = record.turns.singleOrNull()?.takeIf { it.role == MessageRole.ASSISTANT }
+            ?: return reject("仅在对话的开场阶段设定")
+        if (!form.matchesMessage(opening.selected.message.sourceText, opening.selected.openingSourceIndex)) return reject("当前开场没有这张表单")
+        val validation = NativeAdaptationValidator().validate(adaptation, worldBooks = record.character.worldBooks,
+            openingCount = 1 + record.character.alternateFirstMessages.size, regexScripts = record.character.regexScripts)
         if (!validation.valid) return reject(validation.issues.first().message)
+        val targetIndex = setup.openingIndex?.let { target ->
+            opening.variants.indices.singleOrNull { opening.variants[it].openingSourceIndex == target }
+                ?: return reject("开局目标不存在或没有可用正文")
+        } ?: opening.selectedVariantIndex
+        val targetState = opening.variants[targetIndex].runtimeStateAfter ?: record.runtimeState
         val draft = when (val result = forms.submitForm(adaptation, submission, record.persona.name, record.character.promptName)) {
             is NativeFormSubmissionResult.Draft -> result.text
             is NativeFormSubmissionResult.Rejected -> return reject(result.message)
         }
+        if (record.draft.isNotBlank() && record.draft != draft) return reject("输入框已有内容，请先保存或清空后再提交开局设定")
         val payloads = mutableListOf(setup.values)
         val direct = linkedMapOf<String, JsonElement>()
         setup.stateFields.forEach { (key, fieldId) ->
@@ -60,7 +69,7 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
                 } else WorldBookActivationIntent.SetEntryEnabled(override.bookId, entryId, override.enabled)
             }
         }
-        val activation = WorldBookActivationController().apply(record.character.worldBooks, record.runtimeState, intents)
+        val activation = WorldBookActivationController().apply(record.character.worldBooks, targetState, intents)
         if (activation is WorldBookActivationMutationResult.Rejected) return reject("开局引用的世界书或条目不存在")
         val overrides = (activation as WorldBookActivationMutationResult.Applied).runtimeState.worldBookActivationOverrides
         fun ConversationRuntimeState.initialized() = copy(
@@ -70,9 +79,9 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
         )
         return NativeSetupResult.Committed(record.copy(
             draft = draft,
-            runtimeState = record.runtimeState.initialized(),
+            runtimeState = targetState.initialized(),
             turns = record.turns.map { turn ->
-                turn.copy(variants = turn.variants.map { variant ->
+                turn.copy(selectedVariantIndex = targetIndex, variants = turn.variants.map { variant ->
                     variant.copy(
                         runtimeStateBefore = (variant.runtimeStateBefore ?: record.runtimeState).initialized(),
                         projectionRuntimeStateBefore = (variant.projectionRuntimeStateBefore ?: record.runtimeState).initialized(),

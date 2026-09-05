@@ -182,12 +182,14 @@ data class NativeCollectionField(
 data class NativeFormView(
     val id: String,
     val title: String,
-    val marker: String,
+    val marker: String = "",
     val description: String = "",
     val fields: List<NativeFormField>,
     val draftTemplate: String,
     val submitLabel: String = "写入草稿",
     val setup: NativeSetupContract? = null,
+    val openingIndices: List<Int> = emptyList(),
+    val replacedDisplayRegexIds: List<String> = emptyList(),
 )
 
 @Serializable
@@ -224,6 +226,7 @@ data class NativeFormOption(
 data class NativeSetupContract(
     val values: NativeSetupPayload = NativeSetupPayload(),
     val stateFields: Map<String, String> = emptyMap(),
+    val openingIndex: Int? = null,
 )
 
 @Serializable

@@ -98,7 +98,7 @@ class PressureCardNativeAndroidTest {
                             restoredCharacters.assetFile(restored.id, assetId)?.absolutePath
                         }
                         NativeStatusCard(checkNotNull(native.status), state)
-                        NativeFormCard(native.forms.single(), enabled = true, onSubmit = {})
+                        NativeFormCard(native.forms.first { it.id == "custom-opening-contract" }, enabled = true, onSubmit = {})
                     }
                 }
             }

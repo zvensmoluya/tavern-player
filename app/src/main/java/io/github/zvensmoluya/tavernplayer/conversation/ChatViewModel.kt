@@ -57,7 +57,10 @@ data class ChatMessageState(
     val setupClosed: Boolean = false,
     val stateUnconfirmed: Boolean = false,
     val nativePanels: List<NativeMessagePanelContent> = emptyList(),
+    val openingSourceIndex: Int? = null,
 )
+
+data class NativeOpeningChoice(val sourceIndex: Int, val title: String, val selected: Boolean)
 
 data class GenerationTraceState(
     val plan: GenerationPlan? = null,
@@ -95,6 +98,14 @@ data class ChatUiState(
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
     val busy: Boolean get() = running || setupSaving || loadingConversation
+    val openingChoices: List<NativeOpeningChoice> get() {
+        val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
+        return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
+            form.openingIndices.firstOrNull()?.let { index ->
+                NativeOpeningChoice(index, form.title, opening.openingSourceIndex in form.openingIndices)
+            }
+        }
+    }
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
 }
@@ -213,7 +224,7 @@ class ChatViewModel(
         if (_uiState.value.busy) return
         val adaptation = record.character.nativeAdaptation ?: return
         val form = adaptation.forms.firstOrNull { it.id == formId } ?: return
-        if (record.turns.none { form.matchesMessage(it.selected.message.sourceText) }) return
+        if (record.turns.none { form.matchesMessage(it.selected.message.sourceText, it.selected.openingSourceIndex) }) return
         if (form.setup != null) {
             val result = NativeSetupController(adaptationRuntime).commit(record, NativeFormSubmission(formId, values))
             if (result is NativeSetupResult.Rejected) {
@@ -544,6 +555,14 @@ class ChatViewModel(
     fun previousVariant() = selectVariant(-1)
 
     fun nextVariant() = selectVariant(1)
+
+    fun selectOpening(sourceIndex: Int) {
+        if (_uiState.value.busy || record.runtimeState.setupCommit != null) return
+        val turn = record.turns.singleOrNull()?.takeIf { it.role == MessageRole.ASSISTANT } ?: return
+        if (_uiState.value.openingChoices.none { it.sourceIndex == sourceIndex }) return
+        val index = turn.variants.indexOfFirst { it.openingSourceIndex == sourceIndex }
+        if (index >= 0) selectVariant(index - turn.selectedVariantIndex)
+    }
 
     fun cancel() {
         generationJob?.cancel()
@@ -1128,6 +1147,8 @@ class ChatViewModel(
                     generationId = "${snapshot.id}-display",
                     modelId = modelId,
                     depth = messages.lastIndex - index,
+                    sourceText = message.sourceText,
+                    openingSourceIndex = snapshot.turns[index].selected.openingSourceIndex,
                 ) as TextExpansionResult.Success
                 val reasoning = message.reasoning.map { block ->
                     (compiler.projectReasoningText(
@@ -1233,6 +1254,7 @@ class ChatViewModel(
                 runtimeStateBefore = initialRuntime,
                 projectionRuntimeStateBefore = initialRuntime,
                 runtimeStateAfter = expandedRuntime,
+                openingSourceIndex = index,
             )
         }
         return ConversationRecord(
@@ -1317,10 +1339,11 @@ private fun ConversationRecord.toUiState(
             variantCount = turn.variants.size,
             edited = variant.edited,
             nativeForms = character.nativeAdaptation?.forms.orEmpty().filter { form ->
-                form.matchesMessage(variant.message.sourceText)
+                form.matchesMessage(variant.message.sourceText, variant.openingSourceIndex)
             },
             setupClosed = runtimeState.setupCommit != null || turns.any { it.role == MessageRole.USER },
             nativePanels = NativeMessagePanels.project(character.nativeAdaptation, variant.message.sourceText).panels,
+            openingSourceIndex = variant.openingSourceIndex,
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
                 NativeAdaptationRuntime().projectAssistantMessage(

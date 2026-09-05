@@ -102,25 +102,223 @@
   "forms": [
     {
       "id": "custom-opening-contract",
-      "title": "自定义变身契约",
-      "marker": "<NavPage/>\r\n<CharCreationForm/>",
-      "description": "身体选择会先保存到开局状态，其余内容生成可编辑的聊天草稿。原卡两条预设剧情和一条自定义开场说明继续保留在消息候选中。",
+      "replacedDisplayRegexIds": ["dq_world_opening_form", "dq_world_nav_page"],
+      "title": "自定义开局",
+      "marker": "",
+      "description": "填写第一幕的设定。保存后进入自定义开场，草稿可修改后发送。",
       "fields": [
-        {"id":"body","type":"SINGLE_SELECT","label":"身体","placeholder":"","required":true,"options":[{"value":"少女","label":"少女"},{"value":"TS魔法少女","label":"TS魔法少女"}],"initialValues":["少女"]},
-        {"id":"extra-power","type":"MULTILINE_TEXT","label":"额外力量","placeholder":"主角独有的额外力量；留空则沿用世界书默认规则。","required":false,"options":[],"initialValues":[]},
-        {"id":"contract-time","type":"TEXT","label":"契约之时","placeholder":"例如：深夜、祭典前的黄昏","required":false,"options":[],"initialValues":[]},
-        {"id":"contract-place","type":"TEXT","label":"契约之地","placeholder":"例如：樱见市旧桥下","required":false,"options":[],"initialValues":[]},
-        {"id":"opening-notes","type":"MULTILINE_TEXT","label":"第一幕要求","placeholder":"想看到的第一幕、语气和需要避开的内容。","required":false,"options":[],"initialValues":[]},
-        {"id":"witnesses","type":"MULTI_SELECT","label":"在场见证者","placeholder":"","required":false,"options":[{"value":"天海咲","label":"天海咲"},{"value":"星野灯","label":"星野灯"},{"value":"白鸟优里","label":"白鸟优里"},{"value":"新井晴","label":"新井晴"}],"initialValues":[]}
+        {
+          "id": "body",
+          "type": "SINGLE_SELECT",
+          "label": "身体",
+          "placeholder": "",
+          "required": true,
+          "options": [
+            {
+              "value": "少女",
+              "label": "少女"
+            },
+            {
+              "value": "TS魔法少女",
+              "label": "TS魔法少女"
+            }
+          ],
+          "initialValues": [
+            "少女"
+          ]
+        },
+        {
+          "id": "extra-power",
+          "type": "MULTILINE_TEXT",
+          "label": "额外力量",
+          "placeholder": "主角独有的额外力量；留空则沿用世界书默认规则。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "contract-time",
+          "type": "TEXT",
+          "label": "契约之时",
+          "placeholder": "例如：深夜、祭典前的黄昏",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "contract-place",
+          "type": "TEXT",
+          "label": "契约之地",
+          "placeholder": "例如：樱见市旧桥下",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "opening-notes",
+          "type": "MULTILINE_TEXT",
+          "label": "第一幕要求",
+          "placeholder": "想看到的第一幕、语气和需要避开的内容。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "witnesses",
+          "type": "MULTI_SELECT",
+          "label": "在场见证者",
+          "placeholder": "",
+          "required": false,
+          "options": [
+            {
+              "value": "天海咲",
+              "label": "天海咲"
+            },
+            {
+              "value": "星野灯",
+              "label": "星野灯"
+            },
+            {
+              "value": "白鸟优里",
+              "label": "白鸟优里"
+            },
+            {
+              "value": "新井晴",
+              "label": "新井晴"
+            }
+          ],
+          "initialValues": []
+        }
       ],
       "draftTemplate": "【自定义开局契约】\n身体：{{form.body}}\n额外力量：{{form.extra-power}}\n契约之时：{{form.contract-time}}\n契约之地：{{form.contract-place}}\n第一幕要求：{{form.opening-notes}}\n在场见证者：{{form.witnesses}}\n请根据以上信息自然生成第一幕；不要复述表单。",
       "submitLabel": "保存开局并生成草稿",
-      "setup": {"stateFields":{"protagonist-body":"body"}}
+      "setup": {
+        "stateFields": {
+          "protagonist-body": "body"
+        },
+        "openingIndex": 3
+      },
+      "openingIndices": [
+        0,
+        3
+      ]
+    },
+    {
+      "id": "preset-opening-1",
+      "title": "旧桥遭遇",
+      "marker": "",
+      "description": "设定身份、额外力量与开局要求，沿着上面的剧情继续。",
+      "fields": [
+        {
+          "id": "body",
+          "type": "SINGLE_SELECT",
+          "label": "身体",
+          "placeholder": "",
+          "required": true,
+          "options": [
+            {
+              "value": "少女",
+              "label": "少女"
+            },
+            {
+              "value": "TS魔法少女",
+              "label": "TS魔法少女"
+            }
+          ],
+          "initialValues": [
+            "少女"
+          ]
+        },
+        {
+          "id": "extra-power",
+          "type": "MULTILINE_TEXT",
+          "label": "额外力量",
+          "placeholder": "主角独有的额外力量；留空则沿用世界书默认规则。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "opening-notes",
+          "type": "MULTILINE_TEXT",
+          "label": "第一幕要求",
+          "placeholder": "想看到的第一幕、语气和需要避开的内容。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        }
+      ],
+      "draftTemplate": "【开局指示】上文已经给出开场白。请直接沿着那段开场白继续写这一幕的后续：不要把开场白再复述一遍，不要另起一段重新描写已经发生过的内容。\n身体：{{form.body}}\n额外力量：{{form.extra-power}}\n愿望：{{form.opening-notes}}\n\n接下来要做的事情：",
+      "submitLabel": "保存开局并生成草稿",
+      "setup": {
+        "stateFields": {
+          "protagonist-body": "body"
+        }
+      },
+      "openingIndices": [
+        1
+      ]
+    },
+    {
+      "id": "preset-opening-2",
+      "title": "白理独播",
+      "marker": "",
+      "description": "设定身份、额外力量与开局要求，沿着上面的剧情继续。",
+      "fields": [
+        {
+          "id": "body",
+          "type": "SINGLE_SELECT",
+          "label": "身体",
+          "placeholder": "",
+          "required": true,
+          "options": [
+            {
+              "value": "少女",
+              "label": "少女"
+            },
+            {
+              "value": "TS魔法少女",
+              "label": "TS魔法少女"
+            }
+          ],
+          "initialValues": [
+            "少女"
+          ]
+        },
+        {
+          "id": "extra-power",
+          "type": "MULTILINE_TEXT",
+          "label": "额外力量",
+          "placeholder": "主角独有的额外力量；留空则沿用世界书默认规则。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        },
+        {
+          "id": "opening-notes",
+          "type": "MULTILINE_TEXT",
+          "label": "第一幕要求",
+          "placeholder": "想看到的第一幕、语气和需要避开的内容。",
+          "required": false,
+          "options": [],
+          "initialValues": []
+        }
+      ],
+      "draftTemplate": "【开局指示】上文已经给出开场白。请直接沿着那段开场白继续写这一幕的后续：不要把开场白再复述一遍，不要另起一段重新描写已经发生过的内容。\n身体：{{form.body}}\n额外力量：{{form.extra-power}}\n愿望：{{form.opening-notes}}\n\n接下来要做的事情：",
+      "submitLabel": "保存开局并生成草稿",
+      "setup": {
+        "stateFields": {
+          "protagonist-body": "body"
+        }
+      },
+      "openingIndices": [
+        2
+      ]
     }
   ],
   "report": {
     "status": "PARTIAL",
-    "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板和一次性自定义开局落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
+    "summary": "手工审计后，将角色卡的 19 个标量状态、JSONPatch replace 回写、只读状态面板及三种开场的原生设定落入 Player 固定领域；网页运行时和宿主副作用不迁移。",
     "restoredBehaviors": [
       "19 个角色、关系和军团标量以带时间线的 Conversation State 保存并进入模型上下文",
       "唯一且完整的 UpdateVariable/JSONPatch 块可将白名单 scalar replace 原子映射回 Conversation State",
@@ -128,7 +326,7 @@
       "六项数值执行 0–100 裁剪，七项字符串限制原卡枚举；身体由开局 Setup 写入，模型不可改写",
       "身体行文指导按当前身份选取原世界书的唯一正文分支，保留原条目启用及插入规则，不执行 EJS",
       "自定义开局的身体、力量、时间、地点、第一幕要求和见证者投影为用户确认后发送的聊天草稿",
-      "原卡两条预设剧情和一条自定义开场说明继续作为 opening message candidates 保留",
+      "两条预设剧情各有身份、力量和开局要求表单；自定义表单提交时原子选中原卡自定义说明候选",
       "PNG 卡面作为经 Native Decoder 验证的本地静态资产保存，可供固定 Native View 引用"
     ],
     "degradedPresentation": [
@@ -138,15 +336,15 @@
     "unsupportedBehaviors": [
       "Tavern Helper、MagVarUpdate、iframe、远程 module/font、宿主 API 和任意 JavaScript 不执行",
       "JSONPatch add/remove/move、对象与数组变更不进入当前 scalar replace Adapter",
-      "预设开场尚无完整开局设定入口；自定义开场的 Setup 不等于还原了所有开场流程",
-      "开局自动 swipe、自动发送和宿主输入框排队不执行；当前原生流程需用户选择和发送",
+      "导航页的观察信件和机制介绍尚未单独整理到原生资料；显示规则被接管后存在说明信息展示缺口，原件仍保留",
+      "原生 Setup 可选定来源开场；不复制宿主自动发送或输入框排队，保存草稿后由用户发送",
       "状态栏及悬浮球的主动战败入口尚未迁移：原操作会在发送前写入战局并填入草稿，且未变身时禁用",
       "变身与战局的跨字段一致性、施法消耗和剧情结算仍依赖原卡提示词，尚未完成逐项玩法验收"
     ],
     "warnings": [
       "这是人工审计测试夹具，不是自动编译结果，也不构成其他卡片的兼容规则",
       "身体选择由一次性 Setup Commit 原子保存；生成失败、重试、候选切换和重启不会丢失。重新开始可重新设定",
-      "预设开场请使用 Player 既有消息候选切换；此 Form 只承担自定义开局草稿"
+      "开场由 Player 固定选项选择。引导语与空项标签尚非原 JS 的逐字复刻，预设剧情不重述及开局选择的多轮作用仍需模型实测"
     ]
   }
 }

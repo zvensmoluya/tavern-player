@@ -59,6 +59,7 @@ class PressureCardManualAdaptationTest {
             expectedSourceSha256 = character.sourceSha256,
             availableAssetIds = character.assets.filter { it.isLocallyMaterializableImage }.mapTo(mutableSetOf()) { it.id },
             worldBooks = character.worldBooks,
+            regexScripts = character.regexScripts,
         )
 
         assertTrue(validation.issues.toString(), validation.valid)
@@ -66,7 +67,8 @@ class PressureCardManualAdaptationTest {
         assertEquals(LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1, adaptation.assistantStateAdapters.single().dialect)
         assertEquals(NativeCompatibilityStatus.PARTIAL, adaptation.report.status)
         assertEquals(3, character.alternateFirstMessages.size)
-        assertTrue(character.firstMessage.contains(adaptation.forms.single().marker))
+        assertEquals(setOf(0, 1, 2, 3), adaptation.forms.flatMap { it.openingIndices }.toSet())
+        assertEquals(3, adaptation.forms.size)
         assertTrue(adaptation.scenes.isEmpty())
         assertTrue(adaptation.collections.isEmpty())
     }
@@ -145,7 +147,7 @@ class PressureCardManualAdaptationTest {
         val root = temporary.newFolder("identity-lock")
         val repository = io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(root, PromptCompiler(), idFactory = { "identity-lock" })
         val record = repository.create(imported.copy(nativeAdaptation = adaptation), Persona("p", "旅人"), BuiltInPresets.default)
-        val form = adaptation.forms.single()
+        val form = adaptation.forms.first { it.id == "custom-opening-contract" }
         val committed = (NativeSetupController().commit(record, NativeFormSubmission(form.id,
             mapOf("body" to listOf("TS魔法少女")))) as NativeSetupResult.Committed).record
         repository.save(committed)
@@ -172,6 +174,37 @@ class PressureCardManualAdaptationTest {
         val status = checkNotNull(adaptation.status)
         assertEquals(adaptation.state.map { it.key }.toSet(), status.items.map { it.stateKey }.toSet())
         assertEquals(19, status.items.size)
+    }
+
+    @Test
+    fun `all real opening routes retain their own inputs and commit the intended source candidate`() = runTest {
+        val source = pressureCardOrNull()
+        assumeTrue("held-back pressure card is not present", source != null)
+        val imported = (CharacterCardImporter().import(checkNotNull(source).readBytes(), source.name) as CharacterImportResult.Ready).character
+        val native = manualAdaptation()
+        val repository = io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository(temporary.newFolder("all-openings"), PromptCompiler())
+        for (sourceIndex in 0..3) {
+            val created = repository.create(imported.copy(nativeAdaptation = native), Persona("p", "旅人"), BuiltInPresets.default)
+            val record = created.copy(turns = created.turns.map { turn ->
+                turn.copy(selectedVariantIndex = turn.variants.indexOfFirst { it.openingSourceIndex == sourceIndex })
+            })
+            val form = native.forms.single { sourceIndex in it.openingIndices }
+            val values = form.fields.associate { field -> field.id to when (field.id) {
+                "body" -> listOf("TS魔法少女")
+                "witnesses" -> listOf("白鸟优里")
+                else -> listOf("巡逻训练-${field.id}")
+            } }
+            val saved = (NativeSetupController().commit(record, NativeFormSubmission(form.id, values)) as NativeSetupResult.Committed).record
+            val expectedIndex = if (sourceIndex in listOf(0, 3)) 3 else sourceIndex
+            assertEquals(expectedIndex, saved.turns.single().selected.openingSourceIndex)
+            assertEquals(imported.alternateFirstMessages[expectedIndex - 1], saved.turns.single().selected.message.sourceText)
+            assertEquals(JsonPrimitive("TS魔法少女"), saved.runtimeState.conversationState.values["protagonist-body"])
+            values.values.flatten().forEach { assertTrue(saved.draft.contains(it)) }
+            assertEquals(if (expectedIndex == 3) 6 else 3, form.fields.size)
+            assertEquals(expectedIndex != 3, saved.draft.contains("不要把开场白再复述"))
+            repository.save(saved)
+            assertEquals(saved.turns, checkNotNull(repository.get(saved.id)).turns)
+        }
     }
 
     @Test
@@ -291,7 +324,7 @@ class PressureCardManualAdaptationTest {
     @Test
     fun `manual setup remains a draft-only user-confirmed effect`() {
         val adaptation = manualAdaptation()
-        val form = adaptation.forms.single()
+        val form = adaptation.forms.first { it.id == "custom-opening-contract" }
         val values = form.fields.associate { field ->
             field.id to when (field.type) {
                 NativeFormFieldType.SINGLE_SELECT,

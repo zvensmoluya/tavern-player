@@ -11,6 +11,36 @@ class NativeAdaptationValidatorTest {
     private val validator = NativeAdaptationValidator()
 
     @Test
+    fun `form display ownership requires unique existing display-only source rules`() {
+        val form = NativeFormView("form", "表单", "<Form/>", fields = listOf(NativeFormField("note", NativeFormFieldType.TEXT, "要求")),
+            draftTemplate = "{{form.note}}", replacedDisplayRegexIds = listOf("ui"))
+        val native = NativeAdaptation(sourceSha256 = "a".repeat(64), forms = listOf(form))
+        val rule = RegexDefinition("ui", "显示", "<Form/>", "legacy", markdownOnly = true)
+        assertTrue(validator.validate(native, regexScripts = listOf(rule)).valid)
+        assertFalse(validator.validate(native).valid)
+        listOf(emptyList(), listOf(rule, rule), listOf(rule.copy(markdownOnly = false)), listOf(rule.copy(promptOnly = true))).forEach {
+            assertFalse(validator.validate(native, regexScripts = it).valid)
+        }
+        assertFalse(validator.validate(native.copy(forms = listOf(form.copy(replacedDisplayRegexIds = listOf("ui", "ui")))), regexScripts = listOf(rule)).valid)
+    }
+
+    @Test
+    fun `opening setup requires bounded unique source references and a valid destination`() {
+        val form = NativeFormView("opening", "开场", openingIndices = listOf(0, 2),
+            fields = listOf(NativeFormField("note", NativeFormFieldType.TEXT, "要求")),
+            draftTemplate = "{{form.note}}", setup = NativeSetupContract(openingIndex = 2))
+        val native = NativeAdaptation(sourceSha256 = "a".repeat(64), forms = listOf(form))
+        assertTrue(validator.validate(native, openingCount = 3).valid)
+        val invalid = listOf(
+            form.copy(marker = "<opening/>"), form.copy(setup = null),
+            form.copy(openingIndices = listOf(0, 0)), form.copy(openingIndices = listOf(-1)),
+            form.copy(openingIndices = listOf(3)), form.copy(setup = form.setup!!.copy(openingIndex = 3)),
+        )
+        invalid.forEach { assertFalse(validator.validate(native.copy(forms = listOf(it)), openingCount = 3).valid) }
+        assertFalse(validator.validate(native.copy(forms = listOf(form, form.copy(id = "duplicate"))), openingCount = 3).valid)
+    }
+
+    @Test
     fun `accepts fixed Player views without capabilities actions or triggers`() {
         val result = validator.validate(fixture(), "a".repeat(64), setOf("asset-beach"))
 

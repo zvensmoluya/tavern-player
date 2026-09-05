@@ -13,6 +13,8 @@ class NativeAdaptationValidator {
         expectedSourceSha256: String? = null,
         availableAssetIds: Set<String>? = null,
         worldBooks: List<WorldBookDefinition>? = null,
+        openingCount: Int? = null,
+        regexScripts: List<RegexDefinition>? = null,
     ): NativeAdaptationValidationResult {
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
         issues += NativeWorldBookTextSelectionValidator.validate(adaptation, worldBooks)
@@ -247,14 +249,29 @@ class NativeAdaptationValidator {
 
         if (adaptation.forms.size > MAX_FORMS) issue("forms", "TOO_MANY_FORMS", "Form View 数量超过 $MAX_FORMS")
         val formMarkers = mutableSetOf<String>()
+        val formOpenings = mutableSetOf<Int>()
         adaptation.forms.forEachIndexed { index, form ->
             val path = "forms[$index]"
             validateViewId(path, form.id, viewIds, issues)
             validateText("$path.title", form.title, MAX_LABEL_CHARS, issues)
             validateText("$path.description", form.description, MAX_DESCRIPTION_CHARS, issues)
             validateText("$path.marker", form.marker, MAX_MARKER_CHARS, issues)
-            if (form.marker.isBlank()) issue("$path.marker", "EMPTY_MARKER", "Form 必须拥有固定消息 marker")
-            else if (!formMarkers.add(form.marker)) issue("$path.marker", "DUPLICATE_FORM_MARKER", "Form 消息 marker 重复")
+            if (form.replacedDisplayRegexIds.size > 16 || form.replacedDisplayRegexIds.distinct().size != form.replacedDisplayRegexIds.size ||
+                form.replacedDisplayRegexIds.any { id ->
+                    val sourceRule = regexScripts?.singleOrNull { it.id == id }
+                    sourceRule == null || !sourceRule.markdownOnly || sourceRule.promptOnly
+                }) {
+                issue("$path.replacedDisplayRegexIds", "INVALID_REPLACED_DISPLAY_REGEX", "表单只能接管原卡中唯一存在、仅用于显示的 Regex")
+            }
+            if (form.openingIndices.isEmpty()) {
+                if (form.marker.isBlank()) issue("$path.marker", "EMPTY_MARKER", "Form 必须拥有固定消息 marker 或开场来源引用")
+                else if (!formMarkers.add(form.marker)) issue("$path.marker", "DUPLICATE_FORM_MARKER", "Form 消息 marker 重复")
+            } else {
+                if (form.marker.isNotEmpty() || form.setup == null || form.openingIndices.size > 32 ||
+                    form.openingIndices.any { it !in 0..255 || (openingCount != null && it >= openingCount) || !formOpenings.add(it) }) {
+                    issue("$path.openingIndices", "INVALID_FORM_OPENINGS", "开场表单只允许唯一、有效的来源引用，不能同时指定 marker")
+                }
+            }
             if (form.fields.isEmpty()) issue("$path.fields", "EMPTY_FORM", "Form View 必须包含字段")
             if (form.fields.size > MAX_FORM_FIELDS) issue("$path.fields", "TOO_MANY_FORM_FIELDS", "Form 字段过多")
             val fieldIds = mutableSetOf<String>()
@@ -294,6 +311,11 @@ class NativeAdaptationValidator {
                 }
             }
             form.setup?.let { setup ->
+                setup.openingIndex?.let { target ->
+                    if (target !in 0..255 || (openingCount != null && target >= openingCount)) {
+                        issue("$path.setup.openingIndex", "INVALID_SETUP_OPENING", "开局目标必须引用已有开场")
+                    }
+                }
                 validateSetupPayload("$path.setup.values", setup.values, definitions, worldBooks, issues)
                 if (setup.stateFields.values.distinct().size != setup.stateFields.size) {
                     issue(path, "DUPLICATE_SETUP_FIELD", "开局字段只允许一对一复制")

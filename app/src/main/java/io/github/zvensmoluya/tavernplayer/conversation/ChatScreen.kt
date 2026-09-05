@@ -70,6 +70,7 @@ fun ChatRoute(
             editMessage = viewModel::editMessage,
             previousVariant = viewModel::previousVariant,
             nextVariant = viewModel::nextVariant,
+            selectOpening = viewModel::selectOpening,
             selectConnection = viewModel::selectConnection,
             reset = viewModel::resetConversation,
             back = onBack,
@@ -92,6 +93,7 @@ data class ChatScreenActions(
     val regenerate: () -> Unit = {},
     val previousVariant: () -> Unit = {},
     val nextVariant: () -> Unit = {},
+    val selectOpening: (Int) -> Unit = {},
     val back: () -> Unit = {},
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
@@ -209,6 +211,11 @@ fun ChatScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (state.openingChoices.isNotEmpty()) {
+                item("native-opening-selector") {
+                    NativeOpeningSelector(state.openingChoices, !state.busy, actions.selectOpening)
+                }
+            }
             itemsIndexed(state.messages, key = { _, item -> item.message.id }) { index, message ->
                 MessageBubble(
                     state = message,

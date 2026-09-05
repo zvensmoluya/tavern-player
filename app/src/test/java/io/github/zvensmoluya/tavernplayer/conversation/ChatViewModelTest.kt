@@ -98,12 +98,14 @@ class ChatViewModelTest {
     fun `setup persists before its draft and generation retry preserves selected facts`() = runTest {
         val directory = Files.createTempDirectory("native-setup-lifecycle").toFile()
         try {
-            val native = dayAdaptation().copy(forms = listOf(io.github.zvensmoluya.tavernplayer.content.NativeFormView(
-                id = "setup", title = "开局", marker = "<setup/>", fields = listOf(
+            val form = io.github.zvensmoluya.tavernplayer.content.NativeFormView(
+                id = "setup", title = "开局", openingIndices = listOf(0), fields = listOf(
                     io.github.zvensmoluya.tavernplayer.content.NativeFormField("day", io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType.NUMBER, "日期", required = true)),
-                draftTemplate = "从第{{form.day}}天开始", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day")),
-            )))
-            val character = DemoConversationContent.character.copy(firstMessage = "<setup/>", nativeAdaptation = native)
+                draftTemplate = "从第{{form.day}}天开始", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day"), openingIndex = 2),
+            )
+            val native = dayAdaptation().copy(forms = listOf(form, form.copy(id = "preset", title = "第二幕", openingIndices = listOf(2), setup = form.setup!!.copy(openingIndex = null))))
+            // Empty source greetings are skipped in storage; source index 2 is variant index 1.
+            val character = DemoConversationContent.character.copy(firstMessage = "开场选择", alternateFirstMessages = listOf("", "第二幕正文"), nativeAdaptation = native)
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
             val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             var attempts = 0
@@ -112,22 +114,43 @@ class ChatViewModelTest {
                 emit(GenerationEvent.TextDelta("第七天的早晨。"))
                 emit(GenerationEvent.Finished("stop"))
             } }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            var vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
             vm.loadConversation(created.id)
+            assertEquals(listOf(0, 2), vm.uiState.value.openingChoices.map { it.sourceIndex })
+            vm.selectOpening(2)
+            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
+            vm.submitNativeForm("setup", mapOf("day" to listOf("9")))
+            assertEquals("", vm.uiState.value.input)
+            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+            vm.selectOpening(0)
             vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
             assertEquals("从第7天开始", vm.uiState.value.input)
+            assertTrue(vm.uiState.value.openingChoices.isEmpty())
             val saved = ConversationRepository(directory, PromptCompiler()).get(created.id)!!
             assertEquals(vm.uiState.value.input, saved.draft)
+            assertEquals(2, saved.turns.single().selected.openingSourceIndex)
+            assertEquals("第二幕正文", saved.turns.single().selected.message.sourceText)
             assertEquals("setup", saved.runtimeState.setupCommit?.formId)
+            vm = ChatViewModel(repository(), PromptCompiler(), generator,
+                ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher),
+                FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(created.id)
+            assertEquals("从第7天开始", vm.uiState.value.input)
+            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
             vm.submitNativeForm("setup", mapOf("day" to listOf("9")))
             assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
             vm.send()
             assertTrue(vm.uiState.value.retryAvailable)
             vm.retry()
             assertEquals(2, attempts)
+            assertEquals(2, vm.uiState.value.messages.first().openingSourceIndex)
             assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
             vm.resetConversation()
             assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
+            assertEquals(0, vm.uiState.value.messages.single().openingSourceIndex)
+            vm.submitNativeForm("setup", mapOf("day" to listOf("8")))
+            assertEquals("从第8天开始", vm.uiState.value.input)
+            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
         } finally {
             directory.deleteRecursively()
         }

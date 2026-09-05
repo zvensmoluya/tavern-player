@@ -292,11 +292,15 @@ class PromptCompiler(
         depth: Int = 0,
         evaluationInstant: Instant = Instant.now(),
         evaluationZoneId: ZoneId = ZoneId.systemDefault(),
+        sourceText: String = text,
+        openingSourceIndex: Int? = null,
     ): TextExpansionResult = projectConversationText(
         text = text,
         placement = if (role == MessageRole.USER) RegexPlacement.USER_INPUT else RegexPlacement.AI_OUTPUT,
         projection = RegexProjection.DISPLAY,
-        character = character,
+        character = if (role == MessageRole.ASSISTANT) character.copy(
+            regexScripts = NativeDisplayRules.forMessage(character, sourceText, openingSourceIndex),
+        ) else character,
         persona = persona,
         preset = preset,
         runtimeState = runtimeState,

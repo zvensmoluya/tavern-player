@@ -165,6 +165,8 @@ class CharacterRepository internal constructor(
                 expectedSourceSha256 = manifest.character.sourceSha256,
                 availableAssetIds = manifest.localAssets.mapTo(mutableSetOf(), LocalCharacterAsset::assetId),
                 worldBooks = manifest.character.worldBooks,
+                openingCount = 1 + manifest.character.alternateFirstMessages.size,
+                regexScripts = manifest.character.regexScripts,
             )
             if (!validation.valid) return@withLock NativeAdaptationInstallResult.Rejected(validation.issues)
             val updated = manifest.character.copy(nativeAdaptation = adaptation)

@@ -96,6 +96,20 @@ internal fun NativeStatusCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun NativeOpeningSelector(choices: List<NativeOpeningChoice>, enabled: Boolean, onSelect: (Int) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("选择开场", style = MaterialTheme.typography.titleSmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            choices.forEach { choice ->
+                FilterChip(selected = choice.selected, onClick = { onSelect(choice.sourceIndex) }, enabled = enabled,
+                    label = { Text(choice.title) }, modifier = Modifier.testTag("native-opening-${choice.sourceIndex}"))
+            }
+        }
+    }
+}
+
 @Composable
 internal fun NativeSceneCard(
     view: NativeSceneView,

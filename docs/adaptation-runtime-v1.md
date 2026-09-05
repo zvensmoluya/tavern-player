@@ -116,13 +116,17 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 立即切换对话前先等待当前生成停止与最终保存，避免延迟保存读取到另一个 Conversation。取消生成的收尾保存不随协程取消而跳过；生成完成也在最终保存后才释放发送入口。没有正文的回复不会启动独立状态确认，更不会用思考内容代替故事或推断新的状态。
 
-表单模板只接受 `{{form.field}}`、`{{user}}` 和 `{{char}}`。所有字段都必须进入 Draft，不能收集后静默丢弃。Form marker 只负责把固定表单附着到匹配的原始消息；它不是可订阅 Trigger。
+表单模板只接受 `{{form.field}}`、`{{user}}` 和 `{{char}}`。所有字段都必须进入 Draft，不能收集后静默丢弃。普通 Form marker 只负责把固定表单附着到匹配的原始消息；它不是可订阅 Trigger。
+
+Setup 表单也可使用 `openingIndices` 绑定原卡开场：0 为 first message，1..N 为 alternate greetings。它与 marker 互斥，且同一来源开场不能重复绑定多张表单。消息候选保存 `openingSourceIndex`；空开场被过滤后仍按来源编号识别，不用候选数组位置或正文片段猜测。Player 用固定选项展示表单标题；同一表单可覆盖自定义选择页及其说明候选，选择项指向列表中的第一个来源。
+
+`replacedDisplayRegexIds` 声明该固定表单已接管的原卡显示规则。引用必须在原卡 Regex 中唯一存在，且 `markdownOnly=true`、`promptOnly=false`。仅在对应 assistant 消息匹配表单时，显示投影跳过这些规则；其他消息、同 ID 的预设规则、Prompt、Storage 和原件均保持原有语义。它不能删除模型上下文或取得规则执行权限。替换 HTML 之前仍须审计其中的文字信息；被接管的网页说明若尚未进入原生资料，应列为信息缺失，不能仅称为皮肤降级。
 
 ### 一次性 Setup
 
-带 `setup` 的表单拥有固定开局生命周期，仅在当前 opening 含 marker、尚无 user turn 且从未提交 Setup 时可用。输入来源限于 `setup.values` 的预验证常量、`stateFields` 的同类型标量直接复制，以及单选项 `setup` 携带的预验证常量。不执行模板计算、动态路径、条件表达式或动作链。
+带 `setup` 的表单拥有固定开局生命周期，仅在唯一 assistant opening 匹配 marker 或来源引用、尚无 user turn 且从未提交 Setup 时可用。输入来源限于 `setup.values` 的预验证常量、`stateFields` 的同类型标量直接复制，以及单选项 `setup` 携带的预验证常量。不执行模板计算、动态路径、条件表达式或动作链。
 
-`NativeSetupController` 验证完整字段、状态类型、世界书快照引用及冲突后，返回同时包含初始化状态、启停覆盖、`setupCommit` 和 Draft 的新 ConversationRecord。应用先原子落盘，成功后才发布界面和草稿。失败不改变运行状态或草稿；重复或对话开始后的提交被拒绝。
+`NativeSetupController` 验证完整字段、状态类型、世界书和开场快照引用及冲突后，返回同时包含初始化状态、启停覆盖、`setupCommit` 和 Draft 的新 ConversationRecord。可选的 `setup.openingIndex` 在同一事务中选定已有开场，以该候选检查点为当前状态基础；未指定则保留当前候选。这只是一次性开局的目的开场，不开放任意 swipe/action。不存在、空正文或歧义目标均拒绝。已有不同的非空输入草稿也拒绝覆盖。应用先原子落盘，成功后才发布界面和草稿。失败不改变运行状态或草稿；重复或对话开始后的提交被拒绝。
 
 初始化结果进入所有 opening candidate 的前后检查点，因此候选切换、第一轮失败/重试、历史重启及从磁盘恢复不会回到旧默认值。重新开始对话清除本次 Setup。表单不拥有自动发送或生成权限。
 
@@ -192,10 +196,10 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 - 19 个 scalar 状态和一个严格 JSON Patch-shaped Adapter；
 - 固定 Status View 展示全部 19 项，含四名角色心里话和变身；
 - 六项数值范围、七项字符串枚举，身体只允许开局 Setup 写入；
-- 自定义开局 Setup → 本地身体状态 + Draft；
+- 两条预设开场与自定义开局各有对应原生表单；Setup → 选定来源开场 + 本地身体状态 + Draft；
 - opening candidates 保留给现有 swipe；
 - PNG 卡面作为可验证本地静态资产；
-- 身体行文指导以有限原文分支选择进入实际 Prompt；原表单预设开场的设定流程和悬浮球主动操作仍未完整迁移，详见逐项验收清单。源码审计没有找到该卡开局动态启停 World Book 的调用，已撤回此前笼统归因。
+- 身体行文指导以有限原文分支选择进入实际 Prompt；开场草稿保留各路径输入，空项标签及引导语尚非原 JS 的逐字复刻，模型实际遵循仍需验证。悬浮球主动操作仍未迁移，详见逐项验收清单。源码审计没有找到该卡开局动态启停 World Book 的调用，已撤回此前笼统归因。
 
 该夹具用于淘汰 Player 设计，不用于从单卡反推通用 Runtime。
 

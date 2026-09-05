@@ -260,4 +260,6 @@ private fun String.partialTagSuffixStart(tag: String): Int {
     return -1
 }
 
-fun NativeFormView.matchesMessage(sourceText: String): Boolean = marker.isNotEmpty() && sourceText.contains(marker)
+fun NativeFormView.matchesMessage(sourceText: String, openingSourceIndex: Int? = null): Boolean =
+    if (openingIndices.isNotEmpty()) openingSourceIndex != null && openingSourceIndex in openingIndices
+    else marker.isNotEmpty() && sourceText.contains(marker)

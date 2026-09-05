@@ -106,7 +106,10 @@ private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
         }
     }
     fun flushCode() {
-        blocks += MarkdownBlock(MarkdownBlockKind.CODE, code.joinToString("\n"))
+        val visibleLines = code.dropWhile(String::isBlank).dropLastWhile(String::isBlank)
+        if (visibleLines.isNotEmpty()) {
+            blocks += MarkdownBlock(MarkdownBlockKind.CODE, visibleLines.joinToString("\n"))
+        }
         code.clear()
     }
     text.lineSequence().forEach { rawLine ->

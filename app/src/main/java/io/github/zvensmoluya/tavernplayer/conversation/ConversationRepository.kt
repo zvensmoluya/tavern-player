@@ -93,6 +93,7 @@ class ConversationRepository(
                     runtimeStateBefore = initialRuntime,
                     projectionRuntimeStateBefore = initialRuntime,
                     runtimeStateAfter = projectedRuntime,
+                    openingSourceIndex = index,
                 )
             }
             val turns = variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {

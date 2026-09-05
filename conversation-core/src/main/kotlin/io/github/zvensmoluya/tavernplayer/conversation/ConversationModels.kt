@@ -271,6 +271,8 @@ data class MessageVariant(
     val runtimeStateBefore: ConversationRuntimeState? = null,
     val projectionRuntimeStateBefore: ConversationRuntimeState? = null,
     val runtimeStateAfter: ConversationRuntimeState? = null,
+    // 原件中的开场位置：0 为 firstMessage，后续为 alternateFirstMessages；普通生成没有此值。
+    val openingSourceIndex: Int? = null,
 )
 
 @Serializable
