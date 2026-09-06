@@ -4,6 +4,8 @@
 >
 > 范围：V1 的单角色、普通、结构化文本对话。已落地的代码边界见 [`architecture.md`](architecture.md)。
 
+> 2026-09-07：原生适配方向暂停推进，待用户研究后再讨论。下文相关内容描述既有实现和此前决定，不代表继续扩建固定 Native 能力已获授权；DSL 与 MVU 兼容的调整尚未定案。见 [本次复盘](native-adaptation-retrospective-20260907.md)。
+
 ## 1. 产品与兼容原则
 
 - Tavern Player 是面向角色对话和剧情体验的播放器，不是 SillyTavern 创作工作台、小说续写器或第三方扩展宿主。
