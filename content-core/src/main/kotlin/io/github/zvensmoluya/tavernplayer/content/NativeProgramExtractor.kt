@@ -15,7 +15,7 @@ internal class NativeProgramExtractor {
         val payload = mutableListOf<JsonObject>()
         val data = character.rawCard["data"] as? JsonObject ?: character.rawCard
         val root = if (character.rawCard["data"] is JsonObject) "/data" else ""
-        fun hasProgramMacro(text: String) = Regex("\\{\\{([^{}]+)}}").findAll(text).any {
+        fun hasProgramMacro(text: String) = Regex("\\{\\{([^{}]+)\\}\\}").findAll(text).any {
             it.groupValues[1].trim().lowercase() !in setOf("user", "char", "persona", "charname", "username")
         }
         fun add(source: NativeProgramSource, metadata: JsonObject = JsonObject(emptyMap()), projectEjs: Boolean = false) {

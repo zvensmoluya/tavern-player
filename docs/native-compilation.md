@@ -98,6 +98,16 @@ C-04 输入为 91,930 字节，含 19 个实际内容来源、59 个本地原文
 
 上述最终检查启用 TAVERN_COMPILER_LIVE=1，选择默认 C-03，同时完成真实编译和聊天；C-04 使用独立的定向联网测试。BUILD SUCCESSFUL：308 项测试中 306 通过、2 条件跳过、0 失败（content-core 60、conversation-core 106、app 142）。Lint 0 errors / 11 warnings，Debug APK 构建和 git diff --check 通过。未运行真机验证。
 
+## 后续真机修正：宏边界正则
+
+首次手机试用发现，Program View 的宏扫描正则没有转义结尾的两个右花括号。桌面 JVM 接受该写法，Android ICU 在构造正则时抛出 PatternSyntaxException（index 13），发生在请求整理阶段，尚未发出网络请求。这是本地兼容性缺陷，不能归因为服务端传输失败。
+
+已显式转义宏边界，并增加 NativeCompilationAndroidTest：实际 C-03 原件的完整预处理，以及身份宏隔离、变量宏识别、EJS 分块和本地完成流程。测试不联网，不读取或修改现有角色库和对话。
+
+在同一台实体手机上，先安装新增测试 APK 对旧生产 APK 执行：2 项均复现相同异常；随后保留数据覆盖安装修复版，再执行相同测试：OK (2 tests)。应用重新启动成功。真实模型编译没有在这次回归中重发。
+
+本轮运行 :content-core:test、:app:assembleDebug、:app:assembleDebugAndroidTest，通过；真机使用 AndroidJUnitRunner 定向运行上述测试类。修复前后记录保存在忽略目录 app/build/native-compiler-android-before-fix.txt 与 native-compiler-android-after-fix.txt。此前的桌面测试和应用启动检查未覆盖 Android 正则差异，新增真机测试用于防止同一入口再次漏检。
+
 ## 历史：v3 Program View 实测
 
 
