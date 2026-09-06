@@ -24,6 +24,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -171,12 +174,12 @@ fun CharacterLibraryScreen(
                     }
                     TextButton(
                         onClick = onImportFromShelf,
-                        enabled = !state.importing,
+                        enabled = !state.busy,
                         modifier = Modifier.testTag("importFromShelf"),
                     ) { Text("Shelf") }
                     TextButton(
                         onClick = onImport,
-                        enabled = !state.importing,
+                        enabled = !state.busy,
                         modifier = Modifier.testTag("importCharacter"),
                     ) { Text("导入") }
                 },
@@ -196,12 +199,12 @@ fun CharacterLibraryScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(20.dp))
-                Button(onClick = onImport, enabled = !state.importing) {
+                Button(onClick = onImport, enabled = !state.busy) {
                     if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                     else Text("选择角色卡")
                 }
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = onImportFromShelf, enabled = !state.importing) {
+                OutlinedButton(onClick = onImportFromShelf, enabled = !state.busy) {
                     Text("扫描 Tavern Shelf")
                 }
                 Spacer(Modifier.height(10.dp))
@@ -327,6 +330,14 @@ fun CharacterDetailScreen(
     onImportError: (String) -> Unit = {},
     importing: Boolean = false,
     message: String? = null,
+    compiling: Boolean = false,
+    compilationSaving: Boolean = false,
+    compilationConnections: List<io.github.zvensmoluya.tavernplayer.connections.StoredConnection> = emptyList(),
+    compilationConnectionId: String? = null,
+    onSelectCompilationConnection: (String) -> Unit = {},
+    onCompile: () -> Unit = {},
+    onCancelCompilation: () -> Unit = {},
+    onOpenModels: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -385,11 +396,41 @@ fun CharacterDetailScreen(
             }
             item("native-adaptation") {
                 DetailSection("原生适配") {
+                    var choosingModel by remember { mutableStateOf(false) }
+                    val connection = compilationConnections.firstOrNull { it.id == compilationConnectionId }
+                    Text("将卡片中的表单、状态和资料准备为原生玩法。", style = MaterialTheme.typography.bodySmall)
+                    Box {
+                        TextButton(onClick = { choosingModel = true }, enabled = !importing && compilationConnections.isNotEmpty(),
+                            modifier = Modifier.testTag("compilationModel")) {
+                            Text(connection?.let { "适配模型：${it.selectedModel} · ${it.name}" } ?: "尚未选择适配模型")
+                        }
+                        DropdownMenu(expanded = choosingModel, onDismissRequest = { choosingModel = false }) {
+                            compilationConnections.forEach { option ->
+                                DropdownMenuItem(text = { Text("${option.selectedModel} · ${option.name}") }, onClick = {
+                                    choosingModel = false
+                                    onSelectCompilationConnection(option.id)
+                                })
+                            }
+                        }
+                    }
+                    if (compilationConnections.isEmpty()) {
+                        TextButton(onClick = onOpenModels, enabled = !importing) { Text("配置模型") }
+                    }
+                    if (compiling) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        TextButton(onClick = onCancelCompilation, enabled = !compilationSaving,
+                            modifier = Modifier.testTag("cancelCompilation")) { Text(if (compilationSaving) "正在保存…" else "停止适配") }
+                    } else {
+                        Button(onClick = onCompile, enabled = !importing && connection != null,
+                            modifier = Modifier.testTag("compileNativeAdaptation")) {
+                            Text(if (character.nativeAdaptation == null) "准备游玩" else "重新适配")
+                        }
+                    }
                     OutlinedButton(
                         onClick = { adaptationPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
                         enabled = !importing,
                         modifier = Modifier.testTag("installNativeAdaptation"),
-                    ) { Text(if (importing) "正在安装…" else "导入原生适配文件") }
+                    ) { Text("导入原生适配文件") }
                     if (message != null) Text(message, style = MaterialTheme.typography.bodySmall)
                     val adaptation = character.nativeAdaptation
                     if (adaptation == null) {
@@ -405,6 +446,7 @@ fun CharacterDetailScreen(
                         if (adaptation.report.unsupportedBehaviors.isNotEmpty()) {
                             Text("暂不支持：${adaptation.report.unsupportedBehaviors.joinToString("；")}")
                         }
+                        adaptation.report.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             }

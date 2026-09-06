@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
+import io.github.zvensmoluya.tavernplayer.content.NativeCompilationResult
+import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
+import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
@@ -19,6 +23,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
     val characters: List<CharacterAsset> = emptyList(),
@@ -26,10 +36,15 @@ data class CharacterLibraryUiState(
     val persona: Persona = PersonaRepository.defaultPersona(),
     val selectedCharacterId: String? = null,
     val importing: Boolean = false,
+    val compilingCharacterId: String? = null,
+    val compilationSaving: Boolean = false,
+    val compilationConnections: List<StoredConnection> = emptyList(),
+    val compilationConnectionId: String? = null,
     val importDiagnostics: List<CompatibilityDiagnostic> = emptyList(),
     val message: String? = null,
     val openConversationId: String? = null,
 ) {
+    val busy: Boolean get() = importing || compilingCharacterId != null
     val selectedCharacter: CharacterAsset?
         get() = characters.firstOrNull { it.id == selectedCharacterId }
 
@@ -43,11 +58,24 @@ class CharacterLibraryViewModel(
     private val defaultPersonaSource: DefaultPersonaSource,
     private val presetRepository: PresetRepository,
     private val shelfTransferReceiver: ShelfTransferReceiver,
+    private val compilationService: NativeCompilationService? = null,
+    private val connectionRepository: ConnectionRepository? = null,
 ) : ViewModel() {
+    private var compilationJob: Job? = null
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
 
     init {
+        if (connectionRepository != null) viewModelScope.launch {
+            connectionRepository.state.collect { state ->
+                val choices = state.connections.filter { it.selectedModel.isNotBlank() }
+                _uiState.update { current -> current.copy(
+                    compilationConnections = choices,
+                    compilationConnectionId = current.compilationConnectionId?.takeIf { id -> choices.any { it.id == id } }
+                        ?: state.recentConnectionId?.takeIf { id -> choices.any { it.id == id } } ?: choices.firstOrNull()?.id,
+                ) }
+            }
+        }
         viewModelScope.launch {
             combine(
                 characterRepository.characters,
@@ -70,7 +98,7 @@ class CharacterLibraryViewModel(
     }
 
     fun import(bytes: ByteArray, fileName: String) {
-        if (_uiState.value.importing) return
+        if (_uiState.value.busy) return
         _uiState.update { it.copy(importing = true, message = null, importDiagnostics = emptyList()) }
         viewModelScope.launch {
             runCatching { characterRepository.import(bytes, fileName) }
@@ -100,7 +128,7 @@ class CharacterLibraryViewModel(
     }
 
     fun importFromShelf(transferUrl: String) {
-        if (_uiState.value.importing) return
+        if (_uiState.value.busy) return
         _uiState.update { it.copy(importing = true, message = "正在从 Tavern Shelf 接收…", importDiagnostics = emptyList()) }
         viewModelScope.launch {
             runCatching { shelfTransferReceiver.receive(transferUrl) }
@@ -149,7 +177,7 @@ class CharacterLibraryViewModel(
     }
 
     fun installNativeAdaptation(characterId: String, bytes: ByteArray) {
-        if (_uiState.value.importing) return
+        if (_uiState.value.busy) return
         _uiState.update { it.copy(importing = true, message = null) }
         viewModelScope.launch {
             try {
@@ -201,7 +229,67 @@ class CharacterLibraryViewModel(
         _uiState.update { it.copy(message = message) }
     }
 
+    fun selectCompilationConnection(id: String) {
+        if (_uiState.value.busy || _uiState.value.compilationConnections.none { it.id == id }) return
+        _uiState.update { it.copy(compilationConnectionId = id) }
+    }
+
+    fun compileNativeAdaptation(characterId: String) {
+        if (_uiState.value.busy) return
+        val service = compilationService ?: return reportMessage("自动适配尚未配置")
+        val character = characterRepository.get(characterId) ?: return
+        val connection = _uiState.value.compilationConnections.singleOrNull { it.id == _uiState.value.compilationConnectionId }
+            ?: return reportMessage("请先配置并选择用于适配的模型")
+        _uiState.update { it.copy(compilingCharacterId = characterId, message = "正在准备适配…") }
+        compilationJob = viewModelScope.launch {
+            var installed = false
+            try {
+                val attempt = service.compile(character, characterRepository.availableAssetIds(characterId), connection,
+                    onProgress = { progress -> _uiState.update { it.copy(message = progress) } })
+                currentCoroutineContext().ensureActive()
+                when (val result = attempt.result) {
+                    is NativeCompilationResult.Rejected -> reportMessage(
+                        "适配未安装：${result.issues.take(3).joinToString("；") { it.message }}",
+                    )
+                    is NativeCompilationResult.Ready -> withContext(NonCancellable) {
+                        _uiState.update { it.copy(compilationSaving = true, message = "正在保存适配…") }
+                        when (val installation = characterRepository.installNativeAdaptation(characterId, result.adaptation)) {
+                            is NativeAdaptationInstallResult.Installed -> {
+                                installed = true
+                                reportMessage("适配已准备好，查看下方说明后即可开始新对话")
+                            }
+                            is NativeAdaptationInstallResult.Rejected -> reportMessage("适配未安装：${installation.issues.firstOrNull()?.message.orEmpty()}")
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                if (!installed) reportMessage("适配已停止，已有角色与适配保留")
+                throw cancelled
+            } catch (error: Exception) {
+                val reason = when (error) {
+                    is GatewayException.Authentication, is GatewayException.AuthenticationFailure -> "模型连接认证失败"
+                    is GatewayException.Security -> "请在模型连接中确认凭据授权"
+                    is GatewayException.HttpFailure -> "模型服务返回 HTTP ${error.status}"
+                    is GatewayException.Network -> "网络连接失败或超时"
+                    is GatewayException.Configuration -> "请检查模型连接配置"
+                    is GatewayException.Protocol -> "模型响应协议错误"
+                    is GatewayException.ResponseTooLarge -> "模型响应超过大小限制"
+                    is IllegalArgumentException -> error.message ?: "输入或输出不符合适配要求"
+                    else -> "无法完成适配，请重试"
+                }
+                reportMessage("适配未安装：$reason")
+            } finally {
+                _uiState.update { it.copy(compilingCharacterId = null, compilationSaving = false) }
+            }
+        }
+    }
+
+    fun cancelCompilation() {
+        if (!_uiState.value.compilationSaving) compilationJob?.cancel()
+    }
+
     fun createConversation(characterId: String) {
+        if (_uiState.value.busy) return
         val character = characterRepository.get(characterId) ?: return
         val preset = presetRepository.captureActive()
         viewModelScope.launch {
@@ -233,6 +321,8 @@ class CharacterLibraryViewModel(
         private val defaultPersonaSource: DefaultPersonaSource,
         private val presetRepository: PresetRepository,
         private val shelfTransferReceiver: ShelfTransferReceiver,
+        private val compilationService: NativeCompilationService? = null,
+        private val connectionRepository: ConnectionRepository? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -242,6 +332,8 @@ class CharacterLibraryViewModel(
                 defaultPersonaSource,
                 presetRepository,
                 shelfTransferReceiver,
+                compilationService,
+                connectionRepository,
             ) as T
     }
 }

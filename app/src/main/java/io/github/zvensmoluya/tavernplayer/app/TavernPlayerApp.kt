@@ -97,7 +97,15 @@ fun TavernPlayerApp(
                     onOpenConversation = characterLibraryViewModel::openConversation,
                     onInstallAdaptation = { characterLibraryViewModel.installNativeAdaptation(character.id, it) },
                     onImportError = characterLibraryViewModel::reportMessage,
-                    importing = libraryState.importing,
+                    importing = libraryState.busy,
+                    compiling = libraryState.compilingCharacterId == character.id,
+                    compilationSaving = libraryState.compilationSaving,
+                    compilationConnections = libraryState.compilationConnections,
+                    compilationConnectionId = libraryState.compilationConnectionId,
+                    onSelectCompilationConnection = characterLibraryViewModel::selectCompilationConnection,
+                    onCompile = { characterLibraryViewModel.compileNativeAdaptation(character.id) },
+                    onCancelCompilation = characterLibraryViewModel::cancelCompilation,
+                    onOpenModels = ::openModels,
                     message = libraryState.message,
                 )
             }

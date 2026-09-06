@@ -7,6 +7,7 @@
 | C-01 | 复杂玩法主样本 | [手工适配夹具](../app/src/test/resources/native-adaptation/pressure-card-manual.json)中的 `sourceSha256` |
 | C-02 | 复杂玩法复用与关系分析样本 | [手工适配夹具](../app/src/test/resources/native-adaptation/second-pressure-manual.json)中的 `sourceSha256` |
 | C-03 | 简单表单回归样本 | [手工适配夹具](../app/src/test/resources/native-adaptation/doctor-manual.json)中的 `sourceSha256` |
+| C-04 | 未参与编译器设计的状态与动态集合样本 | 原件 SHA-256：`fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe`；见[自动适配实验](native-compilation.md) |
 | P-01 | 本轮原生玩法与关系分析实验使用的社区预设 | 本机生成的测试资产 `community-preset.json`，原始文件 SHA-256 见下方 |
 
 P-01 原始文件 SHA-256：`2c3a24a50aec709ca754478f26244f5650b2614e3d6f9da131c21c9a354bfc73`。测试对输出上限等参数的调整继续记录在各实验文档中，不把运行时修改误称为原始参数。

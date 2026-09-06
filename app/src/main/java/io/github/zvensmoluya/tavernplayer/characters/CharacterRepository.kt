@@ -150,6 +150,9 @@ class CharacterRepository internal constructor(
         return File(File(root, characterId), manifest.sourceFileName).takeIf(File::isFile)
     }
 
+    fun availableAssetIds(characterId: String): Set<String> =
+        readManifest(File(root, characterId))?.localAssets?.mapTo(mutableSetOf(), LocalCharacterAsset::assetId).orEmpty()
+
     suspend fun installNativeAdaptation(
         characterId: String,
         adaptation: NativeAdaptation,

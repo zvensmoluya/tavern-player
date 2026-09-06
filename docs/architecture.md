@@ -19,7 +19,7 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 也定义开发期 Native 内容适配的有限数据模型与确定性校验边界。当前适配由兼容工程师直接审计原始 Character 后手工填写 `NativeAdaptation`；仓库不包含 `ProgramView`、AI compiler、repair 或通用组件/动作 Runtime。`NativeAdaptationValidator` 校验 source hash、State 类型、Legacy Adapter 白名单、固定 View 引用和资源上限。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)。
+`content-core` 也定义 Native 内容适配的有限数据模型与确定性校验边界。`NativeAdaptationCompiler` 按来源整理 Program View：保留完整卡内 JS、HTML/正则、EJS 代码及关联变量规则，以本地引用保留 EJS 原文块，不预先识别特定玩法。模型返回 `NativeCompilationDraft`，包含状态、控件、协议和阶段等现有能力配置；本地恢复原文区间与草稿模板、计算来源哈希和严格数值边界，再交给 `NativeAdaptationValidator` 校验类型、白名单、固定 View 引用和资源上限。结构校验不证明模型的语义映射正确。`app` 的 `NativeCompilationService` 使用独立连接选择与固定编译指令发起一次模型请求，完整通过后复用既有安装入口。手工适配仍保留，不存在通用组件/动作 Runtime、自动 repair 或派生缓存服务。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)，编译实验与限制见 [`native-compilation.md`](native-compilation.md)。
 
 ## Tavern Shelf 接收
 

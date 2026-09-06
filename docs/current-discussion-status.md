@@ -117,6 +117,6 @@
 - 单一默认 Persona 已可编辑并持久化；多身份资产管理、选择与绑定仍不进入当前阶段。
 - 全局 Preset 资产库、ST OpenAI Preset 导入 / 导出、受控编辑、五协议参数映射和聊天快捷切换已经形成实现契约。
 - 真实社区卡中的未知扩展会原样保留并报告。远程脚本、第三方动态 Macro 和富 HTML 状态栏不会执行、联网加载或被伪装为已兼容。
-- 复杂卡可以旁挂不改写原件的手工 `NativeAdaptation`。当前真实闭环是“opening marker → Native Form → Draft”、“assistant JSON Patch-shaped 状态块 → 白名单 State Patch → 固定 Status”和“本地静态资产 → Native Decoder → 固定 Scene”。同一份选中候选状态以稳定、不可配置的 `{definitions, values}` JSON system projection 提供给下一轮模型。当前不建设 ProgramView、自动编译、repair、派生缓存或 Shelf 适配附件；DeepSeek 只用于真实对话验收。
-- `source/复杂压测卡.png` 的开发夹具由兼容工程师手工审计，明确区分 restored、degraded 和 unsupported。真实卡用于证伪 Player 的闭门设计，不通过出现频率或单卡实现反推通用 Runtime。
-- 后续先继续稳定 Versioned Conversation State、Legacy State Adapter、Prompt Projection 与强类型领域生命周期，再考虑自动适配或更多状态写入能力；这些工作不自动重新打开已经冻结的安全和兼容边界。
+- 复杂卡可以旁挂不改写原件的 `NativeAdaptation`。当前已验证的运行闭环包括“opening marker → Native Form → Draft”、“assistant JSON Patch-shaped 状态块 → 白名单 State Patch → 固定 Status”和“本地静态资产 → Native Decoder → 固定 Scene”。同一份选中候选状态以稳定、不可配置的 `{definitions, values}` JSON system projection 提供给下一轮模型。
+- 复杂样本 C-01 的开发夹具由兼容工程师手工审计，明确区分 restored、degraded 和 unsupported。真实卡用于证伪 Player 的设计，不通过出现频率或单卡实现反推通用 Runtime。
+- 当前主线改为固定现有能力的自动适配：本地整理完整程序与关联规则 → 一次独立模型理解并生成 Native 配置 → 本地原文恢复与校验 → 安装 → 新对话。已撤掉按特定 Zod、表单和分支语法选择候选的 v3 识别器；预处理按来源和文本边界过滤，不代替模型理解玩法。角色详情提供实验入口，真实编译效果仍须独立验收；复杂卡全部外部行为还原不再是开始编译的前置条件。远程图片延期，已有关系分析维持实验且不由本轮编译器生成；不增加通用脚本运行时、自动 repair、派生缓存或 Shelf 适配附件。见 [自动适配实验](native-compilation.md)。

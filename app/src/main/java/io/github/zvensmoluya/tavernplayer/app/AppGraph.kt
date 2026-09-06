@@ -21,7 +21,7 @@ private val Context.gatewayDataStore by preferencesDataStore(name = "model_gatew
 class AppGraph(context: Context) {
     private val appContext = context.applicationContext
     val credentialStore = AndroidKeystoreCredentialStore(appContext)
-    val gateway = ModelGateway(credentialStore)
+    val gateway = ModelGateway(credentialStore, io.github.zvensmoluya.tavernplayer.connections.PlayerModelHttpClient.create())
     val connectionRepository = ConnectionRepository(
         stateStore = JsonConnectionDataStore(appContext.gatewayDataStore),
         credentialStore = credentialStore,
@@ -31,6 +31,9 @@ class AppGraph(context: Context) {
     val promptCompiler = PromptCompiler()
     val personaRepository = PersonaRepository(appContext.filesDir)
     val characterRepository = CharacterRepository(appContext.filesDir)
+    val nativeCompilationService = io.github.zvensmoluya.tavernplayer.characters.NativeCompilationService(
+        ModelGatewayConversationGenerator(gateway, connectionRepository),
+    )
     val presetRepository = PresetRepository(appContext.filesDir)
     val shelfTransferClient = ShelfTransferClient()
     val conversationRepository = ConversationRepository(

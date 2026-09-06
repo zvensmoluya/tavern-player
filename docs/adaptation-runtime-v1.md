@@ -24,7 +24,7 @@ Deterministic validation
 Native playback
 ```
 
-当前先验证人工复杂卡适配，尚未建设新的 `ProgramView`、AI compiler、repair 或派生缓存。真实模型用于对话和固定的对话记忆分析；它不参与生成适配，也不拥有 Runtime 设计权。人工玩法验收通过后，再建立独立于 Tavern Shelf 的编译内核与导入期适配流程；Shelf 是可选的存储和传输工具。当前验收清单见 [Native 玩法还原验收](native-gameplay-fidelity-audit.md)。
+2026-09-06 起转向固定能力范围内的自动编译实验，不再要求复杂卡的全部外部功能先完成人工迁移。当前 Program View 保留卡内完整 JS、HTML/正则、EJS 代码与关联变量规则，普通背景留在本地；不再以固定语法识别器限定模型可见的玩法。模型通过一次独立请求生成 `NativeCompilationDraft` 状态、控件和行为配置，本地恢复原文引用与模板并执行下述同一套安装校验；模型不拥有 Runtime 设计权。结构校验与整卡语义验收分开。远程图片延期，编译输出不包含 `memories`。手工适配仍是审计对照，Shelf 继续是可选存储和传输工具；未建设自动 repair 或派生缓存服务。流程与实测状态见 [自动适配实验](native-compilation.md)，已有卡片验收清单见 [Native 玩法还原验收](native-gameplay-fidelity-audit.md)。
 
 ## 原件、安装与 Conversation Snapshot
 

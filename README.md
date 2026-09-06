@@ -40,7 +40,7 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 - 在聊天气泡内修正用户或 AI 历史文字，或显式从修改处截断旧未来并恢复 Macro 与 World Book 运行状态；
 - 保存消息候选、角色快照和运行状态，并在进程重启后恢复。
 
-Native 适配目前采用开发期手工 JSON 导入：角色详情安装与原件哈希匹配的适配后，新对话可以使用统一的预约／开局表单、状态摘要、消息资料面板和有限关系阶段。开局选择与草稿先保存再进入聊天；旧卡状态块经严格白名单验证后进入本地状态。当前尚未实现自动理解任意角色卡，复杂脚本的具体缺失行为会列在适配报告中。
+Native 适配提供实验性的“准备游玩”入口：在角色详情选择适配模型，本地整理完整卡内脚本、正则/HTML、EJS 和关联变量规则，由一次独立请求理解行为并生成现有 Native 能力的配置，再由本地恢复原文引用、校验并安装，供新对话使用。预处理不再按固定玩法语法筛选候选；普通背景留在本地，源码中的字符串、注释和模板文案保留给模型。手工 JSON 导入仍保留。当前运行能力包括普通输入与一次性开局表单、状态摘要、消息资料面板和有限关系阶段；旧卡状态块经白名单验证后进入本地状态。可安装不代表整卡行为等价，远程依赖、动态集合和复杂条件仍存在限制，具体实测见 [自动适配实验](docs/native-compilation.md)。远程图片与关系分析不进入本轮编译范围。
 
 内置“默认”Preset 不可删除，但可以直接调整并随时恢复内置状态。导入或另存为的 Preset 也保留不可变初始版本。Preset 不绑定 Conversation：运行中的请求使用开始时的快照，切换只影响下一次生成；历史展示则使用当前 Preset 的 display Regex 与 `show_thoughts`。
 
@@ -64,6 +64,7 @@ SillyTavern 建立了这个生态。
 - [社区 Preset 样本调查](docs/preset-import-capabilities.md)
 - [社区 Preset 真实链路验收](docs/community-preset-live-test.md)
 - [Native 适配当前运行契约](docs/adaptation-runtime-v1.md)
+- [导入期自动适配实验](docs/native-compilation.md)
 - [Native 玩法实践与实测记录](docs/native-gameplay-verification-20260905.md)
 - [Native 玩法还原验收与当前缺口](docs/native-gameplay-fidelity-audit.md)
 
