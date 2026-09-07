@@ -91,6 +91,8 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 ## Android 仓库与界面
 
+开发中的 `QuickJsMvuRuntime` 使用 QuickJS Kotlin 绑定运行显式提供的固定 MVU/Zod bundle，通过 JSON 输入消息检查点并返回变量与文本结果。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选检查点一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。当前只提供受控调用与本地验证，角色导入、普通生成和界面尚未自动启用。MVU/Zod bundle 只作为本地测试资产构建，不进入普通应用 APK；详见 [QuickJS 接入记录](mvu-quickjs-integration-20260907.md)。
+
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
 
 经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。当前仓库只安装手工审计产物，不在导入或 Shelf 接收过程中调用模型生成适配。

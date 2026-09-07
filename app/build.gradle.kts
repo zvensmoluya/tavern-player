@@ -33,7 +33,24 @@ android {
     sourceSets.named("androidTest") {
         assets.directories.add("src/test/resources")
         assets.directories.add("build/manualAndroidTestAssets")
+        assets.directories.add("../tools/mvu-probe/build/android-assets")
     }
+}
+
+// Android and desktop tests execute the same Kotlin host with the matching native engine.
+configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+    resolutionStrategy.dependencySubstitution {
+        substitute(module("io.github.dokar3:quickjs-kt-android"))
+            .using(module("io.github.dokar3:quickjs-kt-jvm:${libs.versions.quickjs.get()}"))
+    }
+}
+
+android.sourceSets.configureEach {
+    if (name == "test" || name == "androidTest") kotlin.directories.add("src/sharedTest/java")
+}
+
+tasks.withType<Test>().configureEach {
+    systemProperty("mvuProbeAssets", rootProject.layout.projectDirectory.dir("tools/mvu-probe/build/android-assets").asFile.path)
 }
 
 val preparePressureCardAndroidTestAsset by tasks.registering(Copy::class) {
@@ -59,6 +76,7 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.quickjs)
     implementation(libs.okhttp)
     implementation(libs.play.services.code.scanner)
 

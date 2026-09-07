@@ -1,0 +1,56 @@
+{
+  "mvuCommit": "61010dab47bc3a08a1b626320bf7fc8c9573eca4",
+  "zodCommit": "276040b5f26436f18662d841fb667429e82b26d4",
+  "files": [
+    {
+      "target": "mvu/src/function/update_variables.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/function/update_variables.ts",
+      "sha256": "fdcb2d26b047c21eb7bff7432a57fe2f1b9ab8fa77db17e06fed54596520383a"
+    },
+    {
+      "target": "mvu/src/function/schema.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/function/schema.ts",
+      "sha256": "e4b17f6f3f682fdc0e6f996706fbe39eb75875471215dd1ea48e56f422d1ae84"
+    },
+    {
+      "target": "mvu/src/function/initvar/variable_init.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/function/initvar/variable_init.ts",
+      "sha256": "d2b730788fc74723f9df29ebd02085cd142e1f7289c3b25fb85cbebab51470bf"
+    },
+    {
+      "target": "mvu/src/variable_def.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/variable_def.ts",
+      "sha256": "8ba03ce3d02a2b21ff5af214f01823bbec88e6f2cc33cf831c34a53ecbf3b21e"
+    },
+    {
+      "target": "mvu/src/util.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/util.ts",
+      "sha256": "35689f41f401478455eff417fa62fe4439aa1c6a6326b4fa3533a3633d8ade4b"
+    },
+    {
+      "target": "mvu/src/normalize_base_url.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/src/normalize_base_url.ts",
+      "sha256": "c3c2977f7bdeee1609b169e698b28b3613f312e750a62a77b55eaaf094368ecb"
+    },
+    {
+      "target": "mvu/util/common.ts",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/util/common.ts",
+      "sha256": "c9ef1ee81e1499e99b7943cba06e31f2f944e9bebbbd74dda8645b900cae7973"
+    },
+    {
+      "target": "mvu/LICENSE",
+      "url": "https://raw.githubusercontent.com/MagicalAstrogy/MagVarUpdate/61010dab47bc3a08a1b626320bf7fc8c9573eca4/LICENSE",
+      "sha256": "47f7767a9980ac6664216671b531088a796df557a6bdffd23f4d8bac6af73c55"
+    },
+    {
+      "target": "mvu-zod/mvu_zod.js",
+      "url": "https://raw.githubusercontent.com/StageDog/tavern_resource/276040b5f26436f18662d841fb667429e82b26d4/dist/util/mvu_zod.js",
+      "sha256": "78c40f52d81022d9d769a923a49e673b8babb562656051a7d0410b6b19f45184"
+    },
+    {
+      "target": "mvu-zod/LICENSE",
+      "url": "https://raw.githubusercontent.com/StageDog/tavern_resource/276040b5f26436f18662d841fb667429e82b26d4/LICENSE",
+      "sha256": "676ad37b8ba9003804ab83aebce60fd46cd2c8fcbb1446fa1dd6de2c6f22ef03"
+    }
+  ]
+}

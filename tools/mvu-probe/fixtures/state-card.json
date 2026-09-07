@@ -1,0 +1,7 @@
+{
+  "schemaScript": "export const Schema = z.object({ location: z.string().prefault('clinic'), days: z.coerce.number().prefault(0), inventory: z.record(z.string(), z.object({ quantity: z.coerce.number().prefault(1), description: z.string().prefault('No description') }).prefault({})).prefault({}), wardrobe: z.record(z.string(), z.object({ slot: z.enum(['top', 'shoes']).prefault('top'), description: z.string().prefault('No description') }).prefault({})).prefault({}), actor: z.object({ affinity: z.coerce.number().transform(value => _.clamp(value, -20, 400)).prefault(0), outfit: z.object({ top: z.string().prefault('none') }).prefault({}) }).prefault({}), _fixed: z.string().prefault('keep') }).prefault({}); $(() => registerMvuSchema(Schema));",
+  "entries": [
+    { "comment": "[initvar]", "enabled": false, "content": "location: clinic\ndays: 0\ninventory: {}\nwardrobe: {}\nactor:\n  affinity: 0\n" }
+  ],
+  "greetings": ["Opening.", "<initvar>\ndays: 3\n</initvar>"]
+}

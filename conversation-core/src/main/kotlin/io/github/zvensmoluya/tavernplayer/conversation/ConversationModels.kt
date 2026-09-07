@@ -130,6 +130,14 @@ data class ConversationStatePatch(
     val assignments: Map<String, JsonElement> = emptyMap(),
 )
 
+/** Opaque upstream state, bound to the exact engine bundle and card program that produced it. */
+@Serializable
+data class MvuStateSnapshot(
+    val bundleSha256: String,
+    val programSha256: String,
+    val data: kotlinx.serialization.json.JsonObject,
+)
+
 @Serializable
 data class ConversationRuntimeState(
     val localVariables: Map<String, MacroValue> = emptyMap(),
@@ -140,6 +148,7 @@ data class ConversationRuntimeState(
     val memories: Map<String, ConversationMemory> = emptyMap(),
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
+    val mvuState: MvuStateSnapshot? = null,
 )
 
 @Serializable

@@ -6,6 +6,10 @@
 
 > 2026-09-07：原生适配方向暂停推进，待用户研究后再讨论。下文相关内容描述既有实现和此前决定，不代表继续扩建固定 Native 能力已获授权；DSL 与 MVU 兼容的调整尚未定案。见 [本次复盘](native-adaptation-retrospective-20260907.md)。
 
+> 同日后续：已按用户要求实际运行 MVU 与 Zod 注册辅助库，完成 [公共变量能力接入实验](mvu-integration-probe-20260907.md)。C-04 原始初始化与四种更新等验证通过；目前是 Node 宿主实验，App 尚未接入，不继续逐卡扩建标量适配协议。
+
+> 随后用户选择 QuickJS，并要求先做本地验证。已新增 [QuickJS Kotlin 宿主](mvu-quickjs-integration-20260907.md)，完整 MvuData 可随 Player 消息检查点保存，普通导入与聊天入口尚未自动启用。
+
 ## 1. 产品与兼容原则
 
 - Tavern Player 是面向角色对话和剧情体验的播放器，不是 SillyTavern 创作工作台、小说续写器或第三方扩展宿主。
