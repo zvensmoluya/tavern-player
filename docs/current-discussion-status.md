@@ -58,7 +58,7 @@
 
 - World Book 在产品上与 Character 强关联。当前 Character 决定本轮参与的 World Book，不建立 ST 的 global、conversation、persona 多来源组合以及来源优先、混排和去重规则。
 - 一个 Character 可以关联多本 World Book；内部仍可分别保存 Character Card 与 World Book 数据。
-- 保留 Character World Book 条目的官方运行语义，包括 constant、关键词、secondary logic、scan depth、概率、分组、递归、独立预算、sticky / cooldown / delay、order、placement 和 at-depth。
+- 目标是保留受支持的 Character World Book 条目语义，包括 constant、关键词、secondary logic、scan depth、概率、分组、递归、独立预算、sticky / cooldown / delay、order、placement 和 at-depth。2026-09-07 源码核对发现扫描范围、delay 含义及递归／分组顺序存在实际差异，不能将功能覆盖视为语义等价；分类和延期修复任务见[世界书运行语义记录](world-book-semantics-audit-20260907.md)。
 - World Book 定义随 Character 一起进入 Character Snapshot；sticky / cooldown / delay 等运行状态属于 Conversation。
 - 不支持 vectorized / embedding 候选激活、聊天或文件向量记忆 / RAG、外部强制激活入口和 `automationId`。
 

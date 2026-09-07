@@ -74,7 +74,7 @@ Regex 来源顺序为 Preset 后 Character。canonical storage、Provider prompt
 
 每次新建 Conversation、发送、重试或 regenerate 都先深拷贝当前 active Preset。该不可变快照贯穿编排、Provider 请求和流式 output projection；运行期间的全局切换不改变已开始事务，下一次生成立即使用新资产。Generation plan 与 MessageVariant 保存名称、内容指纹和参数诊断，不保存可供运行时反查的 Preset 引用；历史 display 使用当前 active Preset 重投影。
 
-World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 key、概率、分组、递归、预算、sticky / cooldown / delay、placement、at-depth 与 outlet。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结计时。强类型控制器先验证一批 `bookId` / `entryId` 再原子返回新 Runtime State，World Book trace 明确记录覆盖造成的启停。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭。
+World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 key、概率、分组、递归、预算、sticky / cooldown / delay、placement、at-depth 与 outlet。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结计时。强类型控制器先验证一批 `bookId` / `entryId` 再原子返回新 Runtime State，World Book trace 明确记录覆盖造成的启停。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭。这是当前能力描述，不构成 ST 语义等价声明；已发现的扫描范围、delay、递归／分组差异及兼容缺口见[世界书运行语义记录](world-book-semantics-audit-20260907.md)，修复暂缓。
 
 ## Token 与 Provider
 
