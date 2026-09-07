@@ -114,47 +114,34 @@ class NativeCompilationLiveTest {
         File(output, "evidence.json").writeText(Json.encodeToString(ready.evidence))
         if (customSourceHash != null) {
             if (sourceHash == "fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe") {
-                assertEquals("C-04 has two numeric stage selections to preserve", 2, adaptation.worldBookTextSelections.size)
-                adaptation.worldBookTextSelections.forEach { selection ->
-                    val original = imported.character.worldBooks.single { it.id == selection.bookId }.entries.single { it.id == selection.entryId }.content
-                    val prefixRange = checkNotNull(selection.sourcePrefix)
-                    val suffixRange = checkNotNull(selection.sourceSuffix)
-                    assertEquals(original.substringBefore("<%"), original.substring(prefixRange.start, prefixRange.endExclusive))
-                    assertEquals(original.substringAfterLast("%>"), original.substring(suffixRange.start, suffixRange.endExclusive))
-                }
-                val selection = adaptation.worldBookTextSelections.single { it.entryId.endsWith(":22") }
-                val progression = adaptation.progressions.single { it.stageStateKey == selection.stateKey }
-                val mapping = adaptation.assistantStateAdapters.single().mappings.single { it.targetStateKey == progression.valueStateKey }
-                val runtime = NativeAdaptationRuntime()
-                val initial = runtime.initialState(adaptation)
-                val patch = buildJsonArray { add(buildJsonObject { put("op", "replace"); put("path", mapping.sourcePath); put("value", 0.5) }) }
-                val applied = runtime.ingestAssistantMessage(adaptation, "<UpdateVariable><JSONPatch>$patch</JSONPatch></UpdateVariable>", initial)
-                assertNull(applied.rejection)
-                assertEquals(1, applied.appliedUpdates)
-                val strictPositiveCase = selection.cases.sortedBy { it.sourceStart }.dropLast(1).last()
-                assertEquals(JsonPrimitive(strictPositiveCase.stateValue), applied.runtimeState.conversationState.values[selection.stateKey])
-                val projected = NativeWorldBookTextProjector.project(imported.character.worldBooks, adaptation, sourceHash, applied.runtimeState.conversationState)
-                assertTrue(projected.diagnostics.toString(), projected.diagnostics.isEmpty())
-                adaptation.worldBookTextSelections.forEach { selected ->
-                    val original = imported.character.worldBooks.single { it.id == selected.bookId }.entries.single { it.id == selected.entryId }.content
-                    val projectedText = projected.books.single { it.id == selected.bookId }.entries.single { it.id == selected.entryId }.content
-                    assertTrue(projectedText.startsWith(original.substringBefore("<%")))
-                    assertTrue(projectedText.endsWith(original.substringAfterLast("%>")))
-                    assertFalse(projectedText.contains("<%"))
-                }
-                File(output, "audit.json").writeText(buildJsonObject {
-                    put("sample", sample); put("commonTextPreserved", true); put("fractionalStateWriteVerified", true); put("worldBookProjectionVerified", true)
-                    put("realChatTested", false); put("deviceTested", false)
-                }.toString())
+                assertNotNull("C-04 must execute its original MVU schema", adaptation.mvu)
+                assertEquals("C-04 selects four original EJS templates", 4, adaptation.ejsTemplates.size)
+                assertTrue("MVU must not create a second state store", adaptation.state.isEmpty())
+                assertTrue(adaptation.assistantStateAdapters.isEmpty())
+                assertTrue(adaptation.progressions.isEmpty())
+                assertTrue(adaptation.worldBookTextSelections.isEmpty())
+                assertTrue("C-04 needs status bindings", adaptation.stateBindings.isNotEmpty())
+                assertTrue(adaptation.stateBindings.all { it.source == NativeStateSource.MVU })
+                assertTrue("C-04 needs an actual inventory view", adaptation.collections.isNotEmpty())
             }
             assertTrue(characters.installNativeAdaptation(imported.character.id, adaptation) is NativeAdaptationInstallResult.Installed)
             val installed = CharacterRepository(directory).get(imported.character.id)!!
             assertEquals(adaptation, installed.nativeAdaptation)
-            val conversations = ConversationRepository(directory, PromptCompiler())
+            val mvu = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
+                File(root, "tools/mvu-probe/build/app-assets/mvu/runtime.js").readText()
+            }
+            val conversations = ConversationRepository(directory, PromptCompiler(), mvuRuntime = mvu)
             val record = conversations.create(installed, Persona("compiler-test", "测试访客"), PresetRepository(directory).captureActive())
             val restored = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
             assertEquals(adaptation, restored.character.nativeAdaptation)
             File(output, "conversation.json").writeText(Json.encodeToString(restored))
+            val reader = ConversationStateReader(adaptation, restored.runtimeState)
+            val missing = adaptation.stateBindings.filter { reader[it.key] == null }.map { it.key }
+            File(output, "binding-audit.json").writeText(buildJsonObject {
+                put("bindingCount", adaptation.stateBindings.size); put("missing", JsonArray(missing.map(::JsonPrimitive)))
+                put("playerStateCount", restored.runtimeState.conversationState.values.size)
+            }.toString())
+            assertTrue("Bindings missing from actual initialized MVU: $missing", missing.isEmpty())
             File(output, "progress.txt").appendText("PASS: compiled, installed and snapshot reloaded; gameplay requires sample-specific audit\n")
             return@runBlocking
         }
@@ -211,6 +198,13 @@ class NativeCompilationLiveTest {
             assertEquals(3, restored.turns.size)
             assertEquals(chat.messages.last().message.content, restored.turns.last().selected.message.content)
             File(output, "conversation.json").writeText(Json.encodeToString(restored))
+            val reader = ConversationStateReader(adaptation, restored.runtimeState)
+            val missing = adaptation.stateBindings.filter { reader[it.key] == null }.map { it.key }
+            File(output, "binding-audit.json").writeText(buildJsonObject {
+                put("bindingCount", adaptation.stateBindings.size); put("missing", JsonArray(missing.map(::JsonPrimitive)))
+                put("playerStateCount", restored.runtimeState.conversationState.values.size)
+            }.toString())
+            assertTrue("Bindings missing from actual initialized MVU: $missing", missing.isEmpty())
             File(output, "progress.txt").appendText("PASS: compiled, installed, form verified, generated and reloaded\n")
         } finally {
             androidx.lifecycle.ViewModelStore().apply { put("live", viewModel); clear() }

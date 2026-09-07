@@ -11,13 +11,12 @@ data class NativeCompilationDraft(
     val status: NativeStatusView? = null,
     val collections: List<NativeCollectionView> = emptyList(),
     val forms: List<NativeCompilationForm> = emptyList(),
-    val progressions: List<NativeCompilationProgression> = emptyList(),
     val messagePanels: List<NativeMessagePanelView> = emptyList(),
-    val worldBookTextSelections: List<NativeCompilationTextSelection> = emptyList(),
     val playerChoices: List<NativePlayerChoice> = emptyList(),
     val assessments: List<NativeCompilationAssessment> = emptyList(),
     val mvu: NativeCompilationMvu? = null,
     val ejsSourceIds: List<String> = emptyList(),
+    val stateBindings: List<NativeStateBinding> = emptyList(),
 )
 @Serializable
 data class NativeCompilationMvu(val schemaSourceId: String)
@@ -35,22 +34,9 @@ data class NativeCompilationTemplate(
     val bindings: Map<String, String> = emptyMap(),
 )
 @Serializable
-data class NativeCompilationProgression(
-    val valueStateKey: String, val stageStateKey: String, val levels: List<NativeCompilationLevel>,
-)
-@Serializable
-data class NativeCompilationLevel(val minValue: Double, val label: String, val exclusive: Boolean = false)
-@Serializable
-data class NativeCompilationTextSelection(
-    val sourceId: String, val stateKey: String, val cases: List<NativeCompilationTextCase>,
-    val prefixRef: String? = null, val suffixRef: String? = null,
-)
-@Serializable
-data class NativeCompilationTextCase(val stateValue: String, val textRef: String)
-@Serializable
 data class NativeCompilationAssessment(
     val sourceId: String, val disposition: NativeCompilationDisposition, val reason: String,
-    /** JSON pointers into assembled adaptation; checked for mapped claims. */
+    /** JSON pointers into draft configuration; checked after successful local assembly. */
     val targets: List<String> = emptyList(),
 )
 @Serializable

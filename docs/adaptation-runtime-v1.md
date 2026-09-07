@@ -105,6 +105,14 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 ## Player 固定 Native View
 
+### 统一只读状态绑定
+
+Status、Scene、Collection 读取 `NativeStateReader`。`ConversationStateReader` 固定持有当前或历史候选的 `ConversationRuntimeState`，按 `stateBindings` 选择 `PLAYER` 或 `MVU` 来源。未声明绑定的既有 Player 状态键仍直接读取其状态表；纯文本卡无需声明来源、状态或视图。
+
+绑定只有 `key/source/path/type`，不含初始值、更新规则、表达式或默认值。路径采用有界 RFC 6901 JSON Pointer：MVU 的根是完整检查点数据，因此变量路径包含 `/stat_data`；Player 根是现有状态表。别名不能重复或覆盖 Player 状态键；MVU 绑定要求适配声明 MVU，Player 绑定在安装时核对初始路径及类型。运行时缺失、null 或类型变化返回不可用，不回退到旧值或推导新事实。动态 MVU 路径是否符合卡片含义仍需实际检查点验收。
+
+绑定既不保存另一份 `ConversationStateSnapshot`，也不增加下一轮 Prompt 的状态副本。原业务写入仍由来源运行时处理，界面没有写入或调用模型权限。消息详情读取对应候选的后置检查点，涵盖 Status、Scene 和 Collection；历史阅读不切换当前状态。
+
 ### Status View
 
 只读展示 scalar 状态。可选的 `min/max` 只允许用于 `NUMBER`；`group` 为文字分组名，Player 统一呈现分隔标题。长于 24 字符或包含换行的值改用标签下方的完整行宽，短值与数值使用紧凑两列；没有适配提供的布局树。
@@ -119,7 +127,7 @@ key、definition 和 value 按稳定顺序编码；文本作为 JSON 数据转�
 
 ### Collection View
 
-只读展示一个 `COLLECTION` 中具有同一声明 shape 的 records。列表、卡片、滚动和详情属于 Player UI，不进入适配。
+只读展示数组（`shape=ARRAY`，绑定类型 `COLLECTION`）或对象字典（`shape=OBJECT`，绑定类型 `RECORD`）。数组元素或对象的每个 property value 成为一行；`fields[].key` 默认读取直接字段，`path` 可读取行内嵌套 JSON Pointer，`entryKey=true` 显示对象 property name（例如物品名）。字段投影只生成临时展示行，不复制业务状态。源集合缺失与有效空集合分别显示“状态不可用”和 `emptyLabel`；缺失字段不猜默认值。MVU 的增删、数量变化直接反映到这些行，Player 旧消息适配器仍没有动态集合写入能力。
 
 ### Form View
 

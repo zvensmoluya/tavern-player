@@ -19,7 +19,9 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 也定义 Native 内容适配的有限数据模型与确定性校验边界。`NativeAdaptationCompiler` 按来源整理 Program View：保留完整卡内 JS、HTML/正则、EJS 代码及关联变量规则，以本地引用保留 EJS 原文块，不预先识别特定玩法。模型返回 `NativeCompilationDraft`，包含状态、控件、协议和阶段等现有能力配置，以及可选的 MVU 原脚本来源引用；本地逐字保留所选 MVU Schema 脚本、恢复原文区间与草稿模板、计算来源哈希和严格数值边界，再交给 `NativeAdaptationValidator` 校验类型、白名单、固定 View 引用和资源上限。结构校验不证明模型的语义映射正确。`app` 的 `NativeCompilationService` 使用独立连接选择与固定编译指令发起一次模型请求，完整通过后复用既有安装入口。手工适配仍保留，不存在通用组件/动作 Runtime、自动 repair 或派生缓存服务。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)，编译实验与限制见 [`native-compilation.md`](native-compilation.md)。
+`content-core` 定义 Native 内容适配、只读 `NativeStateReader`、路径绑定和确定性校验。`NativeAdaptationCompiler` 保留完整卡内 JS、HTML/正则、EJS 代码及关联规则，让模型选择受支持的原程序并生成展示配置。`native-compiler-7` 的 MVU 分支只接受原 Schema 引用和只读 `stateBindings`，拒绝复制状态、旧消息写入器和 Player 写入选择；非 MVU 卡仍可生成必要的 Player 状态与标量协议映射。EJS 只选择原模板，不再生成阶段表或原文分支选择；对应编译字段和组装代码已删除。普通表单仍引用原 JS 草稿模板。元数据省略默认值，不再上传无用途的原文区间清单；完整源码仍提供给模型检查依赖与展示语义。
+
+本地恢复原程序、计算哈希并验证类型、路径语法、来源可用性、引用和资源上限。`app` 的 `NativeCompilationService` 使用独立连接完成一次模型请求，成功后复用安装入口；结构验证不证明模型选对了语义路径，不做自动 repair。手工适配保留其既有 Player 能力。见 [状态绑定与编译精简](native-state-bindings-20260907.md) 与 [运行契约](adaptation-runtime-v1.md)。
 
 ## Tavern Shelf 接收
 
@@ -91,11 +93,11 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 ## Android 仓库与界面
 
-`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native 状态展示映射不由此自动实现。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](mvu-chat-integration-20260907.md)。
+`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](mvu-chat-integration-20260907.md)。
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
 
-经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。当前仓库只安装手工审计产物，不在导入或 Shelf 接收过程中调用模型生成适配。
+经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。角色详情可显式请求模型准备适配或导入手工产物；普通导入和 Shelf 接收不会自动调用模型。
 
 `PresetRepository` 以一个原子 app-private manifest 保存当前 Preset、初始 source 树和全局 active ID；内置默认的初始版本由代码注入。它提供导入并激活、显式保存、恢复初始版本、从当前草稿另存为并激活、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
@@ -119,7 +121,7 @@ Compose 只提供 Player 固定的 Status、Scene、Collection 和 Form。Form �
 
 ## EJS 提示词执行
 
-`native-compiler-6` 通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](ejs-quickjs-integration-20260907.md)。
+`native-compiler-7` 通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](ejs-quickjs-integration-20260907.md)。
 
 ## 当前明确不做
 

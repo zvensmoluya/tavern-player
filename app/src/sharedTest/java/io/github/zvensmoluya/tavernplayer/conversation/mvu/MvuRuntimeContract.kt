@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.mvu
 
+import io.github.zvensmoluya.tavernplayer.content.*
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationStateReader
 import io.github.zvensmoluya.tavernplayer.conversation.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationMessage
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
@@ -48,6 +50,20 @@ object MvuRuntimeContract {
             ]"""), updated).messages.single().applyTo(updated)
             assertFalse(value(removed, "物品栏").jsonObject.containsKey("样本物品"))
             assertFalse(value(removed, wardrobe).jsonObject.containsKey("样本衣物"))
+            val adaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), mvu = NativeMvuProgram("schema"), stateBindings = listOf(
+                NativeStateBinding("bag", NativeStateSource.MVU, "/stat_data/物品栏", ConversationStateValueType.RECORD),
+                NativeStateBinding("outfit", NativeStateSource.MVU, "/stat_data/$actor/服装/上衣", ConversationStateValueType.STRING)))
+            val view = NativeCollectionView("bag", "Bag", "bag", shape = NativeCollectionShape.OBJECT, fields = listOf(
+                NativeCollectionField("name", "Name", entryKey = true), NativeCollectionField("quantity", "Quantity", path = "/数量")))
+            val reader = ConversationStateReader(adaptation, updated)
+            val row = NativeCollectionDisplay.rows(view, reader)!!.single { it.key == "样本物品" }
+            assertEquals("样本物品", row.text(view.fields[0]))
+            assertEquals("2", row.text(view.fields[1]))
+            assertEquals("样本衣物", NativeStatusDisplay.value(NativeStatusItem("outfit", "Outfit"), reader).text)
+            assertFalse(NativeCollectionDisplay.rows(view, ConversationStateReader(adaptation, removed))!!.any { it.key == "样本物品" })
+            assertTrue(updated.conversationState.values.isEmpty())
+            assertSame(value(updated, "物品栏"), reader["bag"])
+
         } finally { runtime.close() }
     }
 

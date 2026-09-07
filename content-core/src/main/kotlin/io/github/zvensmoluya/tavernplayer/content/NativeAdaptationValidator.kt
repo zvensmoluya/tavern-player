@@ -135,6 +135,23 @@ class NativeAdaptationValidator {
             }
         }
 
+        val bindingKeys = mutableSetOf<String>()
+        if (adaptation.stateBindings.size > MAX_STATE_VALUES) issue("stateBindings", "TOO_MANY_BINDINGS", "状态绑定过多")
+        adaptation.stateBindings.forEachIndexed { index, binding ->
+            val path = "stateBindings[$index]"
+            validateId("$path.key", binding.key, issues)
+            if (!bindingKeys.add(binding.key) || binding.key in definitions) issue(path, "DUPLICATE_STATE_BINDING", "绑定不能重复或覆盖 Player 状态")
+            if (!NativeStatePath.valid(binding.path)) issue(path, "INVALID_BINDING_PATH", "绑定需要有界 RFC 6901 路径")
+            when (binding.source) {
+                NativeStateSource.MVU -> if (adaptation.mvu == null) issue(path, "MISSING_STATE_SOURCE", "MVU 绑定需要启用 MVU 程序")
+                NativeStateSource.PLAYER -> {
+                    val initial = NativeStatePath.read(JsonObject(definitions.mapValues { it.value.initialValue }), binding.path)
+                    if (!NativeStatePath.matches(initial, binding.type)) issue(path, "INVALID_PLAYER_BINDING", "Player 路径不存在或类型不匹配")
+                }
+            }
+        }
+        val readTypes = definitions.mapValues { it.value.type } + adaptation.stateBindings.associate { it.key to it.type }
+
         adaptation.status?.let { status ->
             validateText("status.title", status.title, MAX_LABEL_CHARS, issues)
             if (status.items.isEmpty()) issue("status.items", "EMPTY_STATUS", "Status View 必须包含至少一个状态项")
@@ -142,15 +159,15 @@ class NativeAdaptationValidator {
             val keys = mutableSetOf<String>()
             status.items.forEachIndexed { index, item ->
                 val path = "status.items[$index]"
-                val definition = definitions[item.stateKey]
-                if (definition == null) issue("$path.stateKey", "UNKNOWN_STATE", "Status View 引用了未知状态")
-                else if (definition.type !in SCALAR_TYPES) issue("$path.stateKey", "STATUS_REQUIRES_SCALAR", "Status View 只能展示标量状态")
+                val type = readTypes[item.stateKey]
+                if (type == null) issue("$path.stateKey", "UNKNOWN_STATE", "Status View 引用了未知状态")
+                else if (type !in SCALAR_TYPES) issue("$path.stateKey", "STATUS_REQUIRES_SCALAR", "Status View 只能展示标量状态")
                 validateText("$path.label", item.label, MAX_LABEL_CHARS, issues)
                 if (!keys.add(item.stateKey)) issue("$path.stateKey", "DUPLICATE_STATUS_STATE", "Status View 重复展示同一状态")
                 if ((item.min == null) != (item.max == null)) {
                     issue(path, "INCOMPLETE_RANGE", "Status 数值范围必须同时声明 min 与 max")
                 } else if (item.min != null && item.max != null) {
-                    if (definition?.type != ConversationStateValueType.NUMBER) {
+                    if (type != ConversationStateValueType.NUMBER) {
                         issue(path, "RANGE_REQUIRES_NUMBER", "Status 数值范围只能用于 Number 状态")
                     }
                     if (!item.min.isFinite() || !item.max.isFinite() || item.min >= item.max) {
@@ -220,9 +237,9 @@ class NativeAdaptationValidator {
             validateViewId(path, view.id, viewIds, issues)
             validateText("$path.title", view.title, MAX_LABEL_CHARS, issues)
             validateText("$path.emptyLabel", view.emptyLabel, MAX_LABEL_CHARS, issues)
-            val definition = definitions[view.stateKey]
-            if (definition == null) issue("$path.stateKey", "UNKNOWN_STATE", "Scene View 引用了未知状态")
-            else if (definition.type !in SCALAR_TYPES) {
+            val type = readTypes[view.stateKey]
+            if (type == null) issue("$path.stateKey", "UNKNOWN_STATE", "Scene View 引用了未知状态")
+            else if (type !in SCALAR_TYPES) {
                 issue("$path.stateKey", "SCENE_REQUIRES_SCALAR", "Scene View 必须引用标量状态")
             }
             if (view.assets.isEmpty()) issue("$path.assets", "EMPTY_SCENE_ASSETS", "Scene View 必须包含状态到资产的映射")
@@ -247,15 +264,20 @@ class NativeAdaptationValidator {
             validateText("$path.title", view.title, MAX_LABEL_CHARS, issues)
             validateText("$path.emptyLabel", view.emptyLabel, MAX_LABEL_CHARS, issues)
             val definition = definitions[view.stateKey]
-            if (definition == null) issue("$path.stateKey", "UNKNOWN_STATE", "Collection View 引用了未知状态")
-            else if (definition.type != ConversationStateValueType.COLLECTION) {
+            val type = readTypes[view.stateKey]
+            if (type == null) issue("$path.stateKey", "UNKNOWN_STATE", "Collection View 引用了未知状态")
+            else if (type != (if (view.shape == NativeCollectionShape.ARRAY) ConversationStateValueType.COLLECTION else ConversationStateValueType.RECORD)) {
                 issue("$path.stateKey", "COLLECTION_REQUIRES_COLLECTION_STATE", "Collection View 必须引用 Collection 状态")
             }
             val schemaFields = definition?.fields?.mapTo(mutableSetOf()) { it.key }.orEmpty()
+            if (view.fields.isEmpty() || view.fields.size > MAX_RECORD_FIELDS) issue(path, "INVALID_COLLECTION_FIELDS", "集合需要有限的展示字段")
             val fields = mutableSetOf<String>()
             view.fields.forEachIndexed { fieldIndex, field ->
                 val fieldPath = "$path.fields[$fieldIndex]"
-                if (field.key !in schemaFields) issue("$fieldPath.key", "UNKNOWN_RECORD_FIELD", "Collection View 引用了未知 Record 字段")
+                if (field.entryKey && (view.shape != NativeCollectionShape.OBJECT || field.path != null)) issue(fieldPath, "INVALID_ENTRY_KEY", "物品名只适用于对象集合且不能同时绑定字段路径")
+                if (field.path != null && !NativeStatePath.valid(field.path)) issue(fieldPath, "INVALID_BINDING_PATH", "集合字段路径无效")
+                if (field.key.isBlank() || field.key.length > 128) issue(fieldPath, "INVALID_COLLECTION_FIELD", "集合字段标识无效")
+                if (view.stateKey !in bindingKeys && !field.entryKey && field.path == null && field.key !in schemaFields) issue("$fieldPath.key", "UNKNOWN_RECORD_FIELD", "Collection View 引用了未知 Record 字段")
                 if (!fields.add(field.key)) issue("$fieldPath.key", "DUPLICATE_COLLECTION_FIELD", "Collection View 字段重复")
                 validateText("$fieldPath.label", field.label, MAX_LABEL_CHARS, issues)
             }

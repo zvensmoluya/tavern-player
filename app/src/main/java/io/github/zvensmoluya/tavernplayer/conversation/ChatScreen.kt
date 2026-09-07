@@ -210,7 +210,7 @@ fun ChatScreen(
                     ) {
                         Text(
                             state.nativeStatus?.items?.take(3)?.joinToString("  ·  ") { item ->
-                                "${item.label} ${NativeStatusDisplay.value(item, state.conversationState).text}"
+                                "${item.label} ${NativeStatusDisplay.value(item, state.nativeState).text}"
                             }.orEmpty().ifBlank { "查看场景、资料与选择" },
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
@@ -349,11 +349,11 @@ fun ChatScreen(
                         actions.previewPlayerChoice(id)
                     }
                 }
-                state.nativeStatus?.let { status -> item { NativeStatusCard(status, state.conversationState) } }
+                state.nativeStatus?.let { status -> item { NativeStatusCard(status, state.nativeState) } }
                 state.nativeScenes.forEach { scene -> item {
-                    NativeSceneCard(scene, state.conversationState) { resolveAssetPath(state.character.assetId, it) }
+                    NativeSceneCard(scene, state.nativeState) { resolveAssetPath(state.character.assetId, it) }
                 } }
-                state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.conversationState) } }
+                state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, state.nativeState) } }
                 if (state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("对话记忆", style = MaterialTheme.typography.titleLarge)
@@ -385,7 +385,7 @@ fun ChatScreen(
     state.messages.firstOrNull { it.message.id == historicalStateMessageId }?.let { historical ->
         val status = state.nativeStatus
         val values = historical.nativeStateAfter
-        if ((status != null && values != null) || historical.memoriesAfter.isNotEmpty()) ModalBottomSheet(onDismissRequest = { historicalStateMessageId = null },
+        if (values != null || historical.memoriesAfter.isNotEmpty()) ModalBottomSheet(onDismissRequest = { historicalStateMessageId = null },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             LazyColumn(Modifier.fillMaxWidth().testTag("historicalNativeState"), contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -395,6 +395,10 @@ fun ChatScreen(
                     if (historical.playerChoiceCommits.isNotEmpty()) Text("包含你在此候选中确认的选择", style = MaterialTheme.typography.bodySmall)
                 }
                 if (status != null && values != null) item { NativeStatusCard(status.copy(title = ""), values) }
+                if (values != null) {
+                    state.nativeCollections.forEach { collection -> item { NativeCollectionCard(collection, values) } }
+                    state.nativeScenes.forEach { scene -> item { NativeSceneCard(scene, values) { resolveAssetPath(state.character.assetId, it) } } }
+                }
                 historical.memoriesAfter.forEach { (id, note) -> item {
                     Text(state.character.nativeAdaptation?.memories?.find { it.id == id }?.title ?: id, style = MaterialTheme.typography.titleMedium)
                     Text(note.content)

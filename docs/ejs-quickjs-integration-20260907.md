@@ -33,10 +33,10 @@ EJS 固定为 npm `3.1.10`，使用客户端构建；lodash 固定为已有 `4.1
 | `getvar(key, options)` | lodash 路径读取；支持 `defaults`、`clone` 和 `cache/message` scope；不支持全局、本地或按另一消息查询的 scope |
 | `getChatMessage(index, role)` | 当前分支中经过 Prompt 投影的历史，支持负索引 |
 | `getChatMessages(count[, role])` / `(start, end[, role])` | 锁定上游实现的过滤和切片语义 |
-| `matchChatMessages(pattern, options)` | 同一消息内匹配任意或全部模式；字符串按 JavaScript 正则匹配 |
+| `matchChatMessages(pattern, options)` | 接受字符串、RegExp 或它们的数组；同一消息内匹配任意或全部模式，字符串按 JavaScript 正则匹配 |
 | `print`、标准 JavaScript、`async/await` | 原始 EJS 控制、循环、局部计算和文字输出 |
 
-不提供持久写入、`include`、DOM、网络、文件、Android 对象、完整 Tavern Helper、扩展注入钩子或跨条目的共享 JS 变量。`<%=` 在提示词模式下使用原扩展的直接文字输出语义，不做 HTML 转义。原生状态栏仍需独立映射 MVU 数据。
+不提供持久写入、`include`、DOM、网络、文件、Android 对象、完整 Tavern Helper、扩展注入钩子或跨条目的共享 JS 变量。`<%=` 在提示词模式下使用原扩展的直接文字输出语义，不做 HTML 转义。原生状态栏现通过只读路径绑定读取 MVU 检查点，见 [状态绑定](native-state-bindings-20260907.md)。
 
 ## 上游依据与已知语义
 

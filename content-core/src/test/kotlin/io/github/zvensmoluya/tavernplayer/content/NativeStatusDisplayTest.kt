@@ -19,15 +19,15 @@ class NativeStatusDisplayTest {
         assertTrue(NativeAdaptationValidator().validate(adaptation).valid)
         val restored = Json.decodeFromString<NativeAdaptation>(Json.encodeToString(adaptation))
         val state = mapOf("door" to JsonPrimitive("closed"), "queue" to JsonPrimitive("ready"))
-        val value = NativeStatusDisplay.value(restored.status!!.items.single(), state)
+        val value = NativeStatusDisplay.value(restored.status!!.items.single(), PlayerStateReader(state))
         assertEquals(NativeStatusValue("waiting", "ready"), value)
         assertTrue(value.adjusted)
         assertEquals(JsonPrimitive("ready"), state["queue"])
-        assertFalse(NativeStatusDisplay.value(item, state + ("door" to JsonPrimitive("open"))).adjusted)
-        assertEquals(NativeStatusValue("ready", "ready", true), NativeStatusDisplay.value(item, state - "door"))
-        assertTrue(NativeStatusDisplay.value(item, state + ("queue" to JsonPrimitive(false))).unavailable)
-        assertEquals("100", NativeStatusDisplay.value(NativeStatusItem("n", "值"), mapOf("n" to JsonPrimitive(100.0))).text)
-        assertEquals("100.0", NativeStatusDisplay.value(NativeStatusItem("n", "值"), mapOf("n" to JsonPrimitive("100.0"))).text)
+        assertFalse(NativeStatusDisplay.value(item, PlayerStateReader(state + ("door" to JsonPrimitive("open")))).adjusted)
+        assertEquals(NativeStatusValue("ready", "ready", true), NativeStatusDisplay.value(item, PlayerStateReader(state - "door")))
+        assertTrue(NativeStatusDisplay.value(item, PlayerStateReader(state + ("queue" to JsonPrimitive(false)))).unavailable)
+        assertEquals("100", NativeStatusDisplay.value(NativeStatusItem("n", "值"), PlayerStateReader(mapOf("n" to JsonPrimitive(100.0)))).text)
+        assertEquals("100.0", NativeStatusDisplay.value(NativeStatusItem("n", "值"), PlayerStateReader(mapOf("n" to JsonPrimitive("100.0")))).text)
     }
 
     @Test fun `rejects partial extra invalid and non enum display cases`() {

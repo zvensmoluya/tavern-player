@@ -18,6 +18,7 @@ import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.tavernplayer.connections.ModelCache
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.*
 import io.github.zvensmoluya.tavernplayer.content.BuiltInPresets
 import io.github.zvensmoluya.tavernplayer.content.NativeFormField
 import io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType
@@ -44,13 +45,57 @@ class ChatScreenTest {
     val compose = createComposeRule()
 
     @Test fun `historical status reads the chosen message snapshot rather than current state`() {
-        val older = ChatMessageState(message = message(id = "past", content = "昨日抵达。"), nativeStateAfter = mapOf("day" to JsonPrimitive(2)))
-        val later = ChatMessageState(message = message(id = "now", content = "今天启程。"), nativeStateAfter = mapOf("day" to JsonPrimitive(5)))
+        val older = ChatMessageState(message = message(id = "past", content = "昨日抵达。"), nativeStateAfter = io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(mapOf("day" to JsonPrimitive(2))))
+        val later = ChatMessageState(message = message(id = "now", content = "今天启程。"), nativeStateAfter = io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(mapOf("day" to JsonPrimitive(5))))
         compose.setContent { TavernPlayerTheme { ChatScreen(state = state(messages = listOf(older, later),
             conversationState = mapOf("day" to JsonPrimitive(5)), nativeStatus = NativeStatusView(items = listOf(NativeStatusItem("day", "天数")))), actions = actions()) } }
         compose.onNodeWithTag("viewNativeState-past").performScrollTo().performClick()
         compose.onNodeWithText("此条回复后的状态").assertIsDisplayed()
         compose.onNodeWithTag("native-state-day").assertTextEquals("2")
+    }
+
+    @Test fun `historical inventory uses its MVU checkpoint even without a status panel`() {
+        val bag = NativeCollectionView("bag", "背包", "inventory", shape = NativeCollectionShape.OBJECT, fields = listOf(
+            NativeCollectionField("name", "物品", entryKey = true), NativeCollectionField("count", "数量", path = "/数量")))
+        val adaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), mvu = NativeMvuProgram("schema"),
+            stateBindings = listOf(NativeStateBinding("inventory", NativeStateSource.MVU, "/stat_data/物品栏", ConversationStateValueType.RECORD)),
+            collections = listOf(bag))
+        fun reader(count: Int) = ConversationStateReader(adaptation, ConversationRuntimeState(mvuState = MvuStateSnapshot("b".repeat(64), "c".repeat(64),
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"stat_data":{"物品栏":{"茶包":{"数量":$count}}}}""") as kotlinx.serialization.json.JsonObject)))
+        val past = reader(3)
+        val now = reader(2)
+        val screen = state(messages = listOf(ChatMessageState(message(id = "past", content = "收起茶包。"), nativeStateAfter = past),
+            ChatMessageState(message(id = "now", content = "取用一份。"), nativeStateAfter = now)))
+            .copy(nativeCollections = listOf(bag), nativeState = now)
+        compose.setContent { TavernPlayerTheme { ChatScreen(screen, actions = actions()) } }
+        compose.onNodeWithTag("viewNativeState-past").performScrollTo().performClick()
+        compose.onNodeWithText("茶包").assertIsDisplayed()
+        compose.onNodeWithText("3").assertIsDisplayed()
+        compose.onNodeWithText("2").assertDoesNotExist()
+    }
+
+    @Test fun `long inventory descriptions use full width below their labels`() {
+        val description = "这是一段较长的物品说明，应该完整换行展示，不能与左侧字段标签重叠。"
+        val view = NativeCollectionView("bag", "背包", "items", shape = NativeCollectionShape.OBJECT,
+            fields = listOf(NativeCollectionField("description", "描述", path = "/description")))
+        val reader = PlayerStateReader(mapOf("items" to kotlinx.serialization.json.buildJsonObject {
+            put("tea", kotlinx.serialization.json.buildJsonObject { put("description", JsonPrimitive(description)) })
+        }))
+        compose.setContent { TavernPlayerTheme { NativeCollectionCard(view, reader) } }
+        val label = compose.onNodeWithText("描述").fetchSemanticsNode().boundsInRoot
+        val body = compose.onNodeWithTag("native-collection-bag-item-0-description").fetchSemanticsNode().boundsInRoot
+        assertTrue("description must be below its label", body.top >= label.bottom)
+        compose.onNodeWithText(description).assertIsDisplayed()
+    }
+
+    @Test fun `missing scene state cannot select an asset with an empty key`() {
+        var resolutions = 0
+        compose.setContent { TavernPlayerTheme {
+            NativeSceneCard(NativeSceneView("scene", stateKey = "absent", assets = listOf(NativeSceneAsset("", "image"))),
+                PlayerStateReader(emptyMap())) { resolutions++; null }
+        } }
+        compose.onNodeWithText("状态不可用").assertIsDisplayed()
+        assertEquals(0, resolutions)
     }
 
     @Test

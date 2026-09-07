@@ -25,11 +25,6 @@ class NativeAdaptationCompiler {
             val view = NativeProgramExtractor().extract(character, availableAssetIds)
             require(draft.summary.isNotBlank() && draft.summary.length <= 1024) { "需要简短的适配摘要" }
             fun source(id: String) = view.sources.singleOrNull { it.id == id } ?: error("未知程序来源：$id")
-            fun range(id: String, owner: String): NativeSourceTextRange {
-                val ref = view.texts[id] ?: error("未知原文引用：$id")
-                require(ref.sourceId == owner) { "不能跨来源拼接世界书原文" }
-                return ref.range
-            }
             val forms = draft.forms.map { form ->
                 val src = source(form.sourceId)
                 require(src.active && src.regexId != null) { "本轮表单必须来自启用的显示正则" }
@@ -40,34 +35,13 @@ class NativeAdaptationCompiler {
                 NativeFormView(form.id, form.title, form.marker, form.description, form.fields, template,
                     submitLabel = form.submitLabel, replacedDisplayRegexIds = listOf(src.regexId))
             }
-            val selections = draft.worldBookTextSelections.map { selection ->
-                val src = source(selection.sourceId)
-                require(src.active && src.bookId != null && src.entryId != null) { "原文选择只能引用启用的世界书条目" }
-                val prefix = selection.prefixRef?.let { range(it, src.id) }
-                val suffix = selection.suffixRef?.let { range(it, src.id) }
-                val cases = selection.cases.map { case ->
-                    val r = range(case.textRef, src.id)
-                    NativeWorldBookTextCase(case.stateValue, r.start, r.endExclusive)
-                }
-                val used = listOfNotNull(selection.prefixRef, selection.suffixRef) + selection.cases.map { it.textRef }
-                require(used.distinct().size == used.size) { "公共文字与分支不能重复引用" }
-                val required = view.texts.filter { (_, ref) ->
-                    ref.sourceId == src.id && src.content.substring(ref.range.start, ref.range.endExclusive).isNotBlank()
-                }.keys
-                require(used.containsAll(required)) { "原文选择遗漏非空文本块，不能丢弃公共规则或嵌套分支" }
-                NativeWorldBookTextSelection(src.bookId, src.entryId, selection.stateKey,
-                    NativeWorldBookTextSelectionValidator.sha256(src.content), cases, prefix, suffix)
-            }
-            val progressions = draft.progressions.map { progression ->
-                NativeProgressionDefinition(progression.valueStateKey, progression.stageStateKey, progression.levels.map {
-                    require(it.minValue.isFinite()) { "阶段阈值必须有限" }
-                    NativeProgressionLevel(if (it.exclusive) Math.nextUp(it.minValue) else it.minValue, it.label)
-                })
+            require(draft.mvu == null || (draft.state.isEmpty() && draft.assistantStateAdapters.isEmpty() && draft.playerChoices.isEmpty())) {
+                "MVU 卡只输出只读路径绑定，不能复制状态或创建第二个写入机制"
             }
             var adaptation = NativeAdaptation(sourceSha256 = character.sourceSha256, state = draft.state,
                 assistantStateAdapters = draft.assistantStateAdapters, status = draft.status, collections = draft.collections,
-                forms = forms, progressions = progressions, messagePanels = draft.messagePanels,
-                worldBookTextSelections = selections, playerChoices = draft.playerChoices,
+                forms = forms, messagePanels = draft.messagePanels, stateBindings = draft.stateBindings,
+                playerChoices = draft.playerChoices,
                 ejsTemplates = draft.ejsSourceIds.map { id ->
                     val src = source(id)
                     require(src.active && src.bookId != null && src.entryId != null && "<%" in src.content) { "EJS 必须引用启用的世界书模板" }
@@ -79,14 +53,16 @@ class NativeAdaptationCompiler {
                     NativeMvuProgram(src.content)
                 })
             require(draft.assessments.size <= 512 && draft.assessments.map { it.sourceId }.distinct().size == draft.assessments.size) { "来源评估重复或过多" }
-            val tree = json.encodeToJsonElement(adaptation)
+            val tree = json.encodeToJsonElement(draft)
+            val targetRoots = setOf("state", "stateBindings", "assistantStateAdapters", "status", "collections", "forms",
+                "messagePanels", "playerChoices", "mvu", "ejsSourceIds")
             draft.assessments.forEach {
                 source(it.sourceId)
                 require(it.reason.isNotBlank() && it.reason.length <= 1024) { "评估必须简短且说明具体影响" }
-                require(it.targets.size <= 32 && it.targets.all { target -> resolve(tree, target) != null }) { "评估指向不存在的适配结果" }
+                require(it.targets.size <= 32 && it.targets.all { target -> target.removePrefix("/").substringBefore("/") in targetRoots && resolve(tree, target) != null }) { "评估指向不存在的适配结果" }
             }
             val evidence = buildList {
-                view.sources.forEach { src ->
+                view.sources.filter { it.kind != "STATIC_WORLD_BOOK" || draft.assessments.any { assessment -> assessment.sourceId == it.id } }.forEach { src ->
                     val assessment = draft.assessments.singleOrNull { it.sourceId == src.id }
                     val claim = assessment?.disposition ?: NativeCompilationDisposition.UNCERTAIN
                     val disposition = if (claim == NativeCompilationDisposition.RESTORED && assessment?.targets.isNullOrEmpty())
@@ -96,7 +72,7 @@ class NativeAdaptationCompiler {
                         assessment?.reason ?: "此来源未评估；保留原件，不声明行为已经迁移"))
                 }
                 view.warnings.forEach { add(NativeCompilationEvidence("/", "输入覆盖边界", NativeCompilationDisposition.UNCERTAIN, it)) }
-                if (adaptation.collections.isNotEmpty()) add(NativeCompilationEvidence("/", "动态集合",
+                if (adaptation.collections.any { collection -> adaptation.stateBindings.none { it.key == collection.stateKey && it.source == NativeStateSource.MVU } }) add(NativeCompilationEvidence("/", "动态集合",
                     NativeCompilationDisposition.UNSUPPORTED, "集合保留初始快照；当前适配器不支持动态物品增删或集合字段更新"))
             }
             adaptation = adaptation.copy(report = NativeCompatibilityReport(

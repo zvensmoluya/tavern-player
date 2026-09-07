@@ -5,12 +5,11 @@ import kotlinx.serialization.json.*
 
 /** Package by card fields and text delimiters, never by recognized gameplay syntax. */
 internal class NativeProgramExtractor {
-    private val json = Json { encodeDefaults = true }
+    private val json = Json { encodeDefaults = false }
 
     fun extract(character: CharacterAsset, availableAssetIds: Set<String>): NativeProgramView {
         require(character.rawCard.isNotEmpty()) { "原卡内容缺失，无法自动适配" }
         val sources = mutableListOf<NativeProgramSource>()
-        val texts = linkedMapOf<String, NativeProgramText>()
         val warnings = mutableListOf<String>()
         val payload = mutableListOf<JsonObject>()
         val data = character.rawCard["data"] as? JsonObject ?: character.rawCard
@@ -30,7 +29,6 @@ internal class NativeProgramExtractor {
                         fun literal(end: Int) {
                             if (end > start) {
                                 val id = source.id + ".text" + part++
-                                texts[id] = NativeProgramText(source.id, NativeSourceTextRange(start, end))
                                 append("[[LOCAL_TEXT:$id]]")
                             }
                         }
@@ -118,23 +116,16 @@ internal class NativeProgramExtractor {
         }
         val omitted = books.count { it["contentIncluded"] == JsonPrimitive(false) }
         if (omitted > 0) warnings += "$omitted 个静态世界书正文未发送；按标题和结构选取规则可能遗漏自然语言行为，不能视为完整语义审计"
-        require(sources.size <= 512 && texts.size <= 2048) { "程序来源数量超过预算，未截断" }
+        require(sources.size <= 512) { "程序来源数量超过预算，未截断" }
         val request = buildJsonObject {
             put("version", NativeCompilationInstructions.VERSION)
             put("sources", JsonArray(payload)); put("worldBooks", JsonArray(books))
-            put("textReferences", buildJsonArray {
-                texts.forEach { (id, ref) -> add(buildJsonObject {
-                    put("id", id); put("sourceId", ref.sourceId)
-                    put("characters", ref.range.endExclusive - ref.range.start)
-                    put("blank", sources.single { it.id == ref.sourceId }.content.substring(ref.range.start, ref.range.endExclusive).isBlank())
-                }) }
-            })
             put("preservedLocally", buildJsonObject { put("narrative", true); put("openings", 1 + character.alternateFirstMessages.size) })
             put("assetIds", JsonArray(availableAssetIds.sorted().map(::JsonPrimitive)))
             put("warnings", JsonArray(warnings.map(::JsonPrimitive)))
             put("dependencyContext", "Card JS runs in SillyTavern/Tavern Helper, not standalone JS. MVU processes model variable-update blocks and stores per-message state. Prompt Template evaluates EJS when building prompts. Regex display and outgoing-prompt paths differ. External imports are NOT fetched/executed here; their exact versions and implementation are unverified. Card schema and update-format rules are primary evidence; do not assume all MVU versions behave identically.")
         }
         require(request.toString().length <= NativeAdaptationCompiler.MAX_INPUT_CHARS) { "程序材料超过预算，未截断或删除未知语法" }
-        return NativeProgramView(request, sources, texts, warnings)
+        return NativeProgramView(request, sources, warnings)
     }
 }

@@ -56,7 +56,7 @@ class PressureCardManualAdaptationTest {
                 val state = runtime.ingestAssistantMessage(adaptation,
                     "<UpdateVariable><JSONPatch>[{\"op\":\"replace\",\"path\":\"/主角/变身\",\"value\":\"$transformation\"},{\"op\":\"replace\",\"path\":\"/主角/战局\",\"value\":\"$battle\"}]</JSONPatch></UpdateVariable>",
                     runtime.initialState(adaptation)).runtimeState
-                val value = io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay.value(item, state.conversationState.values)
+                val value = io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay.value(item, io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(state.conversationState.values))
                 assertEquals(if (transformation == "未变身") "无战斗" else if (battle == "无战斗") "对等" else battle, value.text)
                 assertEquals(battle, value.recorded)
                 assertEquals(JsonPrimitive(battle), state.conversationState.values["protagonist-battle"])

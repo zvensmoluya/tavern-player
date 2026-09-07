@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 
 data class NativeStatusValue(val text: String, val recorded: String, val unavailable: Boolean = false) {
-    val adjusted: Boolean get() = text != recorded
+    val adjusted: Boolean get() = !unavailable && text != recorded
 }
 
 object NativeStatusDisplay {
@@ -15,6 +15,10 @@ object NativeStatusDisplay {
             fun issue(message: String) { issues += NativeAdaptationValidationIssue("status.items[$index]", "INVALID_STATUS_DISPLAY", message) }
             if (item.group.length > 96) issue("状态分组名不能超过 96 字符")
             val display = item.enumDisplay ?: return@forEachIndexed
+            if (adaptation.stateBindings.any { it.key == item.stateKey || it.key == display.gateStateKey }) {
+                issue("路径绑定不支持状态枚举推导，请直接读取来源状态")
+                return@forEachIndexed
+            }
             val gate = adaptation.state.singleOrNull { it.key == display.gateStateKey }
             val target = adaptation.state.singleOrNull { it.key == item.stateKey }
             if (gate?.type != ConversationStateValueType.STRING || target?.type != ConversationStateValueType.STRING ||
@@ -31,14 +35,15 @@ object NativeStatusDisplay {
         return issues
     }
 
-    fun value(item: NativeStatusItem, state: Map<String, JsonElement>): NativeStatusValue {
+    fun value(item: NativeStatusItem, state: NativeStateReader): NativeStatusValue {
         val primitive = state[item.stateKey] as? JsonPrimitive
-        val raw = primitive?.content.orEmpty()
-        val number = primitive?.takeUnless { it.isString }?.doubleOrNull
+        if (primitive == null || primitive is kotlinx.serialization.json.JsonNull) return NativeStatusValue("状态不可用", "", unavailable = true)
+        val raw = primitive.content
+        val number = primitive.takeUnless { it.isString }?.doubleOrNull
         val recorded = if (number != null && raw.endsWith(".0")) raw.removeSuffix(".0") else raw
         val table = item.enumDisplay ?: return NativeStatusValue(recorded, recorded)
         val gate = state[table.gateStateKey] as? JsonPrimitive
-        val projected = if (gate?.isString == true && primitive?.isString == true) table.values[gate.content]?.get(raw) else null
+        val projected = if (gate?.isString == true && primitive.isString == true) table.values[gate.content]?.get(raw) else null
         return NativeStatusValue(projected ?: recorded, recorded, unavailable = projected == null)
     }
 }

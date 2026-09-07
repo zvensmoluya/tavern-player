@@ -46,21 +46,20 @@ class NativeAdaptationCompilerTest {
         assertFalse(all.contains("NUMERIC_BRANCH"))
         assertFalse(all.contains("DRAFT_FORM"))
         assertTrue(all.contains("完成任务时由模型判断"))
-        assertTrue(all.contains("promptOnly"))
+        assertTrue(all.contains("markdownOnly"))
         assertTrue(all.contains("原始"))
     }
 
-    @Test fun ejsRoundTripPreservesCodeAndEveryTextSpan() {
+    @Test fun ejsProjectionKeepsEveryCodeSpanAndRetainsCompleteLocalSource() {
         val view = NativeProgramExtractor().extract(card(), emptySet())
         val source = view.sources.single { it.kind == "EJS_TEMPLATE" }
         val wire = view.request["sources"]!!.jsonArray.map { it.jsonObject }.single { it["id"] == JsonPrimitive(source.id) }["content"]!!.jsonPrimitive.content
         assertTrue(wire.contains("const n = getvar('stat_data.score'); if (n > 0)"))
         assertFalse(wire.contains("正值原文"))
-        val reconstructed = Regex("\\[\\[LOCAL_TEXT:([^]]+)]]").replace(wire) { match ->
-            val ref = view.texts.getValue(match.groupValues[1])
-            source.content.substring(ref.range.start, ref.range.endExclusive)
-        }
-        assertEquals(branch, reconstructed)
+        val tags = Regex("<%[\\s\\S]*?%>")
+        assertEquals(tags.findAll(branch).map { it.value }.toList(), tags.findAll(wire).map { it.value }.toList())
+        assertEquals(branch, source.content)
+        assertFalse(view.request.containsKey("textReferences"))
     }
 
     @Test fun importerRawDoesNotUploadASecondProgramCopy() {
@@ -100,39 +99,11 @@ class NativeAdaptationCompilerTest {
         assertTrue(attempt(template, duplicate) is NativeCompilationResult.Rejected)
     }
 
-    private fun branchDraft(): NativeCompilationDraft {
-        val view = NativeProgramExtractor().extract(card(), emptySet())
-        val src = view.sources.single { it.kind == "EJS_TEMPLATE" }
-        val refs = view.texts.filterValues { it.sourceId == src.id }.keys.toList()
-        return NativeCompilationDraft("数值分段",
-            state = listOf(
-                ConversationStateDefinition("score", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(0), numberRange = NativeNumberRange(0.0, 100.0)),
-                ConversationStateDefinition("stage", type = ConversationStateValueType.STRING, initialValue = JsonPrimitive("zero"), allowedStrings = listOf("zero", "positive")),
-            ),
-            progressions = listOf(NativeCompilationProgression("score", "stage", listOf(
-                NativeCompilationLevel(0.0, "zero"), NativeCompilationLevel(0.0, "positive", exclusive = true)))),
-            worldBookTextSelections = listOf(NativeCompilationTextSelection(src.id, "stage",
-                listOf(NativeCompilationTextCase("positive", refs[1]), NativeCompilationTextCase("zero", refs[2])), refs.first(), refs.last())),
-        )
-    }
-
-    @Test fun modelSemanticMappingBeyondOldGrammarPreservesFractionalBoundary() {
-        val result = compiler.complete(card(), Json.encodeToString(branchDraft()), emptySet()) as NativeCompilationResult.Ready
-        val selection = result.adaptation.worldBookTextSelections.single()
-        assertEquals("共同 😀 说明\n", branch.substring(selection.sourcePrefix!!.start, selection.sourcePrefix.endExclusive))
-        assertEquals("\n共同规则", branch.substring(selection.sourceSuffix!!.start, selection.sourceSuffix.endExclusive))
-        assertEquals(NativeWorldBookTextSelectionValidator.sha256(branch), selection.sourceContentSha256)
-        val levels = result.adaptation.progressions.single().levels
-        assertEquals("zero", levels.last { 0.0 >= it.minValue }.label)
-        assertEquals("positive", levels.last { 0.5 >= it.minValue }.label)
-        assertEquals(Double.MIN_VALUE, levels.last().minValue, 0.0)
-    }
-
-    @Test fun droppedCommonRulesAndCrossSourceRefsReject() {
-        val draft = branchDraft()
-        val selection = draft.worldBookTextSelections.single()
-        listOf(selection.copy(suffixRef = null), selection.copy(prefixRef = "unknown.text0")).forEach {
-            assertTrue(compiler.complete(card(), Json.encodeToString(draft.copy(worldBookTextSelections = listOf(it))), emptySet()) is NativeCompilationResult.Rejected)
+    @Test fun obsoleteBranchCompilationIsRejected() {
+        for (field in listOf("progressions", "worldBookTextSelections")) {
+            val response = """{"summary":"obsolete", "$field":[]}"""
+            assertTrue(compiler.complete(card(), response, emptySet()) is NativeCompilationResult.Rejected)
+            assertFalse(NativeCompilationInstructions.text.contains("$field?:"))
         }
     }
 

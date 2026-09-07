@@ -31,6 +31,7 @@ data class NativeAdaptation(
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
     val mvu: NativeMvuProgram? = null,
     val ejsTemplates: List<NativeWorldBookReference> = emptyList(),
+    val stateBindings: List<NativeStateBinding> = emptyList(),
 )
 
 /** Card code explicitly selected by adaptation; the framework bundle is supplied by Player. */
@@ -238,13 +239,26 @@ data class NativeCollectionView(
     val stateKey: String,
     val emptyLabel: String = "暂无内容",
     val fields: List<NativeCollectionField> = emptyList(),
+    val shape: NativeCollectionShape = NativeCollectionShape.ARRAY,
 )
 
 @Serializable
 data class NativeCollectionField(
     val key: String,
     val label: String,
+    val path: String? = null,
+    val entryKey: Boolean = false,
 )
+
+@Serializable
+enum class NativeCollectionShape { ARRAY, OBJECT }
+
+/** Read-only alias, never an initial value or a second state store. Paths are RFC 6901 pointers. */
+@Serializable
+data class NativeStateBinding(val key: String, val source: NativeStateSource, val path: String, val type: ConversationStateValueType)
+
+@Serializable
+enum class NativeStateSource { PLAYER, MVU }
 
 @Serializable
 data class NativeFormView(

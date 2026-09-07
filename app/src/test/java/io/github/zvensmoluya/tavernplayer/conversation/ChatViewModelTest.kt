@@ -64,6 +64,9 @@ class ChatViewModelTest {
             description = "Current variables: {{get_message_variable::stat_data}}",
             nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
                 mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content),
+                stateBindings = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStateBinding("day", io.github.zvensmoluya.tavernplayer.content.NativeStateSource.MVU,
+                    "/stat_data/days", io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType.NUMBER)),
+                status = io.github.zvensmoluya.tavernplayer.content.NativeStatusView(items = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStatusItem("day", "Day"))),
                 ejsTemplates = listOf(io.github.zvensmoluya.tavernplayer.content.NativeWorldBookReference("init", "template",
                     io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator.sha256(template)))),
             worldBooks = listOf(WorldBookDefinition("init", entries = listOf(
@@ -90,6 +93,9 @@ class ChatViewModelTest {
             // Candidate navigation persists on a debounce; sending must nevertheless use the selected checkpoint.
             vm.updateInput("Go."); vm.send(); awaitMvuIdle(vm)
             assertEquals(5, days())
+            assertEquals(JsonPrimitive(5), vm.uiState.value.nativeState["day"])
+            assertEquals(JsonPrimitive(5), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
+            assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             assertTrue(prompt.contains("\"days\":3"))
             assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
@@ -97,10 +103,16 @@ class ChatViewModelTest {
             delta = 4
             vm.regenerate(); awaitMvuIdle(vm)
             assertEquals(7, days())
+            assertEquals(JsonPrimitive(7), vm.uiState.value.nativeState["day"])
+            assertEquals(JsonPrimitive(7), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
+            assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             vm.previousVariant()
             vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
             assertEquals(9, days())
+            assertEquals(JsonPrimitive(9), vm.uiState.value.nativeState["day"])
+            assertEquals(JsonPrimitive(9), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
+            assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=5; EJS_USER=Continue.;"))
             assertTrue(prompt.contains("\"days\":5"))
             val target = vm.uiState.value.messages[2].message.id
@@ -115,6 +127,9 @@ class ChatViewModelTest {
             assertEquals(saved.id, vm.uiState.value.conversationId)
             assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
             assertEquals(13, days())
+            assertEquals(JsonPrimitive(13), vm.uiState.value.nativeState["day"])
+            assertEquals(JsonPrimitive(13), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
+            assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(3, vm.uiState.value.messages.size)
             assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
                 .data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt())
@@ -125,6 +140,9 @@ class ChatViewModelTest {
             vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
             awaitMvuIdle(vm)
             assertEquals(20, days())
+            assertEquals(JsonPrimitive(20), vm.uiState.value.nativeState["day"])
+            assertEquals(JsonPrimitive(20), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
+            assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(1, vm.uiState.value.messages.size)
             vm.resetConversation(); awaitMvuIdle(vm)
             assertEquals(0, days())
@@ -388,7 +406,9 @@ class ChatViewModelTest {
             assertEquals("我决定返回营地。", saved.draft)
             vm = newViewModel().also { it.loadConversation(record.id) }
             assertEquals(saved.draft, vm.uiState.value.input)
-            assertEquals(saved.turns.single().selected.runtimeStateAfter!!.conversationState.values, vm.uiState.value.messages.single().nativeStateAfter)
+            saved.turns.single().selected.runtimeStateAfter!!.conversationState.values.forEach { (key, value) ->
+                assertEquals(value, vm.uiState.value.messages.single().nativeStateAfter!![key])
+            }
             vm.nextVariant()
             assertEquals("", vm.uiState.value.input)
             assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])

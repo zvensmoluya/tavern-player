@@ -94,10 +94,10 @@ class PressureCardNativeAndroidTest {
             compose.setContent {
                 MaterialTheme {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        NativeSceneCard(scene, state) { assetId ->
+                        NativeSceneCard(scene, io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(state)) { assetId ->
                             restoredCharacters.assetFile(restored.id, assetId)?.absolutePath
                         }
-                        NativeStatusCard(checkNotNull(native.status), state)
+                        NativeStatusCard(checkNotNull(native.status), io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(state))
                         NativeFormCard(native.forms.first { it.id == "custom-opening-contract" }, enabled = true, onSubmit = {})
                     }
                 }

@@ -14,6 +14,8 @@ import io.github.zvensmoluya.tavernplayer.content.NativeCollectionView
 import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
 import io.github.zvensmoluya.tavernplayer.content.NativeStatusView
+import io.github.zvensmoluya.tavernplayer.content.NativeStateReader
+import io.github.zvensmoluya.tavernplayer.content.PlayerStateReader
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.time.Instant
 import java.time.ZoneId
@@ -63,7 +65,7 @@ data class ChatMessageState(
     val nativePanels: List<NativeMessagePanelContent> = emptyList(),
     val openingSourceIndex: Int? = null,
     val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
-    val nativeStateAfter: Map<String, kotlinx.serialization.json.JsonElement>? = null,
+    val nativeStateAfter: NativeStateReader? = null,
     val memoriesAfter: Map<String, ConversationMemory> = emptyMap(),
 )
 
@@ -105,6 +107,7 @@ data class ChatUiState(
     val message: String? = null,
     val lastTrace: GenerationTraceState? = null,
     val conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+    val nativeState: NativeStateReader = PlayerStateReader(conversationState),
     val nativeStatus: NativeStatusView? = null,
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
@@ -1541,7 +1544,8 @@ private fun ConversationRecord.toUiState(
             openingSourceIndex = variant.openingSourceIndex,
             playerChoiceCommits = variant.playerChoiceCommits,
             nativeStateAfter = if (turn.role == MessageRole.ASSISTANT && variant.status != PersistedMessageStatus.STREAMING &&
-                character.nativeAdaptation?.status != null) variant.runtimeStateAfter?.conversationState?.values else null,
+                character.nativeAdaptation?.let { it.status != null || it.collections.isNotEmpty() || it.scenes.isNotEmpty() } == true)
+                variant.runtimeStateAfter?.let { ConversationStateReader(character.nativeAdaptation, it) } else null,
             memoriesAfter = variant.runtimeStateAfter?.memories.orEmpty(),
             stateUnconfirmed = variant.generationPlan != null && variant.status == PersistedMessageStatus.COMPLETE &&
                 character.nativeAdaptation?.assistantStateAdapters.orEmpty().isNotEmpty() &&
@@ -1565,6 +1569,7 @@ private fun ConversationRecord.toUiState(
     message = message,
     lastTrace = lastTrace ?: persistedTrace(),
     conversationState = runtimeState.conversationState.values,
+    nativeState = ConversationStateReader(character.nativeAdaptation, runtimeState),
     memories = runtimeState.memories,
     nativeStatus = character.nativeAdaptation?.status,
     nativeScenes = character.nativeAdaptation?.scenes.orEmpty(),

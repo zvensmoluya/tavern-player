@@ -46,6 +46,8 @@ import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
 import io.github.zvensmoluya.tavernplayer.content.NativeStatusView
 import io.github.zvensmoluya.tavernplayer.content.NativeStatusDisplay
+import io.github.zvensmoluya.tavernplayer.content.NativeStateReader
+import io.github.zvensmoluya.tavernplayer.content.NativeCollectionDisplay
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -74,7 +76,7 @@ internal fun NativePlayerChoicesCard(choices: List<NativePlayerChoiceOption>, en
 @Composable
 internal fun NativeStatusCard(
     view: NativeStatusView,
-    state: Map<String, JsonElement>,
+    state: NativeStateReader,
 ) {
     Card(modifier = Modifier.fillMaxWidth().testTag("native-status")) {
         Column(
@@ -111,7 +113,7 @@ internal fun NativeStatusCard(
                     }
                     if (value.adjusted) Text("记录值：${value.recorded}", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("native-recorded-${item.stateKey}"))
-                    if (value.unavailable) Text("显示规则无法匹配，保留记录值", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    if (value.unavailable) Text("状态路径或显示规则无法匹配", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     val number = primitive?.doubleOrNull
                     val min = item.min
                     val max = item.max
@@ -145,11 +147,11 @@ internal fun NativeOpeningSelector(choices: List<NativeOpeningChoice>, enabled: 
 @Composable
 internal fun NativeSceneCard(
     view: NativeSceneView,
-    state: Map<String, JsonElement>,
+    state: NativeStateReader,
     resolveAssetPath: (assetId: String) -> String?,
 ) {
-    val selectedValue = (state[view.stateKey] as? JsonPrimitive)?.contentOrNull.orEmpty()
-    val selected = view.assets.firstOrNull { it.stateValue == selectedValue }
+    val selectedValue = (state[view.stateKey] as? JsonPrimitive)?.contentOrNull
+    val selected = selectedValue?.let { value -> view.assets.firstOrNull { it.stateValue == value } }
     val path = selected?.let { resolveAssetPath(it.assetId) }
     val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, path) {
         value = path?.let { imagePath ->
@@ -172,7 +174,7 @@ internal fun NativeSceneCard(
                     contentScale = ContentScale.Fit,
                 )
             } else {
-                Text(view.emptyLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (selectedValue == null) "状态不可用" else view.emptyLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -216,29 +218,38 @@ internal fun NativeMessagePanelCard(panel: NativeMessagePanelContent) {
 @Composable
 internal fun NativeCollectionCard(
     view: NativeCollectionView,
-    state: Map<String, JsonElement>,
+    state: NativeStateReader,
 ) {
-    val records = state[view.stateKey] as? JsonArray
+    val records = NativeCollectionDisplay.rows(view, state)
     Card(modifier = Modifier.fillMaxWidth().testTag("native-collection-${view.id}")) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(view.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            if (records.isNullOrEmpty()) {
+            if (records == null) {
+                Text("状态不可用", color = MaterialTheme.colorScheme.error)
+            } else if (records.isEmpty()) {
                 Text(view.emptyLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                records.forEachIndexed { index, element ->
+                records.forEachIndexed { index, record ->
                     if (index > 0) HorizontalDivider()
-                    val record = element as? JsonObject ?: return@forEachIndexed
                     Column(
                         modifier = Modifier.fillMaxWidth().testTag("native-collection-${view.id}-item-$index"),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         view.fields.forEach { field ->
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(field.label, style = MaterialTheme.typography.labelMedium)
-                                Text((record[field.key] as? JsonPrimitive)?.contentOrNull.orEmpty())
+                            val text = record.text(field)
+                            val tag = "native-collection-${view.id}-item-$index-${field.key}"
+                            if (text.length > 24 || '\n' in text) {
+                                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(field.label, style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(text, modifier = Modifier.fillMaxWidth().testTag(tag))
+                                }
+                            } else Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(field.label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                                Text(text, modifier = Modifier.weight(3f).testTag(tag), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                             }
                         }
                     }
