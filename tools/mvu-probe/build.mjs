@@ -81,3 +81,9 @@ await writeFile(resolve(androidAssets, 'provenance.json'), JSON.stringify({
     bundleBytes: runtimeBytes.length,
 }, null, 2) + '\n');
 console.log(`Built pinned MVU ${manifest.mvuCommit} with MVU Zod ${manifest.zodCommit}`);
+// Application assets contain only the framework and notices, never sample/card programs.
+const appAssets = resolve(output, 'app-assets/mvu');
+await mkdir(appAssets, { recursive: true });
+for (const name of ['runtime.js', 'provenance.json', 'mvu-LICENSE', 'mvu-zod-LICENSE']) {
+    await writeFile(resolve(appAssets, name), await readFile(resolve(androidAssets, name)));
+}

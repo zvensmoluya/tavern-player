@@ -27,6 +27,15 @@ class NativeAdaptationValidator {
             issues += NativeAdaptationValidationIssue(path, code, message)
         }
 
+        adaptation.mvu?.let { program ->
+            if (program.schemaScript.isBlank() || program.schemaScript.length > 256_000) {
+                issue("mvu.schemaScript", "INVALID_MVU_PROGRAM", "MVU Schema 不能为空或超过 256000 字符")
+            }
+            if (adaptation.assistantStateAdapters.isNotEmpty()) {
+                issue("assistantStateAdapters", "CONFLICTING_MVU_WRITER", "MVU 与旧消息变量适配器不能同时处理变量更新")
+            }
+        }
+
         if (adaptation.schemaVersion != NATIVE_ADAPTATION_SCHEMA_VERSION) {
             issue("schemaVersion", "UNSUPPORTED_SCHEMA", "仅支持 Native Adaptation v$NATIVE_ADAPTATION_SCHEMA_VERSION")
         }

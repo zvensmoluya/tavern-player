@@ -186,6 +186,19 @@ class NativeAdaptationCompilerTest {
         assertTrue(compiler.complete(card(), Json.encodeToString(draft), emptySet()) is NativeCompilationResult.Ready)
     }
 
+    @Test fun mvuSelectsExactEnabledSourceAndRejectsCompetingWriters() {
+        val source = card()
+        val script = NativeProgramExtractor().extract(source, emptySet()).sources.single { it.id == "script0" }
+        val draft = NativeCompilationDraft("保留变量程序", mvu = NativeCompilationMvu(script.id))
+        val ready = compiler.complete(source, Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
+        assertEquals(script.content, ready.adaptation.mvu!!.schemaScript)
+        assertTrue(compiler.complete(source, Json.encodeToString(draft.copy(mvu = NativeCompilationMvu("regex0"))), emptySet()) is NativeCompilationResult.Rejected)
+        assertTrue(compiler.complete(source, Json.encodeToString(draft.copy(mvu = NativeCompilationMvu("missing"))), emptySet()) is NativeCompilationResult.Rejected)
+        val conflict = ready.adaptation.copy(assistantStateAdapters = listOf(AssistantStateAdapterDefinition(
+            LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1, listOf(AssistantStateMapping("/days", "days")))))
+        assertTrue(NativeAdaptationValidator().validate(conflict).issues.any { it.code == "CONFLICTING_MVU_WRITER" })
+    }
+
     @Test fun budgetFailsWithoutTruncatingSource() {
         assertThrows(IllegalArgumentException::class.java) { compiler.prepare(card("x".repeat(300_000)), emptySet()) }
         assertTrue(NativeCompilationInstructions.text.contains("NativeCompilationForm"))

@@ -5,7 +5,7 @@ import kotlinx.serialization.descriptors.*
 
 /** Source behavior is interpreted by the model; only the target Player contract is fixed. */
 object NativeCompilationInstructions {
-    const val VERSION = "native-compiler-4"
+    const val VERSION = "native-compiler-5"
 
     val text: String by lazy {
         """
@@ -42,6 +42,17 @@ object NativeCompilationInstructions {
         A target's existence is NOT proof of equivalence. Never call a partial mapping fully restored.
 
         TARGET CAPABILITIES AND LIMITS
+        - mvu: select schemaSourceId of one enabled original SCRIPT that registers an MVU schema.
+          Player preserves that script verbatim and runs pinned MVU and mvu_zod in QuickJS.
+          Initialization entries and greetings come from the immutable character snapshot, not model output.
+          MVU owns replace/delta/insert/remove, schema defaults, coercion and registered update callbacks.
+          Do NOT recreate these operations as assistantStateAdapters; the two writers cannot coexist.
+          Complete stat_data is available to get_message_variable::stat_data and
+          format_message_variable::stat_data, and is included in the current prompt state.
+          Supported imports are limited to the pinned registerMvuSchema helper; no remote loading,
+          DOM, EJS, network or arbitrary Tavern Helper API support. Select only compatible source code;
+          report unsupported host calls. Native state/status and collections do not automatically bind
+          to MVU paths: do not claim static native snapshots remain synchronized with MVU.
         Existing chat behavior remains present without extra native output: ordinary worldbook
         activation, source text and imported regex rules run through the existing Player engine.
         Regex has separate DISPLAY, PROMPT and STORAGE projections; markdownOnly/promptOnly,

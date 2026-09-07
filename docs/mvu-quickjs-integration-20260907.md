@@ -1,5 +1,7 @@
 # QuickJS MVU 宿主
 
+> 后续实现：MVU 已接入适配产物和聊天事务，当前编译契约为 native-compiler-5；见 [MVU 聊天接入](mvu-chat-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
+
 > 2026-09-07。用户选择 QuickJS，并要求先完成本地验证。本轮将 Node 实验中的上游变量链路移到 QuickJS Kotlin 宿主；没有启用普通聊天的自动脚本执行。
 
 ## 实现

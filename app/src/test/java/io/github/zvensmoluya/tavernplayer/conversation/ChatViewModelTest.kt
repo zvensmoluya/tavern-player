@@ -31,6 +31,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
 import org.junit.Assert.assertEquals
@@ -44,6 +46,118 @@ import org.junit.Test
 class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
+
+    @Test fun `mvu real engine follows chat candidates edits resets and disk recovery`() = runTest {
+        val directory = Files.createTempDirectory("mvu-chat").toFile()
+        val assets = java.io.File(System.getProperty("mvuProbeAssets"), "mvu")
+        org.junit.Assume.assumeTrue(java.io.File(assets, "runtime.js").isFile)
+        val fixture = kotlinx.serialization.json.Json.parseToJsonElement(java.io.File(assets, "state-card.json").readText()).jsonObject
+        val runtime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
+            java.io.File(assets, "runtime.js").readText()
+        }
+        val original = DemoConversationContent.character
+        val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = listOf("<initvar>\ndays: 3\n</initvar>"),
+            description = "Current variables: {{get_message_variable::stat_data}}",
+            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
+                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content)),
+            worldBooks = listOf(WorldBookDefinition("init", entries = listOf(
+                WorldBookEntryDefinition("initial", name = "[initvar]", enabled = false, content = "days: 0")))))
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
+            fun text(delta: Int) = "Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":$delta}]</JSONPatch></UpdateVariable>"
+            var delta = 2
+            var prompt = ""
+            val generator = FakeGenerator { _, plan -> flow {
+                prompt = plan.messages.joinToString("\n") { it.content }
+                emit(GenerationEvent.TextDelta(text(delta)))
+                emit(GenerationEvent.Finished("stop"))
+            } }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(),
+                projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            vm.loadConversation(saved.id)
+            assertEquals(0, days())
+            vm.nextVariant()
+            awaitMvuIdle(vm)
+            // Candidate navigation persists on a debounce; sending must nevertheless use the selected checkpoint.
+            vm.updateInput("Go."); vm.send(); awaitMvuIdle(vm)
+            assertEquals(5, days())
+            assertTrue(prompt.contains("\"days\":3"))
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+            assertTrue(vm.uiState.value.messages.last().message.sourceText.contains("JSONPatch"))
+            delta = 4
+            vm.regenerate(); awaitMvuIdle(vm)
+            assertEquals(7, days())
+            vm.previousVariant()
+            vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
+            assertEquals(9, days())
+            assertTrue(prompt.contains("\"days\":5"))
+            val target = vm.uiState.value.messages[2].message.id
+            vm.editMessage(target, text(10), MessageEditMode.TEXT_ONLY); awaitMvuIdle(vm)
+            assertEquals(9, days())
+            assertEquals(5, vm.uiState.value.messages.size)
+            val other = conversations.create(original, DemoConversationContent.persona, DemoConversationContent.preset)
+            vm.editMessage(target, text(10), MessageEditMode.RESTART)
+            vm.loadConversation(other.id) // An in-flight edit must not write into a different conversation.
+            vm.resetConversation()
+            awaitMvuIdle(vm)
+            assertEquals(saved.id, vm.uiState.value.conversationId)
+            assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
+            assertEquals(13, days())
+            assertEquals(3, vm.uiState.value.messages.size)
+            assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
+                .data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt())
+            vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
+            awaitMvuIdle(vm)
+            assertEquals(20, days())
+            assertEquals(1, vm.uiState.value.messages.size)
+            vm.resetConversation(); awaitMvuIdle(vm)
+            assertEquals(0, days())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `mvu partial cancelled and truncated replies do not commit variable commands`() = runTest {
+        val directory = Files.createTempDirectory("mvu-incomplete").toFile()
+        val assets = java.io.File(System.getProperty("mvuProbeAssets"), "mvu")
+        org.junit.Assume.assumeTrue(java.io.File(assets, "runtime.js").isFile)
+        val runtime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime { java.io.File(assets, "runtime.js").readText() }
+        val original = DemoConversationContent.character
+        val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = emptyList(),
+            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
+                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram("$(() => registerMvuSchema(z.object({days:z.number().prefault(0)}).prefault({})));")))
+        try {
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val checkpoint = saved.runtimeState.mvuState
+            var mode = "cancel"
+            val emitted = CompletableDeferred<Unit>()
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {
+                emit(GenerationEvent.TextDelta("Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":5}]</JSONPatch></UpdateVariable>"))
+                emitted.complete(Unit)
+                if (mode == "cancel") awaitCancellation()
+                if (mode == "truncated") emit(GenerationEvent.Finished("length"))
+            } }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            vm.loadConversation(saved.id); vm.updateInput("Go."); vm.send()
+            emitted.await()
+            assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
+            vm.cancel(); awaitMvuIdle(vm)
+            assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
+            assertEquals(ChatMessageStatus.CANCELLED, vm.uiState.value.messages.last().status)
+            mode = "truncated"; vm.regenerate(); awaitMvuIdle(vm)
+            assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
+            assertEquals(ChatMessageStatus.ERROR, vm.uiState.value.messages.last().status)
+            mode = "no-finish"; vm.regenerate(); awaitMvuIdle(vm)
+            assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
+            assertEquals(ChatMessageStatus.ERROR, vm.uiState.value.messages.last().status)
+        } finally { directory.deleteRecursively() }
+    }
+
+    private suspend fun awaitMvuIdle(vm: ChatViewModel) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        kotlinx.coroutines.withTimeout(60_000) {
+            while (vm.uiState.value.busy) kotlinx.coroutines.delay(10)
+        }
+    }
 
     private fun memoryCharacter(): io.github.zvensmoluya.tavernplayer.content.CharacterAsset {
         val entry = WorldBookEntryDefinition("memory-instruction", content = "记住已经一起完成的事情。", enabled = false)

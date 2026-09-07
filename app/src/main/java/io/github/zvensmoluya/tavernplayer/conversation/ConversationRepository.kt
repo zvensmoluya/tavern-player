@@ -21,6 +21,8 @@ class ConversationRepository(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val now: () -> Long = System::currentTimeMillis,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val mvuRuntime: io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime =
+        io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime(),
 ) {
     private val root = File(filesDir, "tavern/conversations")
     private val mutex = Mutex()
@@ -99,7 +101,7 @@ class ConversationRepository(
             val turns = variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
                 listOf(ConversationTurn(idFactory(), MessageRole.ASSISTANT, it))
             }.orEmpty()
-            val record = ConversationRecord(
+            val record = mvuRuntime.initialize(ConversationRecord(
                 id = conversationId,
                 character = snapshot,
                 persona = persona,
@@ -107,7 +109,7 @@ class ConversationRepository(
                 runtimeState = committedRuntime,
                 createdAtEpochMillis = timestamp,
                 updatedAtEpochMillis = timestamp,
-            )
+            ))
             writeRecord(record)
             publish(record)
             record

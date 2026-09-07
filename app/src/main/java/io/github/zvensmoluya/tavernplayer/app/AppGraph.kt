@@ -36,9 +36,13 @@ class AppGraph(context: Context) {
     )
     val presetRepository = PresetRepository(appContext.filesDir)
     val shelfTransferClient = ShelfTransferClient()
+    val mvuRuntime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
+        appContext.assets.open("mvu/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+    }
     val conversationRepository = ConversationRepository(
         filesDir = appContext.filesDir,
         compiler = promptCompiler,
+        mvuRuntime = mvuRuntime,
     )
     val conversationGenerator = StateConfirmingConversationGenerator(
         ModelGatewayConversationGenerator(gateway, connectionRepository),

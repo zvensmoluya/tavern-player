@@ -19,7 +19,7 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 也定义 Native 内容适配的有限数据模型与确定性校验边界。`NativeAdaptationCompiler` 按来源整理 Program View：保留完整卡内 JS、HTML/正则、EJS 代码及关联变量规则，以本地引用保留 EJS 原文块，不预先识别特定玩法。模型返回 `NativeCompilationDraft`，包含状态、控件、协议和阶段等现有能力配置；本地恢复原文区间与草稿模板、计算来源哈希和严格数值边界，再交给 `NativeAdaptationValidator` 校验类型、白名单、固定 View 引用和资源上限。结构校验不证明模型的语义映射正确。`app` 的 `NativeCompilationService` 使用独立连接选择与固定编译指令发起一次模型请求，完整通过后复用既有安装入口。手工适配仍保留，不存在通用组件/动作 Runtime、自动 repair 或派生缓存服务。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)，编译实验与限制见 [`native-compilation.md`](native-compilation.md)。
+`content-core` 也定义 Native 内容适配的有限数据模型与确定性校验边界。`NativeAdaptationCompiler` 按来源整理 Program View：保留完整卡内 JS、HTML/正则、EJS 代码及关联变量规则，以本地引用保留 EJS 原文块，不预先识别特定玩法。模型返回 `NativeCompilationDraft`，包含状态、控件、协议和阶段等现有能力配置，以及可选的 MVU 原脚本来源引用；本地逐字保留所选 MVU Schema 脚本、恢复原文区间与草稿模板、计算来源哈希和严格数值边界，再交给 `NativeAdaptationValidator` 校验类型、白名单、固定 View 引用和资源上限。结构校验不证明模型的语义映射正确。`app` 的 `NativeCompilationService` 使用独立连接选择与固定编译指令发起一次模型请求，完整通过后复用既有安装入口。手工适配仍保留，不存在通用组件/动作 Runtime、自动 repair 或派生缓存服务。当前契约见 [`adaptation-runtime-v1.md`](adaptation-runtime-v1.md)，编译实验与限制见 [`native-compilation.md`](native-compilation.md)。
 
 ## Tavern Shelf 接收
 
@@ -91,7 +91,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 ## Android 仓库与界面
 
-开发中的 `QuickJsMvuRuntime` 使用 QuickJS Kotlin 绑定运行显式提供的固定 MVU/Zod bundle，通过 JSON 输入消息检查点并返回变量与文本结果。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选检查点一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。当前只提供受控调用与本地验证，角色导入、普通生成和界面尚未自动启用。MVU/Zod bundle 只作为本地测试资产构建，不进入普通应用 APK；详见 [QuickJS 接入记录](mvu-quickjs-integration-20260907.md)。
+`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native 状态展示映射和 EJS 不由此自动实现。详见 [聊天接入记录](mvu-chat-integration-20260907.md)。
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
 

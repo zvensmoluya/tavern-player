@@ -88,7 +88,7 @@ export class ProbeHost {
                 message.variables[message.swipe_id] = clone(data);
             }),
             getLorebookSettings: api('getLorebookSettings', () => clone(this.lorebookSettings)),
-            setLorebookSettings: api('setLorebookSettings', settings => { this.lorebookSettings = clone(settings); }),
+            setLorebookSettings: api('setLorebookSettings', settings => { this.lorebookSettings = { ...this.lorebookSettings, ...clone(settings) }; }),
             getCharLorebooks: api('getCharLorebooks', () => ({ primary: 'sample', additional: [] })),
             getCharWorldbookNames: api('getCharWorldbookNames', () => ({ primary: 'sample', additional: [] })),
             getLorebookEntries: api('getLorebookEntries', name => {

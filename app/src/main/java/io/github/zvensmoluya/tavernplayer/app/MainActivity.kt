@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
             graph.conversationGenerator,
             graph.conversationRepository,
             graph.presetRepository,
+            graph.mvuRuntime,
         )
     }
     private val characterLibraryViewModel by viewModels<CharacterLibraryViewModel> {

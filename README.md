@@ -90,3 +90,5 @@ SillyTavern 建立了这个生态。
 Copyright (C) 2026 Zven. 本项目仅依据 AGPL-3.0-only 授权。
 
 [AGPL-3.0-only](LICENSE)
+
+MVU 的适配产物、聊天事务和本地构建说明见 [MVU 聊天接入](docs/mvu-chat-integration-20260907.md)。

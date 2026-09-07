@@ -15,6 +15,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
 
 @Serializable
 data class MvuDiagnostic(val level: String, val text: String)
@@ -34,7 +35,7 @@ data class MvuEvaluation(
 )
 
 /**
- * QuickJS execution for an explicitly supplied, audited MVU bundle and card program.
+ * QuickJS execution for an explicitly selected card program and a Player-supplied MVU bundle.
  * Does not fetch code, activate imported cards, expose Android objects, or own a second timeline.
  * Calls serialize on one worker; each update starts from the caller's durable checkpoint.
  */
@@ -49,7 +50,11 @@ class QuickJsMvuRuntime private constructor(
     private var closed = false
     private var failed = false
 
-    suspend fun initialize(): MvuEvaluation = evaluate("session.initialize()")
+    suspend fun initialize(greetings: List<String>? = null): MvuEvaluation {
+        val argument = greetings?.let { JsonArray(it.map(::JsonPrimitive)).toString() }.orEmpty()
+        require(argument.length <= MAX_INPUT_CHARS) { "MVU greetings exceed input limit" }
+        return evaluate("session.initialize($argument)")
+    }
 
     suspend fun update(sourceText: String, previous: ConversationRuntimeState): MvuEvaluation {
         require(sourceText.length <= MAX_INPUT_CHARS) { "MVU message exceeds input limit" }

@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
@@ -132,6 +133,7 @@ class ChatViewModel(
     private val now: () -> Long = System::currentTimeMillis,
     private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val adaptationRuntime: NativeAdaptationRuntime = NativeAdaptationRuntime(),
+    private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -158,6 +160,19 @@ class ChatViewModel(
     private var pendingAssistantRuntime: ConversationRuntimeState? = null
 
     init {
+        if (record.character.nativeAdaptation?.mvu != null) {
+            _uiState.update { it.copy(loadingConversation = true) }
+            viewModelScope.launch {
+                try {
+                    record = mvuRuntime.initialize(record)
+                    syncRecord()
+                } catch (error: Exception) {
+                    _uiState.update { it.copy(message = "MVU 初始化失败：${error.userMessage()}") }
+                } finally {
+                    _uiState.update { it.copy(loadingConversation = false) }
+                }
+            }
+        }
         viewModelScope.launch {
             repository.state.collect { gatewayState ->
                 val ready = gatewayState.connections.filter { connection ->
@@ -186,6 +201,7 @@ class ChatViewModel(
     }
 
     fun loadConversation(conversationId: String) {
+        if (_uiState.value.running && generationJob == null) return
         if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
         if (conversationRepository?.get(conversationId) == null) return
         if (generationJob != null || persistenceJob != null || persistenceDirty) {
@@ -327,6 +343,7 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 val generationId = idGenerator()
+                record = mvuRuntime.initialize(record)
                 val historyBefore = record.selectedMessages()
                 val runtimeBeforeInput = record.runtimeState
                 val projected = compiler.projectUserInput(
@@ -507,9 +524,12 @@ class ChatViewModel(
                             generationId = generationId,
                             modelId = modelId,
                         )
-                        val projectedRuntime = adaptation?.let {
+                        var projectedRuntime = adaptation?.let {
                             adaptationRuntime.ingestAssistantMessage(adaptation, sourceText, projected.runtimeState).runtimeState
                         } ?: projected.runtimeState
+                        if (mode == MessageEditMode.RESTART) {
+                            projectedRuntime = applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)
+                        }
                         if (mode == MessageEditMode.TEXT_ONLY) {
                             selected.copy(
                                 message = selected.message.copy(
@@ -628,49 +648,59 @@ class ChatViewModel(
     }
 
     fun resetConversation() {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving) return
-        generationJob?.cancel()
-        val previous = record
-        record = fallbackRecord(
-            io.github.zvensmoluya.tavernplayer.content.CharacterAsset(
-                id = record.character.assetId,
-                sourceSha256 = record.character.sourceSha256,
-                name = record.character.name,
-                nickname = record.character.promptName.takeIf { it != record.character.name },
-                description = record.character.description,
-                personality = record.character.personality,
-                scenario = record.character.scenario,
-                firstMessage = record.character.firstMessage,
-                alternateFirstMessages = record.character.alternateFirstMessages,
-                rawMessageExamples = record.character.rawMessageExamples,
-                systemPrompt = record.character.systemPrompt,
-                postHistoryInstructions = record.character.postHistoryInstructions,
-                creatorNotes = record.character.creatorNotes,
-                creator = record.character.creator,
-                characterVersion = record.character.characterVersion,
-                depthPrompt = record.character.depthPrompt,
-                worldBooks = record.character.worldBooks,
-                regexScripts = record.character.regexScripts,
-                assets = record.character.assets,
-                nativeAdaptation = record.character.nativeAdaptation,
-            ),
-            record.persona,
-            presetSource.captureActive(),
-        ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis)
-        displayCache.clear()
-        displayReasoningCache.clear()
-        val state = _uiState.value
-        _uiState.value = record.toUiState(
-            loadingConnections = state.loadingConnections,
-            activePreset = currentPreset,
-            readyConnections = state.readyConnections,
-            selectedConnectionId = state.selectedConnectionId,
-            displayContents = displayCache,
-            displayReasoning = displayReasoningCache,
-        )
+        if (_uiState.value.running && generationJob == null) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
+        _uiState.update { it.copy(loadingConversation = true) }
         viewModelScope.launch {
-            persistNow()
-            refreshDisplayCache()
+            try {
+                generationJob?.cancelAndJoin()
+                persistenceJob?.cancelAndJoin()
+                val previous = record
+                val reset = fallbackRecord(
+                    io.github.zvensmoluya.tavernplayer.content.CharacterAsset(
+                        id = record.character.assetId,
+                        sourceSha256 = record.character.sourceSha256,
+                        name = record.character.name,
+                        nickname = record.character.promptName.takeIf { it != record.character.name },
+                        description = record.character.description,
+                        personality = record.character.personality,
+                        scenario = record.character.scenario,
+                        firstMessage = record.character.firstMessage,
+                        alternateFirstMessages = record.character.alternateFirstMessages,
+                        rawMessageExamples = record.character.rawMessageExamples,
+                        systemPrompt = record.character.systemPrompt,
+                        postHistoryInstructions = record.character.postHistoryInstructions,
+                        creatorNotes = record.character.creatorNotes,
+                        creator = record.character.creator,
+                        characterVersion = record.character.characterVersion,
+                        depthPrompt = record.character.depthPrompt,
+                        worldBooks = record.character.worldBooks,
+                        regexScripts = record.character.regexScripts,
+                        assets = record.character.assets,
+                        nativeAdaptation = record.character.nativeAdaptation,
+                    ),
+                    record.persona,
+                    presetSource.captureActive(),
+                ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis)
+                record = mvuRuntime.initialize(reset)
+                displayCache.clear()
+                displayReasoningCache.clear()
+                val state = _uiState.value
+                _uiState.value = record.toUiState(
+                    loadingConnections = state.loadingConnections,
+                    activePreset = currentPreset,
+                    readyConnections = state.readyConnections,
+                    selectedConnectionId = state.selectedConnectionId,
+                    displayContents = displayCache,
+                    displayReasoning = displayReasoningCache,
+                ).copy(loadingConversation = true)
+                persistNow()
+                refreshDisplayCache()
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "对话未重置：${error.userMessage()}") }
+            } finally {
+                _uiState.update { it.copy(loadingConversation = false) }
+            }
         }
     }
 
@@ -680,6 +710,7 @@ class ChatViewModel(
         appendAssistantTurn: Boolean,
         preset: PresetAsset,
     ) {
+        record = mvuRuntime.initialize(record)
         val evaluationInstant = Instant.ofEpochMilli(now())
         val evaluationZoneId = ZoneId.systemDefault()
         val history = if (appendAssistantTurn) record.selectedMessages() else record.turns.dropLast(1).map { it.selected.message }
@@ -688,6 +719,7 @@ class ChatViewModel(
         } else {
             record.turns.lastOrNull()?.selected?.runtimeStateBefore ?: record.runtimeState
         }
+        mvuRuntime.validateCheckpoint(record.character, runtimeBeforeGeneration)
         val modelTokenLimits = connection.effectiveTokenLimits()
         val lastVisibleTurn = record.turns.lastOrNull()
         val baseInput = NormalGenerationInput(
@@ -848,6 +880,10 @@ class ChatViewModel(
                         evaluationZoneId,
                         event,
                     )
+                    replyCompleted = record.findVariant(variant.id)?.status == PersistedMessageStatus.COMPLETE
+                }
+                if (record.character.nativeAdaptation?.mvu != null && record.findVariant(variant.id)?.status == PersistedMessageStatus.STREAMING) {
+                    error("回复未完整结束，MVU 变量未更新")
                 }
                 reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                 finishIfStreamEnded(variant.id)
@@ -1022,7 +1058,12 @@ class ChatViewModel(
                 schedulePersist()
             }
             is GenerationEvent.Finished -> {
+                if (record.findVariant(variantId)?.status == PersistedMessageStatus.COMPLETE) return
+                if (record.character.nativeAdaptation?.mvu != null && event.reason !in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")) {
+                    error("回复被截断或未正常结束，MVU 变量未更新")
+                }
                 reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                pendingAssistantRuntime = applyMvuUpdate(rawAssistant, pendingAssistantRuntime ?: record.runtimeState)
                 pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
                 pendingAssistantRuntime = null
                 updateVariant(variantId) {
@@ -1038,6 +1079,18 @@ class ChatViewModel(
                 copy(streamDiagnostics = (streamDiagnostics + event.summary).takeLast(30))
             }
         }
+    }
+
+    private suspend fun applyMvuUpdate(
+        source: String, previous: ConversationRuntimeState, opening: Boolean = false,
+    ): ConversationRuntimeState {
+        val result = mvuRuntime.update(record.character, source, previous, opening) ?: return previous
+        val diagnostics = result.diagnostics.filter { it.level in setOf("error", "warn", "warning") }
+            .map { "MVU: ${it.text}" }
+        if (diagnostics.isNotEmpty()) updateTrace {
+            copy(streamDiagnostics = (streamDiagnostics + diagnostics).takeLast(30))
+        }
+        return result.messages.single().applyTo(previous)
     }
 
     private suspend fun commitPreparedRuntime() {
@@ -1086,7 +1139,10 @@ class ChatViewModel(
             val stateSource = rawStateConfirmation ?: rawAssistant
             adaptationRuntime.ingestAssistantMessage(adaptation, stateSource, projection.runtimeState).runtimeState
         } ?: projection.runtimeState
-        pendingAssistantRuntime = projectedRuntime
+        // Display reprojection (including cleanup after Finished) must preserve the committed MVU checkpoint.
+        val finalRuntime = projectedRuntime.copy(mvuState = record.findVariant(variantId)?.runtimeStateAfter?.mvuState
+            ?: projectedRuntime.mvuState)
+        pendingAssistantRuntime = finalRuntime
         val messageId = record.findVariant(variantId)?.message?.id
         if (messageId != null) {
             displayCache[messageId] = projection.displayText
@@ -1110,7 +1166,7 @@ class ChatViewModel(
                     reasoning = reasoning,
                 ),
                 generationPlan = plan,
-                runtimeStateAfter = projectedRuntime,
+                runtimeStateAfter = finalRuntime,
             )
         }
         if (projection.diagnostics.isNotEmpty()) {
@@ -1410,10 +1466,11 @@ class ChatViewModel(
         private val generator: ConversationGenerator,
         private val conversationRepository: ConversationRepository? = null,
         private val presetSource: ActivePresetSource,
+        private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource) as T
+            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime) as T
     }
 
     companion object {

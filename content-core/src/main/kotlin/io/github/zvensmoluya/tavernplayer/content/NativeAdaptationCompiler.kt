@@ -67,7 +67,12 @@ class NativeAdaptationCompiler {
             var adaptation = NativeAdaptation(sourceSha256 = character.sourceSha256, state = draft.state,
                 assistantStateAdapters = draft.assistantStateAdapters, status = draft.status, collections = draft.collections,
                 forms = forms, progressions = progressions, messagePanels = draft.messagePanels,
-                worldBookTextSelections = selections, playerChoices = draft.playerChoices)
+                worldBookTextSelections = selections, playerChoices = draft.playerChoices,
+                mvu = draft.mvu?.let {
+                    val src = source(it.schemaSourceId)
+                    require(src.active && src.kind == "SCRIPT") { "MVU Schema 必须引用启用的原卡脚本" }
+                    NativeMvuProgram(src.content)
+                })
             require(draft.assessments.size <= 512 && draft.assessments.map { it.sourceId }.distinct().size == draft.assessments.size) { "来源评估重复或过多" }
             val tree = json.encodeToJsonElement(adaptation)
             draft.assessments.forEach {

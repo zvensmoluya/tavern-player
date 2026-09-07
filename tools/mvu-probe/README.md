@@ -1,8 +1,10 @@
 # MVU 接入实验
 
+当前 Gradle 构建会调用此工具，生成应用使用的固定框架资产（`build/app-assets/mvu`）；只含框架、provenance 与许可证，不含原卡或测试夹具。测试资产仍在独立的 `build/android-assets`。详见 [聊天接入](../../docs/mvu-chat-integration-20260907.md)。
+
 直接运行固定版本的 MVU 初始化、更新和消息处理源码，以及卡所引用的 `registerMvuSchema` 辅助库；不重新实现四种更新操作。Node 宿主提供消息、候选、世界书、事件和诊断接口，验证公共依赖能否脱离酒馆网页工作。
 
-这是开发实验。现已提供 [QuickJS Kotlin 宿主](../../app/src/main/java/io/github/zvensmoluya/tavernplayer/conversation/mvu/QuickJsMvuRuntime.kt) 与 JVM/Android 共用验证，当前 App 的适配安装、Prompt 和原生界面尚未自动切换。Node 参照实验见 [实验记录](../../docs/mvu-integration-probe-20260907.md)，后续见 [QuickJS 接入记录](../../docs/mvu-quickjs-integration-20260907.md)。
+这是开发实验。现已提供 [QuickJS Kotlin 宿主](../../app/src/main/java/io/github/zvensmoluya/tavernplayer/conversation/mvu/QuickJsMvuRuntime.kt) 与 JVM/Android 共用验证，已接入声明 MVU 的适配产物、正常聊天和 Prompt 变量读取；原生界面不会自动绑定这些变量。Node 参照实验见 [实验记录](../../docs/mvu-integration-probe-20260907.md)，后续见 [QuickJS 接入记录](../../docs/mvu-quickjs-integration-20260907.md)。
 
 ## 运行
 
@@ -21,7 +23,7 @@ npm --prefix tools/mvu-probe test
 .\gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-未准备 bundle 时，MVU 专项测试明确跳过，不影响普通 Gradle 验证。Android 测试类为 `io.github.zvensmoluya.tavernplayer.conversation.mvu.QuickJsMvuAndroidTest`，与桌面共用 `MvuRuntimeContract`；桌面 JNI 成功不代表 Android 已执行。
+正常 Gradle 构建会先准备 bundle；缺少原始样本时只有可选样本检查跳过。Android 测试类为 `io.github.zvensmoluya.tavernplayer.conversation.mvu.QuickJsMvuAndroidTest`，与桌面共用 `MvuRuntimeContract`；桌面 JNI 成功不代表 Android 已执行。
 
 可选真实样本验证：将环境变量 `COMMUNITY_CARD` 指向本地 C-04 PNG，然后执行：
 
@@ -35,7 +37,7 @@ npm --prefix tools/mvu-probe run probe -- $env:COMMUNITY_CARD
 
 `build.mjs` 按 `upstream-lock.json` 下载固定提交的源码并验证每个文件的 SHA-256。所有上游文件保持原字节，仅在构建解析时把依赖连接到本地模块；Pinia 设置及 Vue i18n 入口替换为明确的宿主 shim。npm 依赖由 `package-lock.json` 锁定。首次构建需要网络，已缓存且哈希匹配的构建及测试不需要网络。
 
-上游源码、原始许可证、bundle、真实样本报告均在被忽略的 `build/` 中；`node_modules/` 也不进入版本库。真实样本报告为 `build/card-report.json`，只输出中性实验标识、哈希、检查项和调用接口，不保存原卡正文或人物名称。`android-assets` 仅进入本地 Android 测试 APK；普通 APK 只包含 QuickJS 引擎和 Kotlin 宿主，不含 MVU/Zod 程序包。
+上游源码、原始许可证、bundle、真实样本报告均在被忽略的 `build/` 中；`node_modules/` 也不进入版本库。真实样本报告为 `build/card-report.json`，只输出中性实验标识、哈希、检查项和调用接口，不保存原卡正文或人物名称。`android-assets` 仅进入本地 Android 测试 APK；普通 APK 通过独立的 `app-assets` 目录包含框架及许可证，不包含样本程序。
 
 ## 边界
 

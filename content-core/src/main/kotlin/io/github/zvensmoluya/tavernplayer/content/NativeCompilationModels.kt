@@ -16,7 +16,10 @@ data class NativeCompilationDraft(
     val worldBookTextSelections: List<NativeCompilationTextSelection> = emptyList(),
     val playerChoices: List<NativePlayerChoice> = emptyList(),
     val assessments: List<NativeCompilationAssessment> = emptyList(),
+    val mvu: NativeCompilationMvu? = null,
 )
+@Serializable
+data class NativeCompilationMvu(val schemaSourceId: String)
 @Serializable
 data class NativeCompilationForm(
     val id: String, val title: String, val sourceId: String, val marker: String,

@@ -1,5 +1,7 @@
 # Tavern Player 当前产品边界
 
+> 后续实现：MVU 已接入适配产物和聊天事务，当前编译契约为 native-compiler-5；见 [MVU 聊天接入](mvu-chat-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
+
 > 状态：当前有效的产品与兼容性决定。
 >
 > 范围：V1 的单角色、普通、结构化文本对话。已落地的代码边界见 [`architecture.md`](architecture.md)。

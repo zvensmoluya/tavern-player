@@ -37,6 +37,10 @@ android {
     }
 }
 
+android.sourceSets.named("main") {
+    assets.directories.add("../tools/mvu-probe/build/app-assets")
+}
+
 // Android and desktop tests execute the same Kotlin host with the matching native engine.
 configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
     resolutionStrategy.dependencySubstitution {
@@ -44,6 +48,26 @@ configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configu
             .using(module("io.github.dokar3:quickjs-kt-jvm:${libs.versions.quickjs.get()}"))
     }
 }
+
+val installMvuDependencies by tasks.registering(Exec::class) {
+    workingDir(rootProject.file("tools/mvu-probe"))
+    inputs.files("../tools/mvu-probe/package.json", "../tools/mvu-probe/package-lock.json")
+    outputs.file(rootProject.file("tools/mvu-probe/node_modules/.package-lock.json"))
+    if (System.getProperty("os.name").startsWith("Windows")) commandLine("cmd", "/c", "npm", "ci")
+    else commandLine("npm", "ci")
+}
+
+val prepareMvuRuntime by tasks.registering(Exec::class) {
+    dependsOn(installMvuDependencies)
+    workingDir(rootProject.file("tools/mvu-probe"))
+    inputs.files(rootProject.fileTree("tools/mvu-probe") {
+        exclude("build/**", "node_modules/**")
+    })
+    outputs.dir(rootProject.file("tools/mvu-probe/build/app-assets"))
+    outputs.file(rootProject.file("tools/mvu-probe/build/android-assets/mvu/runtime.js"))
+    commandLine("node", "build.mjs")
+}
+tasks.named("preBuild") { dependsOn(prepareMvuRuntime) }
 
 android.sourceSets.configureEach {
     if (name == "test" || name == "androidTest") kotlin.directories.add("src/sharedTest/java")

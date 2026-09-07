@@ -29,7 +29,12 @@ data class NativeAdaptation(
     val guide: NativeGuideView? = null,
     val memories: List<NativeMemoryDefinition> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
+    val mvu: NativeMvuProgram? = null,
 )
+
+/** Card code explicitly selected by adaptation; the framework bundle is supplied by Player. */
+@Serializable
+data class NativeMvuProgram(val schemaScript: String)
 
 /** 固定的对话记忆刷新流程；引用分析要求和资料，不提供脚本、动作或网络配置。 */
 @Serializable

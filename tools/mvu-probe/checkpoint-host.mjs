@@ -70,7 +70,7 @@ export function installCheckpointHost(mvu, program) {
             target.variables[target.swipe_id] = copy(data);
         },
         getLorebookSettings: () => copy(settings),
-        setLorebookSettings: value => { settings = copy(value); },
+        setLorebookSettings: value => { settings = { ...settings, ...copy(value) }; },
         getCharLorebooks: () => ({ primary: 'sample', additional: [] }),
         getCharWorldbookNames: () => ({ primary: 'sample', additional: [] }),
         getLorebookEntries: name => {
@@ -87,9 +87,9 @@ export function installCheckpointHost(mvu, program) {
     const resetTrace = () => { diagnostics = []; events = []; };
     const result = (sourceText, processedText, data) => ({ sourceText, processedText, data: copy(data) });
     return {
-        async initialize() {
+        async initialize(overrides) {
             resetTrace();
-            const greetings = program.greetings ?? ['Opening.'];
+            const greetings = overrides ?? program.greetings ?? ['Opening.'];
             if (!greetings.length) throw new Error('Missing greeting');
             const opening = message(greetings[0]);
             opening.swipes = [...greetings]; opening.variables = greetings.map(() => ({}));
