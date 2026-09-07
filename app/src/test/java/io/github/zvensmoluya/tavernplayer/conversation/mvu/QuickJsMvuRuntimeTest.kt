@@ -31,6 +31,16 @@ class QuickJsMvuRuntimeTest {
         println("MVU_DESKTOP_METRICS=$metrics")
     }
 
+    @Test fun lowercaseSchemaExportRunsAndUpdatesCheckpoints() = runBlocking {
+        val original = program()
+        val script = original["schemaScript"]!!.jsonPrimitive.content.replace(Regex("\\bSchema\\b"), "schema")
+        val renamed = JsonObject(original + ("schemaScript" to JsonPrimitive(
+            "// export const Schema is only an example in a comment.\n" + script,
+        )))
+        MvuRuntimeContract.verify(bundle(), renamed, temporary.newFolder())
+        Unit
+    }
+
     @Test fun runawayEventIsInterruptedAndRuntimeCannotBeReused() = runBlocking {
         val original = program()
         val looping = JsonObject(original + ("schemaScript" to JsonPrimitive(

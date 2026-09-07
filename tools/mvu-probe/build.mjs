@@ -74,6 +74,7 @@ for (const name of ['mvu', 'mvu-zod']) {
     await writeFile(resolve(androidAssets, `${name}-LICENSE`), await readFile(resolve(output, 'upstream', name, 'LICENSE')));
 }
 const runtimeBytes = await readFile(resolve(androidAssets, 'runtime.js'));
+await writeFile(resolve(androidAssets, 'acorn-LICENSE'), await readFile(resolve(root, 'node_modules/acorn/LICENSE')));
 await writeFile(resolve(androidAssets, 'provenance.json'), JSON.stringify({
     mvuCommit: manifest.mvuCommit,
     zodCommit: manifest.zodCommit,
@@ -94,6 +95,6 @@ await writeFile(resolve(ejsAssets, 'provenance.json'), JSON.stringify({ ejs: '3.
 // Application assets contain only the framework and notices, never sample/card programs.
 const appAssets = resolve(output, 'app-assets/mvu');
 await mkdir(appAssets, { recursive: true });
-for (const name of ['runtime.js', 'provenance.json', 'mvu-LICENSE', 'mvu-zod-LICENSE']) {
+for (const name of ['runtime.js', 'provenance.json', 'mvu-LICENSE', 'mvu-zod-LICENSE', 'acorn-LICENSE']) {
     await writeFile(resolve(appAssets, name), await readFile(resolve(androidAssets, name)));
 }

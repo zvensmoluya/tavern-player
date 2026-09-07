@@ -1,5 +1,7 @@
 // A transient view of messages for upstream MVU. Kotlin owns durable checkpoints and candidates.
 // This entry is only loaded with an explicitly supplied, audited local program.
+import { prepareSchemaScript } from './schema-script.mjs';
+
 export function installCheckpointHost(mvu, program) {
     const copy = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     const chat = [];
@@ -79,10 +81,7 @@ export function installCheckpointHost(mvu, program) {
         },
         registerMvuSchema: mvu.registerMvuSchema,
     });
-    const source = program.schemaScript.replace(
-        /import\s*\{\s*registerMvuSchema\s*\}\s*from\s*['"]https:\/\/testingcf\.jsdelivr\.net\/gh\/StageDog\/tavern_resource\/dist\/util\/mvu_zod\.js['"];?/, '',
-    ).replace(/export\s+const\s+Schema\b/, 'const Schema');
-    if (/\bimport\s/.test(source)) throw new Error('Unmapped card import');
+    const source = prepareSchemaScript(program.schemaScript);
     Function(source)();
     const resetTrace = () => { diagnostics = []; events = []; };
     const result = (sourceText, processedText, data) => ({ sourceText, processedText, data: copy(data) });

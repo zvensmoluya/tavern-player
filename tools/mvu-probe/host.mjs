@@ -10,6 +10,8 @@ const clone = value => structuredClone(value);
 
 // Research host for audited local fixtures, NOT a security sandbox or an Android runtime.
 // Keep MVU's operation/parser/schema code intact; bridge message and event APIs only.
+import { prepareSchemaScript } from './schema-script.mjs';
+
 export class ProbeHost {
     constructor({ schemaScript, entries = [], greetings = ['Opening.'], savedChat } = {}) {
         this.chat = savedChat ? clone(savedChat) : [{
@@ -102,10 +104,7 @@ export class ProbeHost {
         this.context.registerMvuSchema = this.mvu.registerMvuSchema;
         if (schemaScript) {
             // The fixture's sole import is wired to the pinned dependency already in the bundle.
-            const source = schemaScript.replace(
-                /import\s*\{\s*registerMvuSchema\s*\}\s*from\s*['"]https:\/\/testingcf\.jsdelivr\.net\/gh\/StageDog\/tavern_resource\/dist\/util\/mvu_zod\.js['"];?/, '',
-            ).replace(/export\s+const\s+Schema\b/, 'const Schema');
-            if (/\bimport\s/.test(source)) throw new Error('Unmapped card import');
+            const source = prepareSchemaScript(schemaScript);
             vm.runInContext(source, this.context, { timeout: 5_000 });
         }
     }

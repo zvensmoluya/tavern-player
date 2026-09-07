@@ -4,11 +4,12 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test probe.test.mjs ejs.test.mjs",
+    "test": "node --test probe.test.mjs ejs.test.mjs schema-script.test.mjs",
     "probe": "node probe-card.mjs",
     "probe:ejs": "node ejs-probe-card.mjs"
   },
   "dependencies": {
+    "acorn": "8.15.0",
     "compare-versions": "6.1.1",
     "ejs": "3.1.10",
     "esbuild": "0.25.12",
