@@ -47,3 +47,11 @@ npm --prefix tools/mvu-probe run probe -- $env:COMMUNITY_CARD
 - 宏接口在实验中原样返回文本；世界书设置写入只记录在实验宿主内；`registerVariableSchema` 仅记录注册，不实现酒馆助手的变量编辑器。
 - 实验加载的入口不含 MVU 设置面板、额外模型请求、全局事件调度等全部功能。不能据此声称整个 MVU 插件已运行。
 - MVU 仓库提供 MIT 许可；此固定版本的 Zod 辅助库所在仓库根许可证是 AFPL 文本。二者不能合称 MIT。当前只本地下载、构建和测试，正式随应用分发前需要明确该辅助库的授权，实验不作许可证兼容结论。
+
+## EJS 提示词
+
+同一构建工具还将固定 EJS 客户端引擎及只读宿主打包到 `build/app-assets/ejs/`，使用已有 QuickJS JNI，不增加另一套 JavaScript 引擎。`npm test` 同时运行中性 EJS 用例。
+
+`npm run probe:ejs` 按哈希读取仓库本地 C-04 原件，或使用 `npm run probe:ejs -- <local-source>`；按提交和文件哈希下载参照扩展源码，比较原始模板输出。生成的原件、参照及用例仅进入忽略的 `build/`，其中 `build/android-assets/ejs/` 供 JVM/Android 测试使用。普通 APK 不包含这些样本。
+
+宿主接口、历史范围中的上游特殊行为和验证见 [EJS 接入记录](../../docs/ejs-quickjs-integration-20260907.md)。

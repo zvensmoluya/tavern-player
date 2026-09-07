@@ -48,7 +48,7 @@ Native 适配提供实验性的“准备游玩”入口：在角色详情选择�
 
 Preset 列表选择的就是当前正在使用和编辑的 Preset。详情以实际 `prompt_order` 中的普通 Prompt 与 Regex 开关为主；开关只改变启用状态，不插入、删除或移动队列。Prompt 详情、格式结构与模型请求参数使用独立页面；请求参数可逐项关闭，关闭后保留本地值，但不再进入兼容 Provider 请求或 ST 导出。Provider 必填字段仍由播放器提供安全值。
 
-第三方脚本、远程资源和富 HTML 不会执行或联网加载。Preset 的完整 JSON（包括未知扩展、Provider / 模型、endpoint、自定义 headers/body 和凭据形字段）作为惰性内容保留并可随编辑重新导出；这些字段不会自动改变 Player 连接、发起网络访问或获得执行权。
+普通导入的第三方脚本、远程资源和富 HTML 不会执行或联网加载。显式安装了对应适配的卡可使用内置 QuickJS 执行 MVU，以及只读的世界书 EJS 提示词模板；执行来源与接口范围见 [EJS 接入说明](docs/ejs-quickjs-integration-20260907.md)。Preset 的完整 JSON（包括未知扩展、Provider / 模型、endpoint、自定义 headers/body 和凭据形字段）作为惰性内容保留并可随编辑重新导出；这些字段不会自动改变 Player 连接、发起网络访问或获得执行权。
 
 Shelf 接收入口位于角色库首页。Android 17 会在首次接收前请求本地网络权限；独立 World Book 当前只识别类型，不执行导入。
 
@@ -67,6 +67,7 @@ SillyTavern 建立了这个生态。
 - [导入期自动适配实验](docs/native-compilation.md)
 - [MVU 公共变量能力接入实验](docs/mvu-integration-probe-20260907.md)
 - [QuickJS MVU 宿主与本地验证](docs/mvu-quickjs-integration-20260907.md)
+- [QuickJS EJS 提示词执行](docs/ejs-quickjs-integration-20260907.md)
 - [Native 玩法实践与实测记录](docs/native-gameplay-verification-20260905.md)
 - [Native 玩法还原验收与当前缺口](docs/native-gameplay-fidelity-audit.md)
 

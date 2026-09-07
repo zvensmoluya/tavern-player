@@ -39,6 +39,9 @@ class AppGraph(context: Context) {
     val mvuRuntime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
         appContext.assets.open("mvu/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
+    val ejsRuntime = io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime(loadBundle = {
+        appContext.assets.open("ejs/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
+    })
     val conversationRepository = ConversationRepository(
         filesDir = appContext.filesDir,
         compiler = promptCompiler,

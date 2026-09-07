@@ -5,7 +5,7 @@ import kotlinx.serialization.descriptors.*
 
 /** Source behavior is interpreted by the model; only the target Player contract is fixed. */
 object NativeCompilationInstructions {
-    const val VERSION = "native-compiler-5"
+    const val VERSION = "native-compiler-6"
 
     val text: String by lazy {
         """
@@ -42,6 +42,22 @@ object NativeCompilationInstructions {
         A target's existence is NOT proof of equivalence. Never call a partial mapping fully restored.
 
         TARGET CAPABILITIES AND LIMITS
+        - ejsSourceIds: select active worldbook EJS sources for original-code execution in QuickJS.
+          Player resolves the complete original template locally, bound to its source hash.
+          Supported read-only host: variables, getvar(key, {defaults, clone, scope}), scopes cache/message;
+          getChatMessage(index, role), getChatMessages(count[,role]) or (start,end[,role]),
+          matchChatMessages(pattern, {start,end,role,and}), print, standard JavaScript, async/await.
+          Message ranges follow ST-Prompt-Template d6f520d: end=0 means exclusive index zero,
+          not the latest message; start=-2,end=0 produces no messages. Strings match as regex patterns.
+          No persistent writes, include, global/local variable scopes, DOM or extension injection hooks.
+          EJS executes per selected worldbook entry after activation/group selection and WORLD_INFO
+          regex/macros, before its rendered-text budget. Output is inserted literally after host macros.
+          History reads use Player prompt-projected selected history.
+          Templates must be self-contained; macros inside JS code and cross-entry JS locals are unsupported.
+          Do not also create worldBookTextSelections for these sources. Assessment targets use /ejsTemplates/N.
+          MVU data is supplied as the full current checkpoint including stat_data; no scalar mapping required.
+          Prefer original execution for templates within this host scope rather than translating their
+          conditions into progressions or worldBookTextSelections.
         - mvu: select schemaSourceId of one enabled original SCRIPT that registers an MVU schema.
           Player preserves that script verbatim and runs pinned MVU and mvu_zod in QuickJS.
           Initialization entries and greetings come from the immutable character snapshot, not model output.
@@ -50,7 +66,8 @@ object NativeCompilationInstructions {
           Complete stat_data is available to get_message_variable::stat_data and
           format_message_variable::stat_data, and is included in the current prompt state.
           Supported imports are limited to the pinned registerMvuSchema helper; no remote loading,
-          DOM, EJS, network or arbitrary Tavern Helper API support. Select only compatible source code;
+          DOM, network or arbitrary Tavern Helper API support. EJS is selected separately via ejsSourceIds.
+          Select only compatible source code;
           report unsupported host calls. Native state/status and collections do not automatically bind
           to MVU paths: do not claim static native snapshots remain synchronized with MVU.
         Existing chat behavior remains present without extra native output: ordinary worldbook
@@ -79,7 +96,8 @@ object NativeCompilationInstructions {
           exclusive:true means strictly greater than minValue; device uses IEEE-754 nextUp.
           Thus >0 is NOT >=1. Include the lowest source range and preserve every source interval.
           Set the derived state's initialValue to its correct label for the initial numeric value.
-          Arbitrary boolean expressions, history queries, EJS execution and scripted events are absent.
+          These progression configs cannot execute boolean expressions, history queries or scripted
+          events; use ejsSourceIds for supported prompt templates.
         - worldBookTextSelections: sourceId is an EJS worldbook source; cases map each enum stateValue
           to one textRef. prefixRef/suffixRef preserve shared surrounding text. Every nonblank local
           text block in that source must appear exactly once as a case or common prefix/suffix.
@@ -105,7 +123,8 @@ object NativeCompilationInstructions {
           Do not invent player choices absent from active source behavior.
         - Source worldbook rules remain in normal chat prompting. Do not convert model-decided narrative
           effects into deterministic local events, or move deterministic source decisions into model judgment.
-        - No new runtime, arbitrary actions/expressions/JS, remote images or recurring memory workflows.
+        - Do not invent runtime capabilities beyond the explicitly listed MVU and EJS execution.
+          No generic UI actions, additional JS host services, remote images or recurring memory workflows.
           Old source regex is replaced only for a selected form; adding status does not remove a status regex.
         - Native compatibility remains PARTIAL until independent gameplay verification; report exact gaps.
         - Every field below with '?' may be omitted. JsonValue is an actual JSON scalar/object/array,

@@ -17,6 +17,7 @@ data class NativeCompilationDraft(
     val playerChoices: List<NativePlayerChoice> = emptyList(),
     val assessments: List<NativeCompilationAssessment> = emptyList(),
     val mvu: NativeCompilationMvu? = null,
+    val ejsSourceIds: List<String> = emptyList(),
 )
 @Serializable
 data class NativeCompilationMvu(val schemaSourceId: String)

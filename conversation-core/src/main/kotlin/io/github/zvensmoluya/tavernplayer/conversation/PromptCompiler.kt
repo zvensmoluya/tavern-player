@@ -365,6 +365,15 @@ class PromptCompiler(
         ).joinToString("\n") { macroEngine.evaluate(it, baseContext, scanTransaction).also { evaluation ->
             diagnostics += evaluation.diagnostics
         }.text }
+        val ejsIssues = input.character.nativeAdaptation?.let {
+            io.github.zvensmoluya.tavernplayer.content.NativeEjsValidator.validate(it, input.character.worldBooks)
+        }.orEmpty()
+        if (input.character.nativeAdaptation?.ejsTemplates.orEmpty().isNotEmpty() &&
+            input.character.nativeAdaptation?.sourceSha256 != input.character.sourceSha256) {
+            return CompilationResult.Failure(diagnostics + error("INVALID_EJS_TEMPLATE", "EJS 适配与角色卡来源不匹配"), trace)
+        }
+        if (ejsIssues.isNotEmpty()) return CompilationResult.Failure(
+            diagnostics + error("INVALID_EJS_TEMPLATE", ejsIssues.joinToString { it.message }), trace)
         val worldBookText = NativeWorldBookTextProjector.project(
             input.character.worldBooks, input.character.nativeAdaptation,
             input.character.sourceSha256, input.runtimeState.conversationState,
@@ -379,6 +388,10 @@ class PromptCompiler(
         } catch (_: NoSuchElementException) {
             return CompilationResult.Failure(diagnostics + error("INVALID_CONVERSATION_MEMORY", "对话记忆引用已不存在"), trace)
         }
+        // Literal EJS output is inserted only after all host macros; data never becomes another program.
+        val ejsLiteralPrefix = "\uE000ejs-${java.util.UUID.randomUUID()}-"
+        val ejsLiterals = linkedMapOf<String, String>()
+        val ejsBlocks = Regex("<%[\\s\\S]*?%>")
         val activation = worldBookEngine.activate(
             books = if (memoryEntries.isEmpty()) worldBookText.books else listOf(
                 io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition(NativeMemoryController.BOOK_ID, entries = memoryEntries)
@@ -400,9 +413,36 @@ class PromptCompiler(
             turnIndex = input.runtimeState.generationIndex,
             inputBudgetTokens = (contextLimit - outputLimit).coerceAtLeast(0),
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
+            prepareEntry = { bookId, entry, entryTransaction ->
+                if (input.character.nativeAdaptation?.ejsTemplates.orEmpty().any { it.bookId == bookId && it.entryId == entry.id }) {
+                    val regexed = regexEngine.apply(entry.content, regexRules, RegexPlacement.WORLD_INFO,
+                        RegexProjection.PROMPT, entry.depth, baseContext, entryTransaction)
+                    diagnostics += regexed.diagnostics
+                    val expanded = macroEngine.evaluate(regexed.text, baseContext, entryTransaction)
+                    diagnostics += expanded.diagnostics
+                    val originalBlocks = ejsBlocks.findAll(entry.content).map { it.value }.toList()
+                    val transformedBlocks = ejsBlocks.findAll(expanded.text).map { it.value }.toList()
+                    if (originalBlocks != transformedBlocks ||
+                        Regex("<%").findAll(expanded.text).count() != Regex("<%").findAll(entry.content).count()) {
+                        diagnostics += error("EJS_CODE_TRANSFORMED", "Regex 或 Macro 改变了 EJS 代码，不能执行动态拼接的模板", entry.id)
+                        WorldBookPreparedText("")
+                    } else {
+                        val output = input.ejsRenderer(EjsTemplateRequest(
+                            "$bookId:${entry.id}", expanded.text,
+                            input.runtimeState.mvuState?.data ?: kotlinx.serialization.json.JsonObject(emptyMap()),
+                            projectedHistory.map { EjsHistoryMessage(it.role.name.lowercase(), it.content) },
+                        ))
+                        val marker = if (output.isBlank()) "" else "$ejsLiteralPrefix${ejsLiterals.size}\uE001"
+                        if (marker.isNotEmpty()) ejsLiterals[marker] = output
+                        trace += CompilationTraceEntry("ejs", listOf(bookId, entry.id), "rendered original template (${output.length} chars)")
+                        WorldBookPreparedText(output, marker)
+                    }
+                } else null
+            },
         )
         diagnostics += activation.diagnostics
         trace += activation.trace
+        if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
         trace += CompilationTraceEntry(
             stage = "world-book-budget",
             sourceIds = activation.activatedEntryIds,
@@ -569,17 +609,20 @@ class PromptCompiler(
                 content = content,
             )
         }
-        val preparedForTransport = applyNamesBehavior(compiled, input.preset.controlSettings.namesBehavior, trace)
+        val literalPattern = Regex(Regex.escape(ejsLiteralPrefix) + "[0-9]+\uE001")
+        fun restoreEjs(text: String): String = literalPattern.replace(text) { ejsLiterals.getValue(it.value) }
+        val literalCompiled = compiled.map { it.copy(content = restoreEjs(it.content)) }
+        val preparedForTransport = applyNamesBehavior(literalCompiled, input.preset.controlSettings.namesBehavior, trace)
             .let { messages ->
                 if (input.preset.controlSettings.squashSystemMessages) squashSystemMessages(messages, trace) else messages
             }
-        val prefill = expand(
+        val prefill = restoreEjs(expand(
             input.preset.controlSettings.assistantPrefill,
             ASSISTANT_PREFILL_SOURCE,
             macroContext,
             transaction,
             diagnostics,
-        )
+        ))
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
         val budget = contextBudgeter.budget(preparedForTransport, input)
@@ -643,7 +686,7 @@ class PromptCompiler(
                 presetContentSha256 = input.preset.contentSha256,
                 generationSettings = input.preset.generationSettings.copy(),
                 diagnostics = diagnostics.distinctBy { Triple(it.code, it.sourceId, it.message) },
-                trace = trace,
+                trace = trace.map { it.copy(content = it.content?.let(::restoreEjs)) },
                 runtimeState = nextRuntime,
                 tokenAccounting = budget.report,
                 activatedWorldBookEntries = activation.activatedEntryIds,

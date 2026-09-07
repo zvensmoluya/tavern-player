@@ -185,6 +185,7 @@ data class NormalGenerationInput(
     val evaluationInstant: Instant = Instant.now(),
     val evaluationZoneId: ZoneId = ZoneId.systemDefault(),
     val chatRangeResolutionPass: Int = 0,
+    val ejsRenderer: (EjsTemplateRequest) -> String = { throw EjsRenderRequired(it) },
 )
 
 @Serializable

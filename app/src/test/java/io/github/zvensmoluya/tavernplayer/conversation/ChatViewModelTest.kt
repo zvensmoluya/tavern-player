@@ -47,7 +47,7 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
-    @Test fun `mvu real engine follows chat candidates edits resets and disk recovery`() = runTest {
+    @Test fun `mvu and ejs real engines follow chat candidates edits resets and disk recovery`() = runTest {
         val directory = Files.createTempDirectory("mvu-chat").toFile()
         val assets = java.io.File(System.getProperty("mvuProbeAssets"), "mvu")
         org.junit.Assume.assumeTrue(java.io.File(assets, "runtime.js").isFile)
@@ -55,13 +55,20 @@ class ChatViewModelTest {
         val runtime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
             java.io.File(assets, "runtime.js").readText()
         }
+        val ejs = io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime(loadBundle = {
+            java.io.File(requireNotNull(assets.parentFile).parentFile, "app-assets/ejs/runtime.js").readText()
+        })
+        val template = "EJS_DAY=<%= getvar('stat_data.days') %>; EJS_USER=<%= getChatMessage(-1, 'user') %>;"
         val original = DemoConversationContent.character
         val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = listOf("<initvar>\ndays: 3\n</initvar>"),
             description = "Current variables: {{get_message_variable::stat_data}}",
             nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
-                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content)),
+                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content),
+                ejsTemplates = listOf(io.github.zvensmoluya.tavernplayer.content.NativeWorldBookReference("init", "template",
+                    io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator.sha256(template)))),
             worldBooks = listOf(WorldBookDefinition("init", entries = listOf(
-                WorldBookEntryDefinition("initial", name = "[initvar]", enabled = false, content = "days: 0")))))
+                WorldBookEntryDefinition("initial", name = "[initvar]", enabled = false, content = "days: 0"),
+                WorldBookEntryDefinition("template", constant = true, content = template)))))
         try {
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
@@ -75,7 +82,7 @@ class ChatViewModelTest {
                 emit(GenerationEvent.Finished("stop"))
             } }
             val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(),
-                projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+                projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime, ejsRuntime = ejs)
             vm.loadConversation(saved.id)
             assertEquals(0, days())
             vm.nextVariant()
@@ -83,15 +90,18 @@ class ChatViewModelTest {
             // Candidate navigation persists on a debounce; sending must nevertheless use the selected checkpoint.
             vm.updateInput("Go."); vm.send(); awaitMvuIdle(vm)
             assertEquals(5, days())
+            assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             assertTrue(prompt.contains("\"days\":3"))
             assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
             assertTrue(vm.uiState.value.messages.last().message.sourceText.contains("JSONPatch"))
             delta = 4
             vm.regenerate(); awaitMvuIdle(vm)
             assertEquals(7, days())
+            assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             vm.previousVariant()
             vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
             assertEquals(9, days())
+            assertTrue(prompt.contains("EJS_DAY=5; EJS_USER=Continue.;"))
             assertTrue(prompt.contains("\"days\":5"))
             val target = vm.uiState.value.messages[2].message.id
             vm.editMessage(target, text(10), MessageEditMode.TEXT_ONLY); awaitMvuIdle(vm)
@@ -108,6 +118,10 @@ class ChatViewModelTest {
             assertEquals(3, vm.uiState.value.messages.size)
             assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
                 .data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt())
+            val restored = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            val restoredPlan = ejs.compile(PromptCompiler(), NormalGenerationInput(restored.character, restored.persona,
+                restored.turns.map { it.selected.message }, DemoConversationContent.preset, runtimeState = restored.runtimeState), mutableMapOf()) as CompilationResult.Success
+            assertTrue(restoredPlan.plan.messages.any { "EJS_DAY=13; EJS_USER=Go.;" in it.content })
             vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
             awaitMvuIdle(vm)
             assertEquals(20, days())

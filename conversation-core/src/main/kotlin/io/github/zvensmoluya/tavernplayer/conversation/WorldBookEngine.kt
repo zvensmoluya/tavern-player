@@ -15,6 +15,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Pattern
 import java.util.regex.PatternSyntaxException
 
+/** A prepared entry is budgeted by its final text; promptText can defer literal insertion. */
+data class WorldBookPreparedText(val content: String, val promptText: String = content)
+
 data class WorldBookInjection(
     val position: WorldBookPosition,
     val depth: Int,
@@ -52,6 +55,7 @@ class WorldBookEngine(
         turnIndex: Int,
         inputBudgetTokens: Int,
         literalEntryIds: Set<String> = emptySet(),
+        prepareEntry: (String, WorldBookEntryDefinition, MacroTransaction) -> WorldBookPreparedText? = { _, _, _ -> null },
     ): WorldBookActivationResult {
         if (books.isEmpty()) {
             return WorldBookActivationResult(emptyList(), emptyList(), previousState, emptyList(), emptyList(), 0, 0)
@@ -63,6 +67,7 @@ class WorldBookEngine(
         var remainingGlobal = globalBudget
         val activated = mutableListOf<WorldBookEntryDefinition>()
 
+        val preparedContent = java.util.IdentityHashMap<WorldBookEntryDefinition, String>()
         books.forEach { book ->
             activationOverrides.books[book.id]?.let { enabled ->
                 trace += CompilationTraceEntry(
@@ -91,9 +96,16 @@ class WorldBookEngine(
             grouped.sortedWith(
                 compareByDescending<WorldBookEntryDefinition> { it.priority ?: it.insertionOrder }
                     .thenBy { it.id },
-            ).forEach { entry ->
+            ).forEach { originalEntry ->
+                val preparationTransaction = transaction.fork()
+                val prepared = prepareEntry(book.id, originalEntry, preparationTransaction)
+                val entry = if (prepared == null) originalEntry else originalEntry.copy(content = prepared.content)
                 val cost = estimateTokens(entry.content, macroContext.modelId)
                 if (entry.ignoreBudget || cost <= remainingBook) {
+                    if (prepared != null) {
+                        transaction.commitFrom(preparationTransaction)
+                        preparedContent[entry] = prepared.promptText
+                    }
                     activated += entry
                     remainingBook -= cost
                     remainingGlobal -= cost
@@ -127,6 +139,7 @@ class WorldBookEngine(
         }
 
         val evaluated = activated.mapNotNull { entry ->
+            if (entry in preparedContent) return@mapNotNull preparedContent.getValue(entry).takeIf(String::isNotBlank)?.let { entry to it }
             if (entry.id in literalEntryIds) return@mapNotNull entry to entry.content
             val regexed = regexEngine.apply(
                 text = entry.content,

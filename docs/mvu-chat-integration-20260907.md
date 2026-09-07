@@ -2,6 +2,8 @@
 
 本轮将此前的 QuickJS 调用底座接入适配产物、会话创建和正常聊天。编译契约更新为 `native-compiler-5`。
 
+> 同日后续已增加独立的 [EJS 提示词执行入口](ejs-quickjs-integration-20260907.md)，编译契约为 `native-compiler-6`。下文 EJS 不在范围的说明保留为本轮 MVU 接入边界。
+
 ## 产物与构建
 
 模型通过 `mvu.schemaSourceId` 选择启用的原卡 Schema 脚本，本地逐字复制为 `NativeAdaptation.mvu.schemaScript`。初始化世界书和开场白直接读取不可变角色快照。模型不重写变量指令实现，也不生成框架源码。MVU 与旧 `assistantStateAdapters` 不能同时安装，避免两个写入器解释同一更新块。

@@ -30,6 +30,7 @@ data class NativeAdaptation(
     val memories: List<NativeMemoryDefinition> = emptyList(),
     val report: NativeCompatibilityReport = NativeCompatibilityReport(),
     val mvu: NativeMvuProgram? = null,
+    val ejsTemplates: List<NativeWorldBookReference> = emptyList(),
 )
 
 /** Card code explicitly selected by adaptation; the framework bundle is supplied by Player. */

@@ -22,6 +22,7 @@ class NativeAdaptationValidator {
         issues += NativeGuideReader.validate(adaptation.guide, regexScripts)
         issues += NativeStatusDisplay.validate(adaptation)
         issues += NativeMemoryValidator.validate(adaptation, worldBooks)
+        issues += NativeEjsValidator.validate(adaptation, worldBooks)
 
         fun issue(path: String, code: String, message: String) {
             issues += NativeAdaptationValidationIssue(path, code, message)

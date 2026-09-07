@@ -199,6 +199,24 @@ class NativeAdaptationCompilerTest {
         assertTrue(NativeAdaptationValidator().validate(conflict).issues.any { it.code == "CONFLICTING_MVU_WRITER" })
     }
 
+    @Test fun ejsSelectsFullOriginalSourceAndRejectsConflictingOrChangedReferences() {
+        val original = card()
+        val src = NativeProgramExtractor().extract(original, emptySet()).sources.single { it.kind == "EJS_TEMPLATE" }
+        val draft = NativeCompilationDraft("执行原模板", ejsSourceIds = listOf(src.id))
+        val ready = compiler.complete(original, Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
+        val ref = ready.adaptation.ejsTemplates.single()
+        assertEquals(NativeWorldBookTextSelectionValidator.sha256(branch), ref.sourceContentSha256)
+        assertEquals("branch", ref.entryId)
+        assertEquals(ready.adaptation, Json.decodeFromString<NativeAdaptation>(Json.encodeToString(ready.adaptation)))
+        assertTrue(compiler.complete(original, Json.encodeToString(draft.copy(ejsSourceIds = listOf("script0"))), emptySet()) is NativeCompilationResult.Rejected)
+        assertTrue(compiler.complete(original, Json.encodeToString(draft.copy(ejsSourceIds = listOf(src.id, src.id))), emptySet()) is NativeCompilationResult.Rejected)
+        val conflict = ready.adaptation.copy(worldBookTextSelections = listOf(NativeWorldBookTextSelection(
+            ref.bookId, ref.entryId, "mode", ref.sourceContentSha256, emptyList())))
+        assertTrue(NativeEjsValidator.validate(conflict, original.worldBooks).isNotEmpty())
+        val changed = original.worldBooks.map { b -> b.copy(entries = b.entries.map { it.copy(content = it.content + "changed") }) }
+        assertTrue(NativeEjsValidator.validate(ready.adaptation, changed).isNotEmpty())
+    }
+
     @Test fun budgetFailsWithoutTruncatingSource() {
         assertThrows(IllegalArgumentException::class.java) { compiler.prepare(card("x".repeat(300_000)), emptySet()) }
         assertTrue(NativeCompilationInstructions.text.contains("NativeCompilationForm"))

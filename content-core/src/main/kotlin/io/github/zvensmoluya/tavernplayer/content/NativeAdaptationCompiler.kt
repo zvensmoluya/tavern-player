@@ -68,6 +68,11 @@ class NativeAdaptationCompiler {
                 assistantStateAdapters = draft.assistantStateAdapters, status = draft.status, collections = draft.collections,
                 forms = forms, progressions = progressions, messagePanels = draft.messagePanels,
                 worldBookTextSelections = selections, playerChoices = draft.playerChoices,
+                ejsTemplates = draft.ejsSourceIds.map { id ->
+                    val src = source(id)
+                    require(src.active && src.bookId != null && src.entryId != null && "<%" in src.content) { "EJS 必须引用启用的世界书模板" }
+                    NativeWorldBookReference(src.bookId, src.entryId, NativeWorldBookTextSelectionValidator.sha256(src.content))
+                },
                 mvu = draft.mvu?.let {
                     val src = source(it.schemaSourceId)
                     require(src.active && src.kind == "SCRIPT") { "MVU Schema 必须引用启用的原卡脚本" }

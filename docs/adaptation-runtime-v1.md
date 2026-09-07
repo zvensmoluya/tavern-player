@@ -26,6 +26,8 @@ Native playback
 
 2026-09-06 起转向固定能力范围内的自动编译实验，不再要求复杂卡的全部外部功能先完成人工迁移。当前 Program View 保留卡内完整 JS、HTML/正则、EJS 代码与关联变量规则，普通背景留在本地；不再以固定语法识别器限定模型可见的玩法。模型通过一次独立请求生成 `NativeCompilationDraft` 状态、控件和行为配置，本地恢复原文引用与模板并执行下述同一套安装校验；模型不拥有 Runtime 设计权。结构校验与整卡语义验收分开。远程图片延期，编译输出不包含 `memories`。手工适配仍是审计对照，Shelf 继续是可选存储和传输工具；未建设自动 repair 或派生缓存服务。流程与实测状态见 [自动适配实验](native-compilation.md)，已有卡片验收清单见 [Native 玩法还原验收](native-gameplay-fidelity-audit.md)。
 
+当前执行扩展：适配可声明 `mvu` 原始变量程序，以及 `ejsTemplates` 世界书原文引用。EJS 读取当前 MVU 检查点和选中分支历史，在发送时生成文字；同一条目不能同时使用 `worldBookTextSelections`。下文有限分支选择的限制仍适用于该旧配置。详见 [MVU 聊天接入](mvu-chat-integration-20260907.md) 和 [EJS 接入与宿主范围](ejs-quickjs-integration-20260907.md)。
+
 ## 原件、安装与 Conversation Snapshot
 
 - `sourceSha256` 把 Native 内容绑定到不可变原件；安装时必须与已导入 Character 的哈希完全相同。

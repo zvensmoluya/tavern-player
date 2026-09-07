@@ -1,6 +1,6 @@
 # 导入期自动适配实验
 
-> 后续实现：MVU 已接入适配产物和聊天事务，当前编译契约为 native-compiler-5；见 [MVU 聊天接入](mvu-chat-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
+> 后续实现：MVU 已接入适配产物和聊天事务，当前编译契约为 native-compiler-6；MVU 见 [聊天接入](mvu-chat-integration-20260907.md)，原始世界书 EJS 的只读执行与 `ejsSourceIds` 见 [EJS 接入](ejs-quickjs-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
 
 > 2026-09-06。当前契约为 native-compiler-4。v3 的固定语法识别器已经撤除；下方 v1–v3 结果仅为历史记录，不能作为当前输入或模型职责的说明。
 

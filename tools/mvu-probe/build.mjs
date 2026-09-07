@@ -81,6 +81,16 @@ await writeFile(resolve(androidAssets, 'provenance.json'), JSON.stringify({
     bundleBytes: runtimeBytes.length,
 }, null, 2) + '\n');
 console.log(`Built pinned MVU ${manifest.mvuCommit} with MVU Zod ${manifest.zodCommit}`);
+const ejsAssets = resolve(output, 'app-assets/ejs');
+await mkdir(ejsAssets, { recursive: true });
+await build({ absWorkingDir: root, entryPoints: ['ejs-entry.mjs'], outfile: resolve(ejsAssets, 'runtime.js'),
+    bundle: true, platform: 'browser', format: 'iife', globalName: 'PlayerEjs', target: 'es2022', minify: true });
+await writeFile(resolve(ejsAssets, 'ejs-LICENSE'), await readFile(resolve(root, 'node_modules/ejs/LICENSE')));
+await writeFile(resolve(ejsAssets, 'lodash-LICENSE'), await readFile(resolve(root, 'node_modules/lodash/LICENSE')));
+await writeFile(resolve(ejsAssets, 'provenance.json'), JSON.stringify({ ejs: '3.1.10',
+    hostReferenceCommit: 'd6f520d149aba146305b0b781ddd691d449c28d2',
+    bundleSha256: createHash('sha256').update(await readFile(resolve(ejsAssets, 'runtime.js'))).digest('hex'),
+}, null, 2) + '\n');
 // Application assets contain only the framework and notices, never sample/card programs.
 const appAssets = resolve(output, 'app-assets/mvu');
 await mkdir(appAssets, { recursive: true });

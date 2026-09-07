@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime
+import io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
@@ -134,6 +135,7 @@ class ChatViewModel(
     private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val adaptationRuntime: NativeAdaptationRuntime = NativeAdaptationRuntime(),
     private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
+    private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -746,8 +748,9 @@ class ChatViewModel(
         val validationDiagnostics = mutableListOf<CompilationDiagnostic>()
         val validationTrace = mutableListOf<CompilationTraceEntry>()
         var plan: GenerationPlan? = null
+        val ejsCache = mutableMapOf<EjsTemplateRequest, String>()
         for (attempt in 0..MAX_PROVIDER_RECLIPS) {
-            val compilation = compiler.compile(baseInput.copy(maxInputTokens = localInputLimit))
+            val compilation = ejsRuntime.compile(compiler, baseInput.copy(maxInputTokens = localInputLimit), ejsCache)
             if (compilation is CompilationResult.Failure) {
                 showCompilationFailure(
                     compilation.diagnostics + validationDiagnostics,
@@ -1467,10 +1470,11 @@ class ChatViewModel(
         private val conversationRepository: ConversationRepository? = null,
         private val presetSource: ActivePresetSource,
         private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
+        private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime) as T
+            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime, ejsRuntime = ejsRuntime) as T
     }
 
     companion object {
