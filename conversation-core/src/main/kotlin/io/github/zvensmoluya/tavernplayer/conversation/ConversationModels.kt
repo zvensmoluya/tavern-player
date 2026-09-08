@@ -102,8 +102,6 @@ data class MacroValue(val text: String, val numeric: Boolean = false)
 data class WorldBookEntryRuntimeState(
     val stickyRemaining: Int = 0,
     val cooldownRemaining: Int = 0,
-    val delayRemaining: Int = 0,
-    val delayStartedTurn: Int? = null,
     val lastActivatedTurn: Int? = null,
 )
 

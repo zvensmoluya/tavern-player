@@ -373,12 +373,7 @@ class CharacterCardImporter(
             enabled = raw.boolean("enabled", diagnostics) ?: true,
             constant = raw.boolean("constant", diagnostics) ?: false,
             selective = raw.boolean("selective", diagnostics) ?: false,
-            secondaryLogic = when (extensions.int("selectiveLogic", diagnostics) ?: 0) {
-                1 -> WorldBookSecondaryLogic.AND_ALL
-                2 -> WorldBookSecondaryLogic.NOT_ANY
-                3 -> WorldBookSecondaryLogic.NOT_ALL
-                else -> WorldBookSecondaryLogic.AND_ANY
-            },
+            secondaryLogic = WorldBookSecondaryLogic.fromSourceValue(extensions.int("selectiveLogic", diagnostics) ?: 0),
             insertionOrder = raw.int("insertion_order", diagnostics) ?: 100,
             priority = raw.int("priority", diagnostics),
             position = position,

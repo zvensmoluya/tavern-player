@@ -76,6 +76,43 @@ class PromptCompilerTest {
     }
 
     @Test
+    fun `world book scan flags and source secondary logic reach the compiled prompt`() {
+        val raw = """
+            {"name":"中性样本","description":"secret beacon","first_mes":"hello","character_book":{"entries":[
+              {"id":1,"keys":["secret"],"content":"default must stay out"},
+              {"id":2,"keys":["secret"],"content":"explicit description match","extensions":{"match_character_description":true}},
+              {"id":3,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"content":"not all branch","extensions":{"selectiveLogic":1}},
+              {"id":4,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"content":"all branch","extensions":{"selectiveLogic":3}}
+            ]}}
+        """.trimIndent()
+        val character = (io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter().import(raw.encodeToByteArray())
+            as io.github.zvensmoluya.tavernplayer.content.CharacterImportResult.Ready).character.snapshot()
+        val initial = baseInput().copy(character = character, preset = io.github.zvensmoluya.tavernplayer.content.BuiltInPresets.default)
+        fun activated(history: String) = (compiler.compile(initial.copy(history = listOf(ConversationMessage("u", MessageRole.USER, history, "旅人")))) as CompilationResult.Success)
+            .plan.activatedWorldBookEntries.map { it.substringAfterLast(':') }.toSet()
+        assertEquals(setOf("2", "3"), activated("gate one"))
+        assertEquals(setOf("2", "4"), activated("gate one two"))
+        assertEquals(setOf("2", "3"), activated("gate"))
+        assertEquals(setOf("2"), activated("no primary key"))
+    }
+
+    @Test
+    fun `delay uses selected history length even when prompt regex hides a message`() {
+        val original = baseInput()
+        val value = original.copy(
+            character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book", entries = listOf(
+                WorldBookEntryDefinition("gate", constant = true, delay = 2, content = "opened"),
+            ))), regexScripts = listOf(RegexDefinition("hide", "hide", "(?s).*", "", placements = setOf(RegexPlacement.USER_INPUT), promptOnly = true))),
+            runtimeState = ConversationRuntimeState(generationIndex = 99),
+        )
+        val plan = (compiler.compile(value) as CompilationResult.Success).plan
+        assertEquals(listOf("gate"), plan.activatedWorldBookEntries)
+        val rewound = (compiler.compile(value.copy(history = value.history.take(1), runtimeState = plan.runtimeState)) as CompilationResult.Success).plan
+        assertTrue(rewound.activatedWorldBookEntries.isEmpty())
+        assertEquals(plan.activatedWorldBookEntries, (compiler.compile(value) as CompilationResult.Success).plan.activatedWorldBookEntries)
+    }
+
+    @Test
     fun `conversation state is projected deterministically into the leading system context`() {
         val input = baseInput().copy(
             runtimeState = ConversationRuntimeState(

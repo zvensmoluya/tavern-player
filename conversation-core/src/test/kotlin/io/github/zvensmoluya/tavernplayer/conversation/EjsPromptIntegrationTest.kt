@@ -86,4 +86,25 @@ class EjsPromptIntegrationTest {
         assertTrue(world.contains("{{user}}"))
         assertTrue(world.contains("Traveler"))
     }
+
+    @Test fun `group losers do not execute templates or seed recursion and rendered output stays literal`() {
+        val base = input("<%= 'rendered-key' %>")
+        val original = base.character.worldBooks.single().entries.single()
+        val loser = original.copy(group = "route", content = original.content + " loser-key")
+        val adaptation = base.character.nativeAdaptation!!.copy(ejsTemplates = listOf(
+            NativeWorldBookReference("book", loser.id, NativeWorldBookTextSelectionValidator.sha256(loser.content))))
+        val winner = WorldBookEntryDefinition("winner", content = "winner-key", constant = true, group = "route", groupOverride = true)
+        val ghost = WorldBookEntryDefinition("ghost", content = "ghost", keys = listOf("loser-key"))
+        val result = PromptCompiler().compile(base.copy(character = base.character.copy(nativeAdaptation = adaptation,
+            worldBooks = listOf(WorldBookDefinition("book", recursiveScanning = true, entries = listOf(loser, winner, ghost)))),
+            ejsRenderer = { error("Losing template must not execute") })) as CompilationResult.Success
+        assertEquals(listOf("winner"), result.plan.activatedWorldBookEntries)
+
+        val noOutputRecursion = base.copy(character = base.character.copy(worldBooks = listOf(WorldBookDefinition("book", recursiveScanning = true,
+            entries = listOf(original, ghost.copy(keys = listOf("output-only-key")))))))
+        var evaluations = 0
+        val literal = PromptCompiler().compile(noOutputRecursion.copy(ejsRenderer = { evaluations++; "output-only-key" })) as CompilationResult.Success
+        assertEquals(listOf("template"), literal.plan.activatedWorldBookEntries)
+        assertEquals(1, evaluations)
+    }
 }

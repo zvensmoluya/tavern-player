@@ -63,7 +63,7 @@ app ───────────────> model-gateway
 
 1. USER_INPUT storage Regex 与 Macro；
 2. prompt-side 历史投影；
-3. World Book 激活、WORLD_INFO Regex 与 Macro；
+3. World Book 逐轮扫描、分组、概率、正文 Macro、预算与递归；入选的普通正文执行 WORLD_INFO Regex，已选 EJS 使用其只读模板入口；
 4. examples、角色 / Preset overrides、模板、generation trigger、names behavior、system squash、depth prompt 和各 placement 注入；
 5. Player 固定的 Conversation State system projection、assistant prefill 与 context 预算 / 裁剪；
 6. Provider 最终计数与必要的重新裁剪。
@@ -74,7 +74,7 @@ Regex 来源顺序为 Preset 后 Character。canonical storage、Provider prompt
 
 每次新建 Conversation、发送、重试或 regenerate 都先深拷贝当前 active Preset。该不可变快照贯穿编排、Provider 请求和流式 output projection；运行期间的全局切换不改变已开始事务，下一次生成立即使用新资产。Generation plan 与 MessageVariant 保存名称、内容指纹和参数诊断，不保存可供运行时反查的 Preset 引用；历史 display 使用当前 active Preset 重投影。
 
-World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 key、概率、分组、递归、预算、sticky / cooldown / delay、placement、at-depth 与 outlet。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结计时。强类型控制器先验证一批 `bookId` / `entryId` 再原子返回新 Runtime State，World Book trace 明确记录覆盖造成的启停。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭。这是当前能力描述，不构成 ST 语义等价声明；已发现的扫描范围、delay、递归／分组差异及兼容缺口见[世界书运行语义记录](world-book-semantics-audit-20260907.md)，修复暂缓。
+World Book 的 sticky / cooldown 状态以 `bookId:entryId` 保存；delay 根据当前选中分支的消息数判断，不再保存首次命中的倒计时。角色描述、性格、场景、深度提示与作者备注只按条目的匹配开关参与扫描。分组、概率和预算在每轮递归前完成，已入选分组排除后续同组候选，概率失败不会在本轮生成中重掷；普通正文展开 Macro 后计入预算并参与递归，WORLD_INFO Regex 在入选后处理。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结 sticky / cooldown。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭，保留 placement、at-depth 与 outlet。修正范围和剩余边界见[世界书阅读与编排修正](world-book-reader-and-semantics-20260908.md)，不据此宣称完整 ST 语义等价。
 
 ## Token 与 Provider
 
@@ -92,6 +92,8 @@ World Book 状态以 `bookId:entryId` 保存，支持关键词逻辑、正则 ke
 app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter 边界做能力映射：Responses 使用 output / temperature / top-p / reasoning / verbosity；Chat Completions 另含 penalties、seed 和 name；Anthropic 映射 sampler、manual / adaptive thinking 与可用 prefill；Gemini Interactions 只映射 output、seed 和 thinking level；GenerateContent 映射 sampler、seed、penalties 与 thinking config。Anthropic 的 `max_tokens` 是协议必填，Preset 关闭 output limit 时使用播放器已经预留的安全预算并记录诊断。OpenAI-compatible 协议可以原生表达的显式 reasoning / verbosity 会乐观转发，不再依赖模型名称白名单；“已应用”表示已经编码进请求，最终是否接受由 Provider 响应确认。Responses 遇到 Player 固定状态回写契约时，把当前 Conversation State 投影与该契约编码为顶层 `instructions`，其他卡片 / World Book / Preset system 消息保留时序并降为 `developer`，确保不可信内容不能改写 Player-owned 当前事实或放宽执行协议。协议本身无法表达或明确需要模型特定形态的参数仍会省略并进入 `ProviderRequestPreview` 和流式诊断。所有请求强制流式、单候选和无 hosted continuation state。
 
 ## Android 仓库与界面
+
+角色详情提供世界书阅读入口；`WorldBookReaderScreen` 按书展示全部条目并支持标题、关键词及正文搜索。正文以可选择的原始文字分块呈现，保留 Macro、EJS 与 HTML 字面内容，不运行程序、不修改启用状态，也不创建独立世界书资产。阅读页保留搜索与列表滚动位置，支持返回条目列表及角色详情。
 
 `QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](mvu-chat-integration-20260907.md)。
 

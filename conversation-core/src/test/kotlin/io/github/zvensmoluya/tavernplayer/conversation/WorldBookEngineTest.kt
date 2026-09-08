@@ -5,13 +5,18 @@ import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookPosition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookSecondaryLogic
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorldBookEngineTest {
-    private val engine = WorldBookEngine()
+    private val engine = WorldBookEngine(keyRegexExecutionStrategy = ImmediateRegexExecutionStrategy)
 
     @Test
     fun `primary secondary regex and recursion activate in stable order`() {
@@ -70,14 +75,14 @@ class WorldBookEngineTest {
             entries = listOf(entry("slow", keys = listOf("^(a+)+$"), content = "no").copy(useRegex = true)),
         )
 
-        val result = activate(book, listOf(message("a".repeat(20_000) + "!")))
+        val result = activate(book, listOf(message("a".repeat(20_000) + "!")), target = WorldBookEngine())
 
         assertTrue(result.activatedEntryIds.isEmpty())
         assertTrue(result.diagnostics.any { it.code == "WORLD_BOOK_REGEX_TIMEOUT" })
     }
 
     @Test
-    fun `sticky cooldown and delay survive generation boundaries`() {
+    fun `sticky and cooldown survive generation boundaries`() {
         val stickyBook = WorldBookDefinition(
             id = "sticky-book",
             entries = listOf(entry("sticky", keys = listOf("key"), content = "active").copy(sticky = 1, cooldown = 1)),
@@ -111,14 +116,6 @@ class WorldBookEngineTest {
         assertFalse("cooldown" in cooldownSuppressed.activatedEntryIds)
         assertTrue("cooldown" in cooldownReleased.activatedEntryIds)
 
-        val delayBook = WorldBookDefinition(
-            id = "delay-book",
-            entries = listOf(entry("delay", keys = listOf("door"), content = "open").copy(delay = 1)),
-        )
-        val armed = activate(delayBook, listOf(message("door")), turn = 0)
-        val released = activate(delayBook, listOf(message("door")), state = armed.runtimeState, turn = 1)
-        assertTrue(armed.activatedEntryIds.isEmpty())
-        assertEquals(listOf("delay"), released.activatedEntryIds)
     }
 
     @Test
@@ -136,7 +133,6 @@ class WorldBookEngineTest {
 
         val result = engine.activate(
             books = books,
-            characterText = "",
             projectedHistory = emptyList(),
             regexRules = emptyList(),
             macroContext = MacroContext(
@@ -287,6 +283,111 @@ class WorldBookEngineTest {
         assertTrue(result.trace.any { it.stage == "world-book-group" && it.sourceIds == listOf("low") })
     }
 
+    @Test
+    fun `character fields only participate when the individual entry opts in`() {
+        val flags = listOf("match_character_description", "match_character_personality", "match_character_depth_prompt", "match_scenario", "match_creator_notes")
+        val scan = WorldBookCharacterScan("description-key", "personality-key", "depth-key", "scenario-key", "notes-key")
+        val terms = listOf("description-key", "personality-key", "depth-key", "scenario-key", "notes-key")
+        val entries = flags.flatMapIndexed { index, flag ->
+            val candidate = entry("enabled-$index", keys = listOf(terms[index]), content = "lore")
+            listOf(candidate, candidate.copy(id = "opted-in-$index", extensions = JsonObject(mapOf(flag to JsonPrimitive(true)))),
+                candidate.copy(id = "opted-out-$index", extensions = JsonObject(mapOf(flag to JsonPrimitive(false)))))
+        }
+        val book = WorldBookDefinition("book", entries = entries)
+        assertEquals(flags.indices.map { "opted-in-$it" }, activate(book, listOf(message("unrelated chat")), characterScan = scan).activatedEntryIds)
+        assertTrue(activate(book.copy(scanDepth = 0), listOf(message(terms.joinToString())), characterScan = scan).activatedEntryIds.isEmpty())
+        // Opting out of character scanning does not disable ordinary history matching.
+        assertEquals(15, activate(book, listOf(message(terms.joinToString()))).activatedEntryIds.size)
+    }
+
+    @Test
+    fun `delay is a message threshold independent of first match retries or saved counters`() {
+        val book = WorldBookDefinition("book", entries = listOf(entry("door", keys = listOf("door"), content = "open").copy(delay = 3)))
+        val short = listOf(message("door"), message("door"))
+        val gated = activate(book, short, turn = 40)
+        assertTrue(gated.activatedEntryIds.isEmpty())
+        assertTrue(activate(book, short, gated.runtimeState, turn = 41).activatedEntryIds.isEmpty())
+        val threshold = short + message("door")
+        val firstMatch = activate(book, threshold, turn = 0)
+        assertEquals(listOf("door"), firstMatch.activatedEntryIds)
+        assertEquals(firstMatch, activate(book, threshold, turn = 0))
+        assertEquals(listOf("door"), activate(book, listOf(message("earlier"), message("earlier"), message("earlier"), message("door"))).activatedEntryIds)
+        assertTrue(activate(book, short, firstMatch.runtimeState, turn = 0).activatedEntryIds.isEmpty())
+        val legacy = Json { ignoreUnknownKeys = true }.decodeFromString<WorldBookEntryRuntimeState>(
+            """{"stickyRemaining":0,"cooldownRemaining":0,"delayRemaining":99,"delayStartedTurn":12}""",
+        )
+        assertEquals(listOf("door"), activate(book, threshold, mapOf("book:door" to legacy)).activatedEntryIds)
+        assertTrue(activate(book.copy(entries = book.entries.map { it.copy(constant = true) }), emptyList()).activatedEntryIds.isEmpty())
+    }
+
+    @Test
+    fun `a group loser cannot seed recursion or displace an earlier winner`() {
+        val book = WorldBookDefinition("book", recursiveScanning = true, entries = listOf(
+            entry("winner", constant = true, content = "winner-key").copy(group = "route", groupOverride = true),
+            entry("loser", constant = true, content = "loser-key").copy(group = "route"),
+            entry("ghost", keys = listOf("loser-key"), content = "must never appear"),
+            entry("late-group", keys = listOf("winner-key"), content = "late-key").copy(group = "route", groupOverride = true, insertionOrder = 999),
+            entry("late-ghost", keys = listOf("late-key"), content = "must never appear either"),
+            entry("followup", keys = listOf("winner-key"), content = "followup"),
+        ))
+        assertEquals(listOf("winner", "followup"), activate(book, emptyList()).activatedEntryIds)
+    }
+
+    @Test
+    fun `probability follows group selection and a failed entry is not rerolled during recursion`() {
+        val book = WorldBookDefinition("book", recursiveScanning = true, entries = listOf(
+            entry("selected", constant = true, content = "forbidden-key").copy(group = "route", groupOverride = true, probability = 0),
+            entry("fallback", constant = true, content = "forbidden-key").copy(group = "route"),
+            entry("seed", constant = true, content = "next-key"),
+            entry("next", keys = listOf("next-key"), content = "done"),
+            entry("ghost", keys = listOf("forbidden-key"), content = "forbidden"),
+        ))
+        val firstPassOnly = activate(book.copy(recursiveScanning = false), emptyList())
+        assertEquals(listOf("seed"), firstPassOnly.activatedEntryIds)
+        val recursive = activate(book.copy(entries = book.entries.filterNot { it.id == "fallback" }), emptyList())
+        assertEquals(listOf("seed", "next"), recursive.activatedEntryIds)
+        assertEquals(1, recursive.trace.count { it.sourceIds == listOf("selected") && it.decision.startsWith("failed probability") })
+    }
+
+    @Test
+    fun `overflow stops ordinary entries and recursion while budget exempt entries remain eligible`() {
+        val book = WorldBookDefinition("book", tokenBudget = 12, recursiveScanning = true, entries = listOf(
+            entry("seed", constant = true, content = "next-key").copy(insertionOrder = 900),
+            entry("large", constant = true, content = "too large ".repeat(100)).copy(insertionOrder = 800),
+            entry("small", constant = true, content = "x").copy(probability = 0),
+            entry("exempt", constant = true, content = "required").copy(extensions = JsonObject(mapOf("ignore_budget" to JsonPrimitive(true)))),
+            entry("recursive", keys = listOf("next-key"), content = "x"),
+        ))
+        val result = activate(book, emptyList())
+        assertEquals(listOf("seed", "exempt"), result.activatedEntryIds)
+        assertTrue(result.trace.any { it.sourceIds == listOf("small") && "overflow" in it.decision })
+        assertFalse(result.trace.any { it.sourceIds == listOf("small") && "probability" in it.decision })
+    }
+
+    @Test
+    fun `static macros are budgeted and seed recursion once before display regex`() {
+        val book = WorldBookDefinition("book", recursiveScanning = true, entries = listOf(
+            entry("seed", constant = true, content = "{{incvar::visits}}{{user}}"),
+            entry("next", keys = listOf("Traveler"), content = "found"),
+            entry("wrong", keys = listOf("DISPLAY_ONLY"), content = "wrong"),
+        ))
+        val transaction = MacroTransaction(seed = "macro-scan")
+        val result = engine.activate(
+            books = listOf(book), projectedHistory = emptyList(),
+            regexRules = listOf(RegexDefinition("display", "display", "Traveler", "DISPLAY_ONLY", placements = setOf(RegexPlacement.WORLD_INFO), promptOnly = true)),
+            macroContext = MacroContext(CharacterAsset("card", name = "Guide").snapshot(), Persona("p", "Traveler")),
+            transaction = transaction, previousState = emptyMap(), turnIndex = 0, inputBudgetTokens = 10_000,
+        )
+        assertEquals(listOf("seed", "next"), result.activatedEntryIds)
+        assertTrue(result.injections.single().content.contains("DISPLAY_ONLY"))
+        assertEquals("1", transaction.snapshot()["visits"]?.text)
+        val large = WorldBookDefinition("large", tokenBudget = 20, entries = listOf(entry("expanded", constant = true, content = "{{user}}")))
+        val dropped = engine.activate(books = listOf(large), projectedHistory = emptyList(), regexRules = emptyList(),
+            macroContext = MacroContext(CharacterAsset("card", name = "Guide").snapshot(), Persona("p", "name ".repeat(200))),
+            transaction = MacroTransaction(seed = "large"), previousState = emptyMap(), turnIndex = 0, inputBudgetTokens = 10_000)
+        assertTrue(dropped.activatedEntryIds.isEmpty())
+    }
+
     private fun activate(
         book: WorldBookDefinition,
         history: List<ConversationMessage>,
@@ -294,9 +395,11 @@ class WorldBookEngineTest {
         overrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turn: Int = 0,
         budget: Int = 10_000,
-    ) = engine.activate(
+        characterScan: WorldBookCharacterScan = WorldBookCharacterScan(),
+        target: WorldBookEngine = engine,
+    ) = target.activate(
         books = listOf(book),
-        characterText = "",
+        characterScan = characterScan,
         projectedHistory = history,
         regexRules = emptyList(),
         macroContext = MacroContext(

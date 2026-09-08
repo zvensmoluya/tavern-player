@@ -17,6 +17,30 @@ class CharacterCardImporterTest {
     private val importer = CharacterCardImporter { "asset-id" }
 
     @Test
+    fun worldBookSourceOptionsKeepTheirMeaningAfterImportAndSnapshotRestore() {
+        val card = """
+            {"name":"中性样本","character_book":{"entries":[
+              {"id":11,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"extensions":{"selectiveLogic":0}},
+              {"id":22,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"extensions":{"selectiveLogic":1}},
+              {"id":33,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"extensions":{"selectiveLogic":2}},
+              {"id":44,"keys":["gate"],"secondary_keys":["one","two"],"selective":true,"extensions":{"selectiveLogic":3,
+                "match_character_description":true,"match_character_personality":true,"match_character_depth_prompt":true,
+                "match_scenario":true,"match_creator_notes":true}}
+            ]}}
+        """.trimIndent()
+        val imported = (importer.import(card.encodeToByteArray()) as CharacterImportResult.Ready).character
+        val entries = imported.worldBooks.single().entries
+        val expected = listOf(WorldBookSecondaryLogic.AND_ANY, WorldBookSecondaryLogic.NOT_ALL, WorldBookSecondaryLogic.NOT_ANY, WorldBookSecondaryLogic.AND_ALL)
+        assertEquals(expected, entries.map { it.secondaryLogic })
+        assertEquals(expected, imported.snapshot().worldBooks.single().entries.map { it.effectiveSecondaryLogic })
+        val flags = entries.last()
+        assertTrue(flags.matchCharacterDescription && flags.matchCharacterPersonality && flags.matchCharacterDepthPrompt && flags.matchScenario && flags.matchCreatorNotes)
+        // An older normalized enum must not override the original source's numeric setting.
+        assertEquals(WorldBookSecondaryLogic.NOT_ALL, entries[1].copy(secondaryLogic = WorldBookSecondaryLogic.AND_ALL).effectiveSecondaryLogic)
+        assertEquals(WorldBookSecondaryLogic.AND_ALL, entries[3].copy(secondaryLogic = WorldBookSecondaryLogic.NOT_ALL).effectiveSecondaryLogic)
+    }
+
+    @Test
     fun importsV3JsonAndPreservesUnknownData() {
         val bytes = """
             {

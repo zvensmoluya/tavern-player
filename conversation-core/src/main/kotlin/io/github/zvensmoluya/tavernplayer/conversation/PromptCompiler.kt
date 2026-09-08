@@ -356,15 +356,16 @@ class PromptCompiler(
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
         val scanTransaction = transaction.fork()
-        val characterScanText = listOf(
-            input.character.description,
-            input.character.personality,
-            input.character.scenario,
-            input.character.depthPrompt?.content.orEmpty(),
-            input.character.creatorNotes,
-        ).joinToString("\n") { macroEngine.evaluate(it, baseContext, scanTransaction).also { evaluation ->
-            diagnostics += evaluation.diagnostics
-        }.text }
+        fun scanField(text: String): String = macroEngine.evaluate(text, baseContext, scanTransaction).also {
+            diagnostics += it.diagnostics
+        }.text
+        val characterScan = WorldBookCharacterScan(
+            description = scanField(input.character.description),
+            personality = scanField(input.character.personality),
+            scenario = scanField(input.character.scenario),
+            depthPrompt = scanField(input.character.depthPrompt?.content.orEmpty()),
+            creatorNotes = scanField(input.character.creatorNotes),
+        )
         val ejsIssues = input.character.nativeAdaptation?.let {
             io.github.zvensmoluya.tavernplayer.content.NativeEjsValidator.validate(it, input.character.worldBooks)
         }.orEmpty()
@@ -396,7 +397,8 @@ class PromptCompiler(
             books = if (memoryEntries.isEmpty()) worldBookText.books else listOf(
                 io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition(NativeMemoryController.BOOK_ID, entries = memoryEntries)
             ) + worldBookText.books,
-            characterText = (listOf(characterScanText) + memoryEntries.map { it.content }).joinToString("\n"),
+            characterScan = characterScan,
+            additionalScanText = memoryEntries.joinToString("\n") { it.content },
             projectedHistory = projectedHistory.map { message ->
                 ConversationMessage(
                     id = message.origin.sourceIds.firstOrNull().orEmpty(),
@@ -411,6 +413,7 @@ class PromptCompiler(
             previousState = input.runtimeState.worldBookEntries,
             activationOverrides = input.runtimeState.worldBookActivationOverrides,
             turnIndex = input.runtimeState.generationIndex,
+            messageCount = input.history.size,
             inputBudgetTokens = (contextLimit - outputLimit).coerceAtLeast(0),
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
             prepareEntry = { bookId, entry, entryTransaction ->
@@ -435,7 +438,7 @@ class PromptCompiler(
                         val marker = if (output.isBlank()) "" else "$ejsLiteralPrefix${ejsLiterals.size}\uE001"
                         if (marker.isNotEmpty()) ejsLiterals[marker] = output
                         trace += CompilationTraceEntry("ejs", listOf(bookId, entry.id), "rendered original template (${output.length} chars)")
-                        WorldBookPreparedText(output, marker)
+                        WorldBookPreparedText(output, marker, recursionText = expanded.text)
                     }
                 } else null
             },

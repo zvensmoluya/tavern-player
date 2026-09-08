@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.content
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 @Serializable
 enum class CharacterSourceFormat {
@@ -79,7 +80,16 @@ enum class WorldBookSecondaryLogic {
     AND_ANY,
     AND_ALL,
     NOT_ANY,
-    NOT_ALL,
+    NOT_ALL;
+
+    companion object {
+        fun fromSourceValue(value: Int): WorldBookSecondaryLogic = when (value) {
+            1 -> NOT_ALL
+            2 -> NOT_ANY
+            3 -> AND_ALL
+            else -> AND_ANY
+        }
+    }
 }
 
 @Serializable
@@ -133,6 +143,17 @@ data class WorldBookEntryDefinition(
 ) {
     /** ST 原生条目选项。保留在源 extensions 中，旧快照也可读取，无第二份可分歧的值。 */
     val ignoreBudget: Boolean get() = extensions["ignore_budget"] == JsonPrimitive(true)
+
+    // Read the preserved source option as well, so previously imported snapshots use the corrected mapping.
+    val effectiveSecondaryLogic: WorldBookSecondaryLogic get() =
+        (extensions["selectiveLogic"] as? JsonPrimitive)?.intOrNull
+            ?.let(WorldBookSecondaryLogic::fromSourceValue) ?: secondaryLogic
+
+    val matchCharacterDescription: Boolean get() = extensions["match_character_description"] == JsonPrimitive(true)
+    val matchCharacterPersonality: Boolean get() = extensions["match_character_personality"] == JsonPrimitive(true)
+    val matchCharacterDepthPrompt: Boolean get() = extensions["match_character_depth_prompt"] == JsonPrimitive(true)
+    val matchScenario: Boolean get() = extensions["match_scenario"] == JsonPrimitive(true)
+    val matchCreatorNotes: Boolean get() = extensions["match_creator_notes"] == JsonPrimitive(true)
 }
 
 @Serializable

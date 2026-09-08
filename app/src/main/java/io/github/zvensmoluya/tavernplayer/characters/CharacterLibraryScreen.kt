@@ -338,6 +338,7 @@ fun CharacterDetailScreen(
     onCompile: () -> Unit = {},
     onCancelCompilation: () -> Unit = {},
     onOpenModels: () -> Unit = {},
+    onReadWorldBooks: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -393,6 +394,29 @@ fun CharacterDetailScreen(
                     enabled = !importing,
                     modifier = Modifier.fillMaxWidth().testTag("newConversation"),
                 ) { Text("开始新对话") }
+            }
+            item("world-books") {
+                Card(
+                    onClick = onReadWorldBooks,
+                    modifier = Modifier.fillMaxWidth().testTag("readWorldBooks"),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("世界书", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                if (character.worldBooks.isEmpty()) "这张角色卡没有附带世界书"
+                                else "${character.worldBooks.size} 本 · ${character.worldBooks.sumOf { it.entries.size }} 个条目",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text("阅读", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
             }
             item("native-adaptation") {
                 DetailSection("原生适配") {

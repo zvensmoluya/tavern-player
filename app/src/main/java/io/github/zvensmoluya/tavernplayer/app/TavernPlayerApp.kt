@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import io.github.zvensmoluya.tavernplayer.characters.CharacterDetailScreen
 import io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryRoute
 import io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryViewModel
+import io.github.zvensmoluya.tavernplayer.characters.WorldBookReaderScreen
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsRoute
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ChatRoute
@@ -106,9 +107,13 @@ fun TavernPlayerApp(
                     onCompile = { characterLibraryViewModel.compileNativeAdaptation(character.id) },
                     onCancelCompilation = characterLibraryViewModel::cancelCompilation,
                     onOpenModels = ::openModels,
+                    onReadWorldBooks = { surface = AppSurface.CHARACTER_WORLD_BOOKS },
                     message = libraryState.message,
                 )
             }
+        }
+        AppSurface.CHARACTER_WORLD_BOOKS -> libraryState.selectedCharacter?.let { character ->
+            WorldBookReaderScreen(character, onBack = { surface = AppSurface.CHARACTER_DETAIL })
         }
         AppSurface.CHAT -> ChatRoute(
             viewModel = chatViewModel,
@@ -142,6 +147,7 @@ fun TavernPlayerApp(
 internal enum class AppSurface {
     CHARACTER_LIBRARY,
     CHARACTER_DETAIL,
+    CHARACTER_WORLD_BOOKS,
     CHAT,
     MODEL_CONFIGURATION,
     PRESET_CENTER,
@@ -153,6 +159,7 @@ internal fun selectAppSurface(
     hasSelectedCharacter: Boolean,
 ): AppSurface = when {
     requested == AppSurface.CHARACTER_DETAIL && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
+    requested == AppSurface.CHARACTER_WORLD_BOOKS && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
     requested == AppSurface.CHAT && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
     else -> requested
 }

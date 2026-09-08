@@ -30,6 +30,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -86,13 +87,26 @@ class ChatViewModelTest {
             } }
             val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(),
                 projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime, ejsRuntime = ejs)
+            suspend fun assertSavedDays(expected: Int) {
+                assertEquals("Conversation result: ${vm.uiState.value.message}", JsonPrimitive(expected), vm.uiState.value.nativeState["day"])
+                // Editing exposes the new view before persistNow finishes; await the repository acknowledgement.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    kotlinx.coroutines.withTimeout(60_000) {
+                        conversations.conversations.first { records ->
+                            records.firstOrNull { it.id == saved.id }?.runtimeState?.mvuState?.data
+                                ?.get("stat_data")?.jsonObject?.get("days")?.jsonPrimitive?.content?.toIntOrNull() == expected
+                        }
+                    }
+                }
+                assertEquals(expected, days())
+            }
             vm.loadConversation(saved.id)
             assertEquals(0, days())
             vm.nextVariant()
             awaitMvuIdle(vm)
             // Candidate navigation persists on a debounce; sending must nevertheless use the selected checkpoint.
             vm.updateInput("Go."); vm.send(); awaitMvuIdle(vm)
-            assertEquals(5, days())
+            assertSavedDays(5)
             assertEquals(JsonPrimitive(5), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(5), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -102,14 +116,14 @@ class ChatViewModelTest {
             assertTrue(vm.uiState.value.messages.last().message.sourceText.contains("JSONPatch"))
             delta = 4
             vm.regenerate(); awaitMvuIdle(vm)
-            assertEquals(7, days())
+            assertSavedDays(7)
             assertEquals(JsonPrimitive(7), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(7), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             vm.previousVariant()
             vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
-            assertEquals(9, days())
+            assertSavedDays(9)
             assertEquals(JsonPrimitive(9), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(9), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -126,7 +140,7 @@ class ChatViewModelTest {
             awaitMvuIdle(vm)
             assertEquals(saved.id, vm.uiState.value.conversationId)
             assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
-            assertEquals(13, days())
+            assertSavedDays(13)
             assertEquals(JsonPrimitive(13), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(13), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -139,13 +153,13 @@ class ChatViewModelTest {
             assertTrue(restoredPlan.plan.messages.any { "EJS_DAY=13; EJS_USER=Go.;" in it.content })
             vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
             awaitMvuIdle(vm)
-            assertEquals(20, days())
+            assertSavedDays(20)
             assertEquals(JsonPrimitive(20), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(20), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(1, vm.uiState.value.messages.size)
             vm.resetConversation(); awaitMvuIdle(vm)
-            assertEquals(0, days())
+            assertSavedDays(0)
         } finally { directory.deleteRecursively() }
     }
 

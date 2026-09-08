@@ -1,6 +1,6 @@
 # Tavern Player 当前产品边界
 
-> 后续实现：MVU 已接入适配产物和聊天事务，世界书 EJS 已通过只读宿主在 QuickJS 执行，当前编译契约为 native-compiler-6；见 [MVU 聊天接入](mvu-chat-integration-20260907.md) 和 [EJS 接入](ejs-quickjs-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
+> 后续实现：MVU 已接入适配产物和聊天事务，世界书 EJS 已通过只读宿主在 QuickJS 执行，当前编译契约为 native-compiler-7；见 [MVU 聊天接入](mvu-chat-integration-20260907.md)、[EJS 接入](ejs-quickjs-integration-20260907.md)和[状态绑定](native-state-bindings-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
 
 > 状态：当前有效的产品与兼容性决定。
 >
@@ -57,9 +57,10 @@
 ### World Book
 
 - World Book 在产品上与 Character 强关联。当前 Character 决定本轮参与的 World Book，不建立 ST 的 global、conversation、persona 多来源组合以及来源优先、混排和去重规则。
+- 世界书是可阅读的角色内容。角色详情在开始对话按钮后提供明确入口，按书浏览、搜索标题／关键词／正文，读取包含停用条目的原始内容；阅读不改变作者的启用设置或执行模板。
 - 一个 Character 可以关联多本 World Book；内部仍可分别保存 Character Card 与 World Book 数据。
-- 目标是保留受支持的 Character World Book 条目语义，包括 constant、关键词、secondary logic、scan depth、概率、分组、递归、独立预算、sticky / cooldown / delay、order、placement 和 at-depth。2026-09-07 源码核对发现扫描范围、delay 含义及递归／分组顺序存在实际差异，不能将功能覆盖视为语义等价；分类和延期修复任务见[世界书运行语义记录](world-book-semantics-audit-20260907.md)。
-- World Book 定义随 Character 一起进入 Character Snapshot；sticky / cooldown / delay 等运行状态属于 Conversation。
+- 目标是保留受支持的 Character World Book 条目语义，包括 constant、关键词、secondary logic、scan depth、概率、分组、递归、独立预算、sticky / cooldown / delay、order、placement 和 at-depth。2026-09-08 修正角色字段扫描开关、delay 消息数门槛、逐轮分组／概率／预算／递归，以及附加关键词逻辑导入映射；详见[世界书阅读与编排修正](world-book-reader-and-semantics-20260908.md)。高级正则、扫描格式和数字递归层级仍有明确边界，不能将功能覆盖视为整体语义等价。
+- World Book 定义随 Character 一起进入 Character Snapshot；sticky / cooldown 等运行状态属于 Conversation，delay 根据该会话当前选中分支的消息数判断。
 - 不支持 vectorized / embedding 候选激活、聊天或文件向量记忆 / RAG、外部强制激活入口和 `automationId`。
 
 ### Persona
@@ -119,6 +120,7 @@
 
 ## 6. Tools、扩展与外部系统
 
+- 脚本宿主只提供已明确选择的 MVU／EJS 有界接口。任意远程依赖属于支持范围之外，不是已承诺但尚未完成的兼容任务；不得将其列为默认扩建目标。
 - 不复刻 ST ToolManager，不支持动态工具注册、STscript、第三方扩展工具、stealth tools 或任意外部执行框架。
 - V1 没有 Tavern Player 原生 tools，不实现 tool execution、tool history 或 recursive generation。
 - Provider 的 function / tool calling 协议表达可以独立存在或预留，但不表示产品支持 Tools。只有未来明确增加原生工具时，才建立执行语义。

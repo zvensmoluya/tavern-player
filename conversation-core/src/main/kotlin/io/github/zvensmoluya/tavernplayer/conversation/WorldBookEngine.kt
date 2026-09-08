@@ -16,7 +16,27 @@ import java.util.regex.Pattern
 import java.util.regex.PatternSyntaxException
 
 /** A prepared entry is budgeted by its final text; promptText can defer literal insertion. */
-data class WorldBookPreparedText(val content: String, val promptText: String = content)
+data class WorldBookPreparedText(
+    val content: String,
+    val promptText: String = content,
+    val recursionText: String = content,
+)
+
+data class WorldBookCharacterScan(
+    val description: String = "",
+    val personality: String = "",
+    val depthPrompt: String = "",
+    val scenario: String = "",
+    val creatorNotes: String = "",
+) {
+    fun forEntry(entry: WorldBookEntryDefinition): List<String> = buildList {
+        if (entry.matchCharacterDescription) add(description)
+        if (entry.matchCharacterPersonality) add(personality)
+        if (entry.matchCharacterDepthPrompt) add(depthPrompt)
+        if (entry.matchScenario) add(scenario)
+        if (entry.matchCreatorNotes) add(creatorNotes)
+    }
+}
 
 data class WorldBookInjection(
     val position: WorldBookPosition,
@@ -42,10 +62,12 @@ class WorldBookEngine(
     private val macroEngine: MacroEngine = MacroEngine(),
     private val regexEngine: CharacterRegexEngine = CharacterRegexEngine(macroEngine),
     private val tokenAccounting: DefaultTokenAccounting = DefaultTokenAccounting(),
+    private val keyRegexExecutionStrategy: RegexExecutionStrategy = KEY_REGEX_EXECUTION,
 ) {
     fun activate(
         books: List<WorldBookDefinition>,
-        characterText: String,
+        characterScan: WorldBookCharacterScan = WorldBookCharacterScan(),
+        additionalScanText: String = "",
         projectedHistory: List<ConversationMessage>,
         regexRules: List<io.github.zvensmoluya.tavernplayer.content.RegexDefinition>,
         macroContext: MacroContext,
@@ -54,6 +76,7 @@ class WorldBookEngine(
         activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turnIndex: Int,
         inputBudgetTokens: Int,
+        messageCount: Int = projectedHistory.size,
         literalEntryIds: Set<String> = emptySet(),
         prepareEntry: (String, WorldBookEntryDefinition, MacroTransaction) -> WorldBookPreparedText? = { _, _, _ -> null },
     ): WorldBookActivationResult {
@@ -79,31 +102,34 @@ class WorldBookEngine(
             if (!activationOverrides.isBookEnabled(book.id)) {
                 return@forEach
             }
-            val candidates = activateBook(
+            val bookBudget = (book.tokenBudget ?: remainingGlobal).coerceAtMost(remainingGlobal).coerceAtLeast(0)
+            var remainingBook = bookBudget
+            var budgetOverflowed = false
+            activateBook(
                 book,
-                characterText,
+                characterScan,
+                additionalScanText,
                 projectedHistory,
                 states,
-                turnIndex,
+                messageCount,
                 transaction,
                 diagnostics,
                 trace,
                 activationOverrides,
-            )
-            val grouped = selectGroups(book.id, candidates, states, transaction, trace)
-            val bookBudget = (book.tokenBudget ?: remainingGlobal).coerceAtMost(remainingGlobal).coerceAtLeast(0)
-            var remainingBook = bookBudget
-            grouped.sortedWith(
-                compareByDescending<WorldBookEntryDefinition> { it.priority ?: it.insertionOrder }
-                    .thenBy { it.id },
-            ).forEach { originalEntry ->
+                hasBudgetOverflowed = { budgetOverflowed },
+            ) { originalEntry ->
                 val preparationTransaction = transaction.fork()
                 val prepared = prepareEntry(book.id, originalEntry, preparationTransaction)
-                val entry = if (prepared == null) originalEntry else originalEntry.copy(content = prepared.content)
+                val content = prepared?.content ?: if (originalEntry.id in literalEntryIds) originalEntry.content else {
+                    macroEngine.evaluate(originalEntry.content, macroContext, preparationTransaction).also {
+                        diagnostics += it.diagnostics
+                    }.text
+                }
+                val entry = originalEntry.copy(content = content)
                 val cost = estimateTokens(entry.content, macroContext.modelId)
                 if (entry.ignoreBudget || cost <= remainingBook) {
+                    transaction.commitFrom(preparationTransaction)
                     if (prepared != null) {
-                        transaction.commitFrom(preparationTransaction)
                         preparedContent[entry] = prepared.promptText
                     }
                     activated += entry
@@ -117,8 +143,6 @@ class WorldBookEngine(
                         old.copy(
                             stickyRemaining = if (entry.sticky > 0) entry.sticky + 1 else 0,
                             cooldownRemaining = entry.cooldown + if (entry.sticky > 0 || entry.cooldown == 0) 0 else 1,
-                            delayRemaining = 0,
-                            delayStartedTurn = null,
                             lastActivatedTurn = turnIndex,
                         )
                     }
@@ -128,12 +152,15 @@ class WorldBookEngine(
                         decision = "activated cost=$cost remaining=$remainingGlobal" +
                             if (entry.ignoreBudget) "; world-book budget bypassed by source entry" else "",
                     )
+                    prepared?.recursionText ?: content
                 } else {
+                    budgetOverflowed = true
                     trace += CompilationTraceEntry(
                         stage = "world-book",
                         sourceIds = listOf(entry.id),
                         decision = "dropped by world-book budget cost=$cost remaining=$remainingBook",
                     )
+                    null
                 }
             }
         }
@@ -151,9 +178,7 @@ class WorldBookEngine(
                 transaction = transaction,
             )
             diagnostics += regexed.diagnostics
-            val expanded = macroEngine.evaluate(regexed.text, macroContext, transaction)
-            diagnostics += expanded.diagnostics
-            expanded.text.takeIf(String::isNotBlank)?.let { entry to it }
+            regexed.text.takeIf(String::isNotBlank)?.let { entry to it }
         }
         val injections = evaluated
             .groupBy { (entry, _) -> InjectionKey(entry.position, entry.depth, entry.role, entry.outletName, entry.id in literalEntryIds) }
@@ -182,22 +207,29 @@ class WorldBookEngine(
 
     private fun activateBook(
         book: WorldBookDefinition,
-        characterText: String,
+        characterScan: WorldBookCharacterScan,
+        additionalScanText: String,
         projectedHistory: List<ConversationMessage>,
-        states: MutableMap<String, WorldBookEntryRuntimeState>,
-        turnIndex: Int,
+        states: Map<String, WorldBookEntryRuntimeState>,
+        messageCount: Int,
         transaction: MacroTransaction,
         diagnostics: MutableList<CompilationDiagnostic>,
         trace: MutableList<CompilationTraceEntry>,
         activationOverrides: WorldBookActivationOverrides,
-    ): BookActivationCandidates {
+        hasBudgetOverflowed: () -> Boolean,
+        acceptEntry: (WorldBookEntryDefinition) -> String?,
+    ) {
         val result = linkedMapOf<String, WorldBookEntryDefinition>()
+        val failedProbability = mutableSetOf<String>()
+        // Sticky membership is captured before this generation installs new timed effects.
+        val stickyIds = book.entries.filter { (states[runtimeStateKey(book.id, it.id)]?.stickyRemaining ?: 0) > 0 }
+            .mapTo(mutableSetOf()) { it.id }
         val scores = mutableMapOf<String, Int>()
         var recursiveScan = ""
         var recursion = 0
         while (true) {
             val newlyActivated = book.entries.filter { entry ->
-                if (entry.id in result) return@filter false
+                if (entry.id in result || entry.id in failedProbability) return@filter false
                 val entryOverride = activationOverrides.entries[book.id]?.get(entry.id)
                 if (recursion == 0 && entryOverride != null) {
                     trace += CompilationTraceEntry(
@@ -218,7 +250,11 @@ class WorldBookEngine(
                 }
                 val stateKey = runtimeStateKey(book.id, entry.id)
                 val state = states[stateKey] ?: WorldBookEntryRuntimeState()
-                if (state.stickyRemaining > 0) return@filter true
+                if (messageCount < entry.delay) {
+                    trace += trace(entry, "delay: message count=$messageCount required=${entry.delay}")
+                    return@filter false
+                }
+                if (entry.id in stickyIds) return@filter true
                 if (state.cooldownRemaining > 0) {
                     trace += trace(entry, "cooldown=${state.cooldownRemaining}")
                     return@filter false
@@ -227,26 +263,38 @@ class WorldBookEngine(
                 if (entry.excludeRecursion && recursion > 0) return@filter false
                 val scanDepth = (entry.scanDepth ?: book.scanDepth ?: DEFAULT_SCAN_DEPTH).coerceAtLeast(0)
                 val historyText = projectedHistory.takeLast(scanDepth).joinToString("\n") { it.content }
-                val scan = listOf(characterText, historyText, recursiveScan)
+                val scan = (if (scanDepth == 0) emptyList() else characterScan.forEntry(entry) +
+                    listOf(historyText, additionalScanText, recursiveScan))
                     .filter(String::isNotBlank)
                     .joinToString("\n")
                 val matched = entry.constant || matches(entry, scan, diagnostics)
                 if (!matched) return@filter false
                 scores[entry.id] = matchScore(entry, scan, diagnostics)
-                if (entry.delay > 0 && state.delayStartedTurn == null) {
-                    states[stateKey] = state.copy(delayRemaining = entry.delay, delayStartedTurn = turnIndex)
-                    trace += trace(entry, "delay armed=${entry.delay}")
-                    return@filter false
-                }
-                if (state.delayRemaining > 0) {
-                    trace += trace(entry, "delay=${state.delayRemaining}")
-                    return@filter false
-                }
-                !entry.useProbability || entry.probability >= 100 || transaction.nextInt(100) < entry.probability
+                true
             }
-            newlyActivated.forEach { result[it.id] = it }
-            if (newlyActivated.isEmpty() || book.recursiveScanning != true) break
-            val recursiveContent = newlyActivated.filterNot { it.preventRecursion }.joinToString("\n") { it.content }
+            val ordered = newlyActivated.sortedWith(
+                compareByDescending<WorldBookEntryDefinition> { it.id in stickyIds }
+                    .thenByDescending { it.priority ?: it.insertionOrder },
+            )
+            val grouped = selectGroups(BookActivationCandidates(ordered, scores), stickyIds, result.values, transaction, trace)
+            val recursiveTexts = mutableListOf<String>()
+            grouped.forEach { entry ->
+                if (hasBudgetOverflowed() && !entry.ignoreBudget) {
+                    trace += trace(entry, "dropped after world-book budget overflow")
+                    return@forEach
+                }
+                if (entry.id !in stickyIds && entry.useProbability && entry.probability < 100 &&
+                    transaction.nextInt(100) >= entry.probability) {
+                    failedProbability += entry.id
+                    trace += trace(entry, "failed probability=${entry.probability}; not rerolled in this generation")
+                    return@forEach
+                }
+                val recursiveText = acceptEntry(entry) ?: return@forEach
+                result[entry.id] = entry
+                if (!entry.preventRecursion) recursiveTexts += recursiveText
+            }
+            if (hasBudgetOverflowed() || book.recursiveScanning != true) break
+            val recursiveContent = recursiveTexts.joinToString("\n")
             if (recursiveContent.isBlank()) break
             recursiveScan += "\n$recursiveContent"
             recursion++
@@ -255,7 +303,6 @@ class WorldBookEngine(
                 break
             }
         }
-        return BookActivationCandidates(result.values.toList(), scores)
     }
 
     private fun matches(
@@ -268,7 +315,7 @@ class WorldBookEngine(
         if (primary.none { it }) return false
         if (!entry.selective || entry.secondaryKeys.isEmpty()) return true
         val secondary = entry.secondaryKeys.map { key -> keyMatches(key, scan, entry, diagnostics) }
-        return when (entry.secondaryLogic) {
+        return when (entry.effectiveSecondaryLogic) {
             WorldBookSecondaryLogic.AND_ANY -> secondary.any { it }
             WorldBookSecondaryLogic.AND_ALL -> secondary.all { it }
             WorldBookSecondaryLogic.NOT_ANY -> secondary.none { it }
@@ -285,7 +332,7 @@ class WorldBookEngine(
         val primary = entry.keys.count { key -> keyMatches(key, scan, entry, diagnostics) }
         if (entry.secondaryKeys.isEmpty()) return primary
         val secondary = entry.secondaryKeys.count { key -> keyMatches(key, scan, entry, diagnostics) }
-        return when (entry.secondaryLogic) {
+        return when (entry.effectiveSecondaryLogic) {
             WorldBookSecondaryLogic.AND_ANY -> primary + secondary
             WorldBookSecondaryLogic.AND_ALL -> if (secondary == entry.secondaryKeys.size) primary + secondary else primary
             WorldBookSecondaryLogic.NOT_ANY,
@@ -347,14 +394,13 @@ class WorldBookEngine(
     }
 
     private fun selectGroups(
-        bookId: String,
         candidates: BookActivationCandidates,
-        states: Map<String, WorldBookEntryRuntimeState>,
+        stickyIds: Set<String>,
+        activated: Collection<WorldBookEntryDefinition>,
         transaction: MacroTransaction,
         trace: MutableList<CompilationTraceEntry>,
     ): List<WorldBookEntryDefinition> {
         val entries = candidates.entries
-        val ungrouped = entries.filter { it.group.isBlank() }
         val grouped = linkedMapOf<String, MutableList<WorldBookEntryDefinition>>()
         entries.filter { it.group.isNotBlank() }.forEach { entry ->
             entry.group.split(GROUP_SEPARATOR).map(String::trim).filter(String::isNotEmpty).forEach { group ->
@@ -364,10 +410,7 @@ class WorldBookEngine(
         val remaining = entries.toMutableSet()
         grouped.forEach { (groupName, original) ->
             var group = original.filter { it in remaining }
-            if (group.size <= 1) return@forEach
-            val sticky = group.filter {
-                states[runtimeStateKey(bookId, it.id)]?.stickyRemaining?.let { remaining -> remaining > 0 } == true
-            }
+            val sticky = group.filter { it.id in stickyIds }
             if (sticky.isNotEmpty()) {
                 group.filterNot { it in sticky }.forEach { loser ->
                     remaining -= loser
@@ -375,6 +418,14 @@ class WorldBookEngine(
                 }
                 return@forEach
             }
+            if (activated.any { groupName in it.group.split(GROUP_SEPARATOR).map(String::trim) }) {
+                group.forEach { loser ->
+                    remaining -= loser
+                    trace += groupTrace(loser, groupName, "group already activated in an earlier scan")
+                }
+                return@forEach
+            }
+            if (group.size <= 1) return@forEach
             if (group.any(WorldBookEntryDefinition::useGroupScoring)) {
                 val maxScore = group.maxOf { candidates.scores[it.id] ?: 0 }
                 group.filter { it.useGroupScoring && (candidates.scores[it.id] ?: 0) < maxScore }.forEach { loser ->
@@ -402,7 +453,7 @@ class WorldBookEngine(
             }
             winner?.let { trace += groupTrace(it, groupName, if (overrideWinner != null) "won group override" else "won weighted group") }
         }
-        return ungrouped + entries.filter { it.group.isNotBlank() && it in remaining }
+        return entries.filter { it in remaining }
     }
 
     private fun groupTrace(entry: WorldBookEntryDefinition, group: String, decision: String) = CompilationTraceEntry(
@@ -414,7 +465,6 @@ class WorldBookEngine(
     private fun WorldBookEntryRuntimeState.advance(): WorldBookEntryRuntimeState = when {
         stickyRemaining > 0 -> copy(stickyRemaining = stickyRemaining - 1)
         cooldownRemaining > 0 -> copy(cooldownRemaining = cooldownRemaining - 1)
-        delayRemaining > 0 -> copy(delayRemaining = delayRemaining - 1)
         else -> this
     }
 
@@ -426,25 +476,23 @@ class WorldBookEngine(
         entry: WorldBookEntryDefinition,
         diagnostics: MutableList<CompilationDiagnostic>,
     ): Boolean {
-        val future = try {
-            REGEX_EXECUTOR.submit<Boolean> { pattern.matcher(InterruptibleCharSequence(scan)).find() }
-        } catch (_: Exception) {
-            diagnostics += warning("WORLD_BOOK_REGEX_EXECUTOR_SATURATED", "World Book Regex 执行器繁忙，已跳过", entry.id)
-            return false
-        }
-        return try {
-            future.get(REGEX_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
-        } catch (_: TimeoutException) {
-            future.cancel(true)
-            diagnostics += warning("WORLD_BOOK_REGEX_TIMEOUT", "World Book key Regex 超时，已跳过", entry.id)
-            false
-        } catch (error: Exception) {
-            diagnostics += warning(
-                "WORLD_BOOK_REGEX_EXECUTION_FAILED",
-                "World Book key Regex 执行失败：${error.cause?.message ?: error.message}",
-                entry.id,
-            )
-            false
+        return when (val result = keyRegexExecutionStrategy.execute(REGEX_TIMEOUT_MILLIS) {
+            pattern.matcher(InterruptibleCharSequence(scan)).find()
+        }) {
+            is RegexExecutionResult.Success -> result.value
+            RegexExecutionResult.Rejected -> {
+                diagnostics += warning("WORLD_BOOK_REGEX_EXECUTOR_SATURATED", "World Book Regex 执行器繁忙，已跳过", entry.id)
+                false
+            }
+            RegexExecutionResult.TimedOut -> {
+                diagnostics += warning("WORLD_BOOK_REGEX_TIMEOUT", "World Book key Regex 超时，已跳过", entry.id)
+                false
+            }
+            is RegexExecutionResult.Failed -> {
+                diagnostics += warning("WORLD_BOOK_REGEX_EXECUTION_FAILED",
+                    "World Book key Regex 执行失败：${result.error.cause?.message ?: result.error.message}", entry.id)
+                false
+            }
         }
     }
 
@@ -480,6 +528,23 @@ class WorldBookEngine(
             ThreadPoolExecutor.AbortPolicy(),
         )
         private val GROUP_SEPARATOR = Regex(",\\s*")
+        private val KEY_REGEX_EXECUTION = object : RegexExecutionStrategy {
+            override fun <T> execute(timeoutMillis: Long, block: () -> T): RegexExecutionResult<T> {
+                val future = try {
+                    REGEX_EXECUTOR.submit<T>(block)
+                } catch (_: Exception) {
+                    return RegexExecutionResult.Rejected
+                }
+                return try {
+                    RegexExecutionResult.Success(future.get(timeoutMillis, TimeUnit.MILLISECONDS))
+                } catch (_: TimeoutException) {
+                    future.cancel(true)
+                    RegexExecutionResult.TimedOut
+                } catch (error: Exception) {
+                    RegexExecutionResult.Failed(error)
+                }
+            }
+        }
     }
 
     private data class InjectionKey(
