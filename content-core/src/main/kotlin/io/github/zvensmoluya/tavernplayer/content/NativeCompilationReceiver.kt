@@ -12,7 +12,7 @@ internal data class NativeReceivedDraft(val draft: NativeCompilationDraft, val n
 internal object NativeCompilationReceiver {
     private val json = Json
 
-    fun receive(response: String): NativeReceivedDraft {
+    fun receive(response: String, selection: NativeCompilationSelection? = null): NativeReceivedDraft {
         val notes = mutableListOf<NativeCompilationEvidence>()
         fun note(path: String, message: String) {
             notes += NativeCompilationEvidence(path, "输入规范化", NativeCompilationDisposition.UNCERTAIN, message)
@@ -54,11 +54,25 @@ internal object NativeCompilationReceiver {
             tree["summary"] = JsonPrimitive(value)
         }
         val normalized = JsonObject(tree)
+        selection?.let {
+            val forbidden = if (it.runtime == NativeStateSource.MVU) setOf("state", "assistantStateAdapters", "playerChoices") else setOf("mvu")
+            forbidden.firstOrNull { key -> key in tree }?.let { key ->
+                fail("/$key", "COMPILER_BRANCH_FIELD", "所选状态分支未声明此字段；空值或空数组也不能跨分支")
+            }
+        }
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
         validate(normalized, NativeCompilationDraft.serializer().descriptor, "", issues, 0)
         if (issues.isNotEmpty()) throw NativeCompilationInputFailure(issues)
         val draft = try { json.decodeFromJsonElement<NativeCompilationDraft>(normalized) }
         catch (_: IllegalArgumentException) { fail("response", "COMPILER_SCHEMA_DECODE", "字段值无法按适配契约解码；未自动转换执行数据") }
+        selection?.let {
+            if (it.runtime == NativeStateSource.MVU && (draft.mvu == null || draft.mvu.schemaSourceId != it.schemaSourceId))
+                fail("/mvu", "COMPILER_BRANCH_SOURCE", "编译结果必须保留本轮选择的 MVU Schema")
+            if (draft.stateBindings.any { binding -> binding.source != it.runtime })
+                fail("/stateBindings", "COMPILER_BRANCH_SOURCE", "只读绑定必须使用本轮选择的状态来源")
+            if (it.runtime == NativeStateSource.PLAYER && NativeScriptCapability.MVU_REPLACE in draft.script?.capabilities.orEmpty())
+                fail("/script/capabilities", "COMPILER_BRANCH_CAPABILITY", "普通卡契约未提供 MVU 写入接口")
+        }
         return NativeReceivedDraft(draft, notes)
     }
 

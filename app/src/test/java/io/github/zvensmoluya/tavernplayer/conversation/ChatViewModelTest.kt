@@ -48,6 +48,43 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    @Test fun `native surfaces return after chat completion failure and cancellation`() = kotlinx.coroutines.runBlocking {
+        for (ending in listOf("complete", "failure", "cancel")) {
+            val directory = Files.createTempDirectory("native-chat-refresh").toFile()
+            try {
+                val program = nativeActionProgram("")
+                val character = DemoConversationContent.character.copy(firstMessage = "Opening",
+                    nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
+                val conversations = ConversationRepository(directory, PromptCompiler())
+                val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+                val started = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                val generator = FakeGenerator { _, _ -> flow {
+                    emit(GenerationEvent.TextDelta("Reply"))
+                    started.complete(Unit)
+                    release.await()
+                    when (ending) {
+                        "complete" -> emit(GenerationEvent.Finished("stop"))
+                        "failure" -> error("Synthetic failure")
+                        else -> awaitCancellation()
+                    }
+                } }
+                val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
+                try {
+                    vm.loadConversation(saved.id)
+                    val original = awaitNative(vm).nativeSurfaces.single().revision
+                    vm.updateInput("Continue"); vm.send()
+                    kotlinx.coroutines.withTimeout(5000) { started.await() }
+                    assertTrue(vm.uiState.value.nativeSurfaces.isEmpty())
+                    if (ending == "cancel") vm.cancel() else release.complete(Unit)
+                    val completed = awaitNative(vm)
+                    assertFalse(completed.running)
+                    assertTrue("$ending must reproject the completed history", original != completed.nativeSurfaces.single().revision)
+                } finally { androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() } }
+            } finally { directory.deleteRecursively() }
+        }
+    }
+
     @Test fun `native actions persist independent commits reject duplicate clicks and restore candidate heads`() = kotlinx.coroutines.runBlocking {
         val directory = Files.createTempDirectory("native-actions").toFile()
         try {

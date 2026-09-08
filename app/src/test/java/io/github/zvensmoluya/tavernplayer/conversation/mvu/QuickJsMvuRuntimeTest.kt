@@ -41,6 +41,36 @@ class QuickJsMvuRuntimeTest {
         Unit
     }
 
+    @Test fun dynamicHelperImportRunsBeforeInitializationAndKeepsSourceBinding() = runBlocking {
+        val original = program()
+        val source = """
+            let registerMvuSchema;
+            try { ({registerMvuSchema} = await import('https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js')); }
+            catch (_) { ({registerMvuSchema} = await import('https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js')); }
+        """.trimIndent() + "\n" + original["schemaScript"]!!.jsonPrimitive.content
+        MvuRuntimeContract.verify(bundle(), JsonObject(original + ("schemaScript" to JsonPrimitive(source))), temporary.newFolder())
+        Unit
+    }
+
+    @Test fun unresolvedTopLevelAwaitIsCancelledDuringLoad() = runBlocking {
+        try {
+            QuickJsMvuRuntime.create(bundle(), JsonObject(program() + ("schemaScript" to
+                JsonPrimitive("await new Promise(() => {});"))), evaluationTimeoutMillis = 200).close()
+            fail("Expected load timeout")
+        } catch (_: TimeoutCancellationException) { }
+    }
+
+    @Test fun compilationPreflightRejectsSchemaInitializationErrors() = runBlocking {
+        val character = io.github.zvensmoluya.tavernplayer.content.CharacterAsset(id = "fixture", name = "Sample",
+            nativeAdaptation = io.github.zvensmoluya.tavernplayer.content.NativeAdaptation(sourceSha256 = "a".repeat(64),
+                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(
+                    "registerMvuSchema(z.object({ required: z.string() }));")))
+        try {
+            MvuConversationRuntime { bundle() }.validateProgram(character.snapshot())
+            fail("Schema diagnostics must prevent installation")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test fun runawayEventIsInterruptedAndRuntimeCannotBeReused() = runBlocking {
         val original = program()
         val looping = JsonObject(original + ("schemaScript" to JsonPrimitive(

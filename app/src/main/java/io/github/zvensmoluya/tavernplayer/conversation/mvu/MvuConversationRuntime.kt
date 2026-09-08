@@ -9,6 +9,19 @@ import kotlinx.serialization.json.*
 class MvuConversationRuntime(
     private val loadBundle: suspend () -> String = { error("此构建未提供 MVU 运行资源") },
 ) {
+    /** Load and initialize the original program before offering an installable compilation result. */
+    suspend fun validateProgram(character: CharacterSnapshot) {
+        if (character.nativeAdaptation?.mvu == null) return
+        withRuntime(character) { runtime ->
+            fun verify(evaluation: MvuEvaluation) {
+                require(evaluation.diagnostics.none { it.level == "error" }) { "原 MVU 初始化报告错误" }
+            }
+            verify(runtime.initialize(listOf("Opening.")))
+            val greetings = (listOf(character.firstMessage) + character.alternateFirstMessages).filter { it.isNotBlank() }
+            if (greetings.isNotEmpty()) verify(runtime.initialize(greetings))
+        }
+    }
+
     suspend fun initialize(record: ConversationRecord): ConversationRecord {
         if (record.character.nativeAdaptation?.mvu == null || record.runtimeState.mvuState != null) return record
         require(record.turns.size <= 1 && record.turns.all { turn ->

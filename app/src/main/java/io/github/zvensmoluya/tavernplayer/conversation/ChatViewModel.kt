@@ -319,9 +319,8 @@ class ChatViewModel(
                                 "variables.read" -> record.nativeContext().getValue("state")
                                 "variables.replaceMvu" -> {
                                     val data = value as? JsonObject ?: error("MVU 数据必须为对象")
-                                    require(data["stat_data"] is JsonObject && data["schema"] is JsonObject) { "MVU 数据必须保留 stat_data 和 schema" }
                                     val old = requireNotNull(record.runtimeState.mvuState)
-                                    saveNativeRecord(NativeOperations.commit(record, operationId, record.runtimeState.copy(mvuState = old.copy(data = data))))
+                                    saveNativeRecord(NativeOperations.commit(record, operationId, record.runtimeState.copy(mvuState = old.withDirectReplacement(data))))
                                     JsonNull
                                 }
                                 "program.replace" -> {
@@ -1095,6 +1094,7 @@ class ChatViewModel(
                     } finally {
                         generationJob = null
                         _uiState.update { it.copy(running = false) }
+                        refreshNativeSurfaces()
                     }
                 }
             }
@@ -1120,6 +1120,7 @@ class ChatViewModel(
                 }
                 generationJob = null
                 _uiState.update { it.copy(running = false) }
+                refreshNativeSurfaces()
             }
         }
     }

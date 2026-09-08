@@ -132,8 +132,10 @@ class QuickJsMvuRuntime private constructor(
                     js.evaluationTimeoutMillis = 10_000
                     js.evaluate<Any?>(bundle, filename = "mvu-runtime.js")
                     js.evaluationTimeoutMillis = evaluationTimeoutMillis
-                    js.evaluate<Any?>("globalThis.session = PlayerMvu.createSession(JSON.parse(${JsonPrimitive(programText)})); void 0;",
-                        filename = "mvu-program.js")
+                    withTimeout(evaluationTimeoutMillis) {
+                        js.evaluate<Any?>("globalThis.session = await PlayerMvu.createSession(JSON.parse(${JsonPrimitive(programText)})); void 0;",
+                            filename = "mvu-program.js")
+                    }
                     QuickJsMvuRuntime(sha256(bundle), sha256(programText), dispatcher, js, evaluationTimeoutMillis)
                 }
             } catch (error: Throwable) {

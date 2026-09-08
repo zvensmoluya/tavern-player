@@ -2,6 +2,12 @@
 
 日期：2026-09-08。实现范围是可执行原型；v9 真实模型实验结果见下文，Android 实机验收仍需单独完成。
 
+最新 [原 MVU 加载与开局流程保留](native-opening-workflow-20260908.md) 记录 v13–v15：修复已锁定 helper 的动态导入与原 schema 类型保留，增加安装前真实初始化检查，以及只读开场候选上下文。C-01 的 v14 原始产物通过六组开局对照；v15 最终请求受网关响应大小上限阻断，文案修正未获整体验证。
+
+后续已用当前 v11 产物完成 [C-04 Android 模拟器实测](native-surface-device-verification-20260908.md)：发现并修复聊天结束后动态面板未恢复的问题，两轮真实聊天、重生成、候选切换和磁盘重载通过。物理设备与自然聊天协议遵循仍未覆盖。
+
+随后进行了 [DeepSeek C-01 / C-02 复杂卡编译与 reasoning 记录](native-deepseek-complex-card-experiment-20260908.md)：C-02 安装与初始化通过；C-01 耗尽 16,384 输出额度且未返回最终 JSON。该实验未改 v11 提示词。
+
 ## 已接通的链路
 
 原卡程序材料 → `native-compiler-11` → 来源关联的 ES modules、Surface 入口、handler 和能力声明 → 本地结构校验、QuickJS 加载与导出检查 → 安装 → 新对话快照 → 动态原生界面 → JS 操作 → 宿主持久提交 → 重新投影。
@@ -45,7 +51,7 @@ handler 签名为 `async function(context, args, input)`。每个宿主调用必
 | 声明 | 方法 | 实际效果 |
 | --- | --- | --- |
 | `VARIABLES_READ` | `context.variables.read()` | 读取当前完整业务状态副本 |
-| `MVU_REPLACE` | `context.variables.replaceMvu(fullData)` | 直接替换完整 MVU 数据，必须保留对象类型 `stat_data/schema`；不调用 Schema、MVU 消息解析或更新事件 |
+| `MVU_REPLACE` | `context.variables.replaceMvu(fullData)` | 直接替换完整 MVU 数据，必须保留 `stat_data` 对象及原 `schema` 的值和类型（固定 Zod helper 可使用字符串标记）；不调用 Schema、MVU 消息解析或更新事件 |
 | `PROGRAM_STATE_REPLACE` | `context.program.replace(object)` | 保存显式程序私有状态；后续调用及恢复可读 |
 | `DRAFT_REPLACE` | `context.draft.replace(text)` | 保存并替换输入，不自动发送 |
 | `GENERATE_TEXT` | `context.generation.text({prompt})` | 当前聊天连接执行单独辅助请求，返回完整文字；不自动使用历史、预设、世界书，不追加消息或解析 MVU |

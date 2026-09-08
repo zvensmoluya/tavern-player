@@ -55,3 +55,10 @@ npm --prefix tools/mvu-probe run probe -- $env:COMMUNITY_CARD
 `npm run probe:ejs` 按哈希读取仓库本地 C-04 原件，或使用 `npm run probe:ejs -- <local-source>`；按提交和文件哈希下载参照扩展源码，比较原始模板输出。生成的原件、参照及用例仅进入忽略的 `build/`，其中 `build/android-assets/ejs/` 供 JVM/Android 测试使用。普通 APK 不包含这些样本。
 
 宿主接口、历史范围中的上游特殊行为和验证见 [EJS 接入记录](../../docs/ejs-quickjs-integration-20260907.md)。
+
+
+## Schema 模块加载
+
+`schema-script.mjs` 通过 Acorn 检查完整 AST。`cdn.jsdelivr.net` 与 `testingcf.jsdelivr.net` 下 `/gh/StageDog/tavern_resource/dist/util/mvu_zod.js` 的静态命名导入（可使用别名）和字面量 `import()` 映射到打包的同一个 helper；原始远程内容不会下载。原程序局部变量、顶层 await 和 try/catch 顺序保留。其他 URL、计算得到的 import 地址和未映射导出在运行原程序前拒绝。
+
+加载现在返回 Promise，Node 参照宿主和 QuickJS 宿主均等待 Schema 注册后才初始化。QuickJS 对异步加载施加超时并在失败／取消时释放实例。程序原文和程序哈希不改写为模型输出。打包产物变化会改变 bundle 指纹；已有检查点仍按现有规则拒绝跨 bundle 继续，应使用新对话验证，不自动迁移既有状态。

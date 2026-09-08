@@ -12,6 +12,8 @@ import java.security.MessageDigest
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -42,6 +44,8 @@ class NativeCompilationLiveTest {
         val customSourceHash = System.getenv("TAVERN_COMPILER_SOURCE_SHA256")?.takeIf { it.isNotBlank() }
         val sample = when (customSourceHash) {
             null -> "C-03"
+            "1945abd1e2368ec332399830cd85c62be4a9a527f0c43dae6f34db9c9b3b2e1a" -> "C-01"
+            "b7cf04e3198ffc3a6f9ebed5c398faf7a9066e49dc8887896db5681a0d1498eb" -> "C-02"
             "fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe" -> "C-04"
             "7df0b58b2a46ac9ae2169c45f715a58760ebdad63017c5a860222d808beabe32" -> "C-05"
             else -> "sample-${customSourceHash.take(12)}"
@@ -76,6 +80,25 @@ class NativeCompilationLiveTest {
             System.getenv("TAVERN_COMPILER_CONTEXT_TOKENS") ?: "",
         )
         val rawGenerator = ModelGatewayConversationGenerator(gateway, connections)
+        // Capture only provider-exposed reasoning, outside the production compiler and its input.
+        // Append while streaming so a later rejection or transport failure retains available evidence.
+        val reasoningFile = File(output, "compiler-reasoning.txt").apply { writeText("") }
+        val observedGenerator = object : ConversationGenerator {
+            override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) =
+                rawGenerator.validateTokens(connection, plan)
+            override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow {
+                val prefix = if (plan.messages.first().origin.stage == "native-compilation-selection") "routing" else "compiler"
+                rawGenerator.stream(connection, plan).collect { event ->
+                    if (event is GenerationEvent.ReasoningDelta) File(output, "$prefix-reasoning.txt").appendText(event.text)
+                    if (event is GenerationEvent.TextDelta) File(output, "$prefix-response-stream.txt").appendText(event.text)
+                    if (event is GenerationEvent.Usage) File(output, "$prefix-usage.json").writeText(buildJsonObject {
+                        put("inputTokens", event.value.inputTokens); put("outputTokens", event.value.outputTokens)
+                        put("reasoningTokens", event.value.reasoningTokens); put("cachedTokens", event.value.cachedTokens)
+                    }.toString())
+                    emit(event)
+                }
+            }
+        }
         // Replay an already completed private provider output without spending compiler tokens again.
         val replay = System.getenv("TAVERN_COMPILER_REPLAY_FILE")?.takeIf { it.isNotBlank() }?.let(::File)
         val attempt = try {
@@ -85,10 +108,16 @@ class NativeCompilationLiveTest {
                     NativeAdaptationCompiler().complete(imported.character, response, characters.availableAssetIds(imported.character.id)),
                     response, null, compilerConnection.selectedModel, null,
                 )
-            } else NativeCompilationService(rawGenerator).compile(
+            } else NativeCompilationService(observedGenerator, mvuRuntime =
+                io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
+                    File(root, "tools/mvu-probe/build/app-assets/mvu/runtime.js").readText()
+                }).compile(
                 imported.character, characters.availableAssetIds(imported.character.id), compilerConnection,
                 onProgress = { File(output, "progress.txt").appendText("$it\n") },
-                onPrepared = { File(output, "compiler-request.json").writeText(Json.encodeToString(it)) },
+                onPrepared = {
+                    val prefix = if (it.messages.first().origin.stage == "native-compilation-selection") "routing" else "compiler"
+                    File(output, "$prefix-request.json").writeText(Json.encodeToString(it))
+                },
             )
         } catch (error: GatewayException) {
             File(output, "failure.json").writeText(buildJsonObject {
@@ -102,6 +131,7 @@ class NativeCompilationLiveTest {
             throw error
         }
         File(output, "compiler-response.json").writeText(attempt.response)
+        attempt.routing?.let { File(output, "routing-response.json").writeText(it.response) }
         File(output, "metadata.json").writeText(buildJsonObject {
             put("sample", sample); put("sourceSha256", sourceHash)
             put("compilerVersion", NativeCompilationInstructions.VERSION); put("model", attempt.model)
@@ -109,6 +139,12 @@ class NativeCompilationLiveTest {
             put("finishReason", attempt.finishReason); put("inputTokens", attempt.usage?.inputTokens)
             put("outputTokens", attempt.usage?.outputTokens); put("result", attempt.result::class.simpleName)
             put("reasoningTokens", attempt.usage?.reasoningTokens)
+            put("exposedReasoningBytes", reasoningFile.length())
+            attempt.routing?.let {
+                put("routingInputTokens", it.usage?.inputTokens); put("routingOutputTokens", it.usage?.outputTokens)
+                put("routingReasoningTokens", it.usage?.reasoningTokens); put("routingFinishReason", it.finishReason)
+                put("selectedRuntime", it.selection?.runtime?.name)
+            }
         }.toString())
         if (attempt.result is NativeCompilationResult.Rejected) {
             File(output, "issues.json").writeText(Json.encodeToString(attempt.result.issues))
@@ -205,13 +241,16 @@ class NativeCompilationLiveTest {
         assertTrue("input-only source must not gain state", adaptation.state.isEmpty())
         assertTrue(adaptation.assistantStateAdapters.isEmpty())
         assertTrue(adaptation.memories.isEmpty())
-        val form = adaptation.forms.single()
+        val form = adaptation.forms.singleOrNull()
+        var values: Map<String, List<String>> = emptyMap()
+        var draftedText = ""
+        if (form != null) {
         assertNull("ordinary form must not become setup", form.setup)
         assertEquals(5, form.fields.size)
         val reasons = form.fields.single { it.type == NativeFormFieldType.MULTI_SELECT }
         assertEquals(listOf("家庭矛盾", "心理问题", "学业障碍", "单纯想聊天"), reasons.options.map { it.value })
         assertTrue(form.fields.all { it.emptyText.isNotBlank() })
-        val values = form.fields.associate { field -> field.id to when {
+        values = form.fields.associate { field -> field.id to when {
             field.id == reasons.id -> listOf("学业障碍", "单纯想聊天")
             "时间" in field.label -> listOf("周三下午14:00")
             "忌口" in field.label || "需求" in field.label -> listOf("不喝咖啡")
@@ -226,6 +265,8 @@ class NativeCompilationLiveTest {
         form.fields.forEach { assertTrue("empty fallback lost", it.emptyText in empty.text) }
         File(output, "draft.txt").writeText(drafted.text)
         File(output, "empty-draft.txt").writeText(empty.text)
+            draftedText = drafted.text
+        } else require(adaptation.script != null) { "Input workflow was omitted" }
         assertTrue(characters.installNativeAdaptation(imported.character.id, adaptation) is NativeAdaptationInstallResult.Installed)
         val installed = CharacterRepository(directory).get(imported.character.id)!!
         assertEquals(adaptation, installed.nativeAdaptation)
@@ -237,9 +278,11 @@ class NativeCompilationLiveTest {
         try {
             viewModel.loadConversation(record.id)
             withTimeout(20_000) { viewModel.uiState.first { it.conversationId == record.id && !it.busy && !it.loadingConnections } }
-            assertEquals(form.id, viewModel.uiState.value.messages.single().nativeForms.single().id)
-            viewModel.submitNativeForm(form.id, values)
-            assertEquals(drafted.text, viewModel.uiState.value.input)
+            if (form != null) {
+                assertEquals(form.id, viewModel.uiState.value.messages.single().nativeForms.single().id)
+                viewModel.submitNativeForm(form.id, values)
+            } else draftedText = verifyScriptForm(viewModel, output)
+            assertEquals(draftedText, viewModel.uiState.value.input)
             viewModel.send()
             File(output, "progress.txt").appendText("Playing compiled C-03\n")
             withTimeout(480_000) { viewModel.uiState.first { !it.busy } }
@@ -267,6 +310,47 @@ class NativeCompilationLiveTest {
             androidx.lifecycle.ViewModelStore().apply { put("live", viewModel); clear() }
         }
     }
+    /** Same C-03 behavior checks through real Surface actions, without requiring a fixed-form artifact. */
+    private suspend fun verifyScriptForm(model: ChatViewModel, output: File): String {
+        suspend fun form(): NativeRenderedSurface = withTimeout(20_000) {
+            model.uiState.first { !it.busy && it.nativeSurfaces.any { surface -> surface.data.surface == NativeSurfaceType.FORM } }
+                .nativeSurfaces.single { it.data.surface == NativeSurfaceType.FORM }
+        }
+        suspend fun invoke(action: NativeSurfaceAction, inputs: Map<String, String>) {
+            val surface = form()
+            model.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, action, input = inputs))
+            withTimeout(20_000) { model.uiState.first { state -> !state.busy && state.nativeSurfaces.any { it.revision != surface.revision } } }
+        }
+        val first = form()
+        assertEquals(4, first.data.fields.size)
+        val reasons = listOf("家庭矛盾", "心理问题", "学业障碍", "单纯想聊天")
+        val toggles = first.data.actions.filter { action -> action.args.values.any { it is JsonPrimitive && it.content in reasons } }
+        assertEquals(reasons.size, toggles.size)
+        invoke(first.data.actions.single { it.args.isEmpty() }, emptyMap())
+        val empty = model.uiState.value.input
+        for (fallback in listOf("匿名访客", "未指定时间", "未勾选", "无详细描述", "忌口/需求：无")) assertTrue(fallback in empty)
+        File(output, "empty-draft.txt").writeText(empty)
+        val inputs = form().data.fields.associate { field -> field.id to when {
+            "时间" in field.label -> "周三下午14:00"
+            "忌口" in field.label || "需求" in field.label -> "不喝咖啡"
+            "描述" in field.label -> "最近考试压力大，想聊聊怎样安排复习。"
+            else -> "小林"
+        } }
+        // Original checkbox collection is DOM order, not click order.
+        for (reason in listOf("单纯想聊天", "学业障碍")) {
+            val action = form().data.actions.single { it.args.values.any { v -> v is JsonPrimitive && v.content == reason } }
+            invoke(action, inputs)
+        }
+        form().data.fields.forEach { assertEquals(inputs[it.id], it.value) }
+        invoke(form().data.actions.single { it.args.isEmpty() }, inputs)
+        val drafted = model.uiState.value.input
+        inputs.values.forEach { assertTrue("Input lost", it in drafted) }
+        assertTrue("Original checkbox join/order lost", "学业障碍、单纯想聊天" in drafted)
+        File(output, "draft.txt").writeText(drafted)
+        File(output, "surface-projection.json").writeText(Json.encodeToString(form().data))
+        return drafted
+    }
+
 }
 
 internal class CompilationTestConnectionState : ConnectionStateStore {

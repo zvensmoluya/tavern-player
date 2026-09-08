@@ -9,11 +9,29 @@ class NativeAdaptationCompiler {
     fun prepare(character: CharacterAsset, availableAssetIds: Set<String>): String =
         NativeProgramExtractor().extract(character, availableAssetIds).request.toString()
 
-    fun complete(character: CharacterAsset, response: String, availableAssetIds: Set<String>): NativeCompilationResult {
+    fun select(character: CharacterAsset, response: String, availableAssetIds: Set<String>): NativeCompilationSelectionResult = try {
+        require(response.length <= MAX_OUTPUT_CHARS) { "状态来源选择超过大小限制" }
+        val selection = json.decodeFromString<NativeCompilationSelection>(response)
+        when (selection.runtime) {
+            NativeStateSource.MVU -> {
+                val source = NativeProgramExtractor().extract(character, availableAssetIds).sources
+                    .singleOrNull { it.id == selection.schemaSourceId }
+                require(source != null && source.active && source.kind == "SCRIPT") { "MVU Schema 必须引用启用的原卡脚本" }
+            }
+            NativeStateSource.PLAYER -> require(selection.schemaSourceId == null) { "普通卡不能选择 MVU Schema" }
+        }
+        NativeCompilationSelectionResult.Ready(selection)
+    } catch (error: IllegalArgumentException) {
+        NativeCompilationSelectionResult.Rejected(listOf(NativeAdaptationValidationIssue(
+            "selection", "COMPILER_INVALID_SELECTION", error.message ?: "状态来源选择无效")))
+    }
+
+    fun complete(character: CharacterAsset, response: String, availableAssetIds: Set<String>,
+                 selection: NativeCompilationSelection? = null): NativeCompilationResult {
         fun reject(code: String, message: String) = NativeCompilationResult.Rejected(
             listOf(NativeAdaptationValidationIssue("response", code, message)))
         if (response.length > MAX_OUTPUT_CHARS) return reject("COMPILER_OUTPUT_TOO_LARGE", "模型适配结果超过大小限制")
-        val received = try { NativeCompilationReceiver.receive(response) }
+        val received = try { NativeCompilationReceiver.receive(response, selection) }
         catch (error: NativeCompilationInputFailure) { return NativeCompilationResult.Rejected(error.issues) }
         val draft = received.draft
         return try {

@@ -56,10 +56,21 @@ fun ConversationRecord.nativeContext(): JsonObject = buildJsonObject {
     put("state", runtimeState.mvuState?.data ?: JsonObject(runtimeState.conversationState.values))
     put("programState", runtimeState.scriptState ?: character.nativeAdaptation?.script?.initialState ?: JsonObject(emptyMap()))
     put("draft", draft)
+    val opening = turns.singleOrNull()?.takeIf { turn -> turn.variants.all { it.openingSourceIndex != null } }
+    put("openingSourceIndex", opening?.selected?.openingSourceIndex)
+    put("openingSourceIndices", buildJsonArray { opening?.variants?.forEach { add(checkNotNull(it.openingSourceIndex)) } })
     put("userName", persona.name); put("characterName", character.promptName)
     put("history", buildJsonArray { turns.forEach { turn -> add(buildJsonObject {
         put("role", turn.role.name.lowercase()); put("text", turn.selected.message.content)
     }) } })
+}
+
+/** The pinned Zod helper may use a scalar schema marker; preserve it exactly, do not invent a schema. */
+fun MvuStateSnapshot.withDirectReplacement(replacement: JsonObject): MvuStateSnapshot {
+    require(replacement["stat_data"] is JsonObject && "schema" in replacement && replacement["schema"] == data["schema"]) {
+        "MVU 数据必须保留 stat_data 对象及原 schema 值"
+    }
+    return copy(data = replacement)
 }
 
 object NativeOperations {

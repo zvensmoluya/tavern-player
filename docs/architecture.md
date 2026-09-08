@@ -19,7 +19,9 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-11` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
+`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-15` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
+
+当前编译分两次模型请求：先以完整 Program View 选择 MVU 或 Player 状态来源，再用同一份源码和所选分支的契约编译。MVU 分支不提供独立 Player 状态、旧写入器及其类型；Player 分支不提供 MVU 配置与写入接口。接收端校验分支、Schema 引用及绑定来源，跨分支字段即使为空也拒绝。运行时 `NativeSurfaceField` 由实际序列化描述单独列出，与固定 `NativeFormField` 区分。选择阶段使用 LOW、主编译使用 HIGH reasoning；两阶段用量分别记录，额外读取完整源码会增加输入成本。分支语义仍由模型判断，本地只验证引用有效性，不增加 JS 写法识别器。
 
 `app` 在编译与安装时校验真实 QuickJS 模块加载及导出，显示时执行只读投影。用户操作通过显式声明的状态读取、MVU 直接替换、程序私有状态、草稿及辅助生成接口调用宿主。操作检查点独立保存于消息候选，保留原消息结束快照；宿主写入先保存再发布，切换候选恢复所属 head，中断不自动重发请求。结构和加载检查均不证明整卡等价。宿主范围、取消语义和本地验证见 [JS 动态原生 Surface](native-script-surfaces-20260908.md)。
 
@@ -77,6 +79,8 @@ Regex 来源顺序为 Preset 后 Character。canonical storage、Provider prompt
 World Book 的 sticky / cooldown 状态以 `bookId:entryId` 保存；delay 根据当前选中分支的消息数判断，不再保存首次命中的倒计时。角色描述、性格、场景、深度提示与作者备注只按条目的匹配开关参与扫描。分组、概率和预算在每轮递归前完成，已入选分组排除后续同组候选，概率失败不会在本轮生成中重掷；普通正文展开 Macro 后计入预算并参与递归，WORLD_INFO Regex 在入选后处理。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结 sticky / cooldown。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭，保留 placement、at-depth 与 outlet。修正范围和剩余边界见[世界书阅读与编排修正](world-book-reader-and-semantics-20260908.md)，不据此宣称完整 ST 语义等价。
 
 ## Token 与 Provider
+
+导入期 Native 编译独立于普通聊天预算：不使用默认 128K context／16K output，也不以保守 token 估算阻止完整源码请求。连接的模型输出上限存在时直接使用；未知时省略协议可选的输出限制。Anthropic 的 `max_tokens` 必填，缺少模型声明时使用 65,536 回退值。真实上下文容量由 Provider 判定；本地来源、格式及运行资源校验仍然执行。
 
 `TokenAccounting` 先进行本地内容选择：
 

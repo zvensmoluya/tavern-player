@@ -9,11 +9,33 @@ import org.junit.Test
 import org.junit.Assert.*
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRuntimeState
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assume.assumeTrue
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class QuickJsMvuAndroidTest {
+    @Test fun dynamicHelperImportInitializesOnAndroid() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val assets = instrumentation.context.assets
+        val bundle = instrumentation.targetContext.assets.open("mvu/runtime.js").bufferedReader().use { it.readText() }
+        val original = MvuRuntimeContract.program(assets.open("mvu/state-card.json").bufferedReader().use { it.readText() })
+        val prefix = """
+            let registerMvuSchema;
+            try { ({registerMvuSchema} = await import('https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js')); }
+            catch (_) { ({registerMvuSchema} = await import('https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js')); }
+        """.trimIndent()
+        val program = JsonObject(original + ("schemaScript" to JsonPrimitive(prefix + "\n" + original.getValue("schemaScript").jsonPrimitive.content)))
+        val runtime = QuickJsMvuRuntime.create(bundle, program)
+        try {
+            val initial = runtime.initialize().messages.first()
+            assertTrue((initial.state.data["stat_data"] as JsonObject).isNotEmpty())
+            val next = runtime.update("A quiet moment passes.", initial.applyTo(ConversationRuntimeState())).messages.single()
+            assertEquals(initial.state.data["stat_data"], next.state.data["stat_data"])
+        } finally { runtime.close() }
+    }
+
     @Test fun suppliedSchemaInitializesOnAndroid() = runBlocking {
         assumeTrue("Opt-in private regression fixture", InstrumentationRegistry.getArguments().getString("schemaRegression") == "1")
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -35,6 +35,58 @@ class NativeAdaptationCompilerTest {
         )
     }
 
+    @Test fun selectionValidatesReferencesWithoutLocallyRecognizingJavascript() {
+        val source = card("const install = registerMvuSchema; install(makeSchema());")
+        val view = Json.parseToJsonElement(compiler.prepare(source, emptySet())).jsonObject
+        val entries = view.getValue("sources").jsonArray.map { it.jsonObject }
+        val id = entries.single { it["kind"] == JsonPrimitive("SCRIPT") }.getValue("id").jsonPrimitive.content
+        val response = Json.encodeToString(NativeCompilationSelection(NativeStateSource.MVU, id))
+        assertTrue(compiler.select(source, response, emptySet()) is NativeCompilationSelectionResult.Ready)
+        for (bad in listOf("missing", entries.first { it["kind"] != JsonPrimitive("SCRIPT") }.getValue("id").jsonPrimitive.content)) {
+            assertTrue(compiler.select(source, Json.encodeToString(NativeCompilationSelection(NativeStateSource.MVU, bad)), emptySet()) is NativeCompilationSelectionResult.Rejected)
+        }
+        val disabled = source.copy(rawCard = Json.parseToJsonElement(source.rawCard.toString().replace("\"enabled\":true", "\"enabled\":false")).jsonObject)
+        assertTrue(compiler.select(disabled, response, emptySet()) is NativeCompilationSelectionResult.Rejected)
+        assertTrue(compiler.select(source, """{"runtime":"PLAYER","schemaSourceId":"x"}""", emptySet()) is NativeCompilationSelectionResult.Rejected)
+        assertTrue(compiler.select(source, """{"runtime":"PLAYER","extra":true}""", emptySet()) is NativeCompilationSelectionResult.Rejected)
+    }
+
+    @Test fun selectedBranchRejectsForeignFieldsEvenWhenEmptyAndCannotChangeOwnership() {
+        val mvu = NativeCompilationSelection(NativeStateSource.MVU, "schema")
+        val player = NativeCompilationSelection(NativeStateSource.PLAYER)
+        fun rejected(response: String, selection: NativeCompilationSelection, code: String) {
+            try { NativeCompilationReceiver.receive(response, selection); fail("accepted $response") }
+            catch (error: NativeCompilationInputFailure) { assertEquals(code, error.issues.first().code) }
+        }
+        for (field in listOf("state", "assistantStateAdapters", "playerChoices"))
+            rejected("""{"summary":"test","mvu":{"schemaSourceId":"schema"},"$field":[]}""", mvu, "COMPILER_BRANCH_FIELD")
+        rejected("""{"summary":"test","mvu":null}""", player, "COMPILER_BRANCH_FIELD")
+        rejected("""{"summary":"test"}""", mvu, "COMPILER_BRANCH_SOURCE")
+        rejected("""{"summary":"test","mvu":{"schemaSourceId":"changed"}}""", mvu, "COMPILER_BRANCH_SOURCE")
+        rejected("""{"summary":"test","stateBindings":[{"key":"x","source":"MVU","path":"/x","type":"STRING"}]}""", player, "COMPILER_BRANCH_SOURCE")
+        rejected("""{"summary":"test","script":{"modules":[],"surfaces":[],"capabilities":["MVU_REPLACE"]}}""", player, "COMPILER_BRANCH_CAPABILITY")
+        assertEquals("schema", NativeCompilationReceiver.receive("""{"summary":"test","mvu":{"schemaSourceId":"schema"}}""", mvu).draft.mvu!!.schemaSourceId)
+    }
+
+    @Test fun branchContractsExcludeForeignCapabilitiesAndSeparateRuntimeFormTypes() {
+        val mvu = NativeCompilationInstructions.text(NativeCompilationSelection(NativeStateSource.MVU, "schema"))
+        val player = NativeCompilationInstructions.text(NativeCompilationSelection(NativeStateSource.PLAYER))
+        for (field in listOf("playerChoices", "assistantStateAdapters", "ConversationStateDefinition", "UPDATE_VARIABLE_JSON_PATCH_V1"))
+            assertFalse(field, mvu.contains(field))
+        assertFalse(player.contains("MVU_REPLACE"))
+        assertFalse(player.contains("NativeCompilationMvu"))
+        assertTrue(mvu.contains("mvu: NativeCompilationMvu\n"))
+        for (contract in listOf(mvu, player)) {
+            val runtime = contract.substringAfter("RUNTIME JS PROJECTION RETURN SCHEMA")
+            assertTrue(runtime.contains("NativeSurfaceField {"))
+            assertTrue(runtime.contains("value?: string"))
+            assertTrue(runtime.contains("options?: [string]"))
+            assertFalse(runtime.contains("initialValues"))
+            assertFalse(runtime.contains("NativeFormField"))
+            assertTrue(contract.substringBefore("RUNTIME JS PROJECTION RETURN SCHEMA").contains("NativeFormField {"))
+        }
+    }
+
     @Test fun completeSourceWithoutGameplayCandidates() {
         val code = "import 'https://example.test/module.js';\n// semantic comment\nconst t = " + tick + "visible $" + "{x / 2}" + tick + ";\nwhile (ready()) { doSomething('meaningful string'); }"
         val source = card(code).copy(nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), report = NativeCompatibilityReport(summary = "PRIVATE_MANUAL")))
@@ -111,7 +163,7 @@ class NativeAdaptationCompilerTest {
         for (field in listOf("progressions", "worldBookTextSelections")) {
             val response = """{"summary":"obsolete", "$field":[]}"""
             assertTrue(compiler.complete(card(), response, emptySet()) is NativeCompilationResult.Rejected)
-            assertFalse(NativeCompilationInstructions.text.contains("$field?:"))
+            assertFalse(NativeCompilationInstructions.text(NativeCompilationSelection(NativeStateSource.MVU, "script.0")).contains("$field?:"))
         }
     }
 
@@ -231,7 +283,7 @@ class NativeAdaptationCompilerTest {
 
     @Test fun budgetFailsWithoutTruncatingSource() {
         assertThrows(IllegalArgumentException::class.java) { compiler.prepare(card("x".repeat(300_000)), emptySet()) }
-        assertTrue(NativeCompilationInstructions.text.contains("NativeCompilationForm"))
-        assertTrue(NativeCompilationInstructions.text.contains("UPDATE_VARIABLE_JSON_PATCH_V1"))
+        assertTrue(NativeCompilationInstructions.text(NativeCompilationSelection(NativeStateSource.MVU, "script.0")).contains("NativeCompilationForm"))
+        assertTrue(NativeCompilationInstructions.text(NativeCompilationSelection(NativeStateSource.PLAYER)).contains("UPDATE_VARIABLE_JSON_PATCH_V1"))
     }
 }

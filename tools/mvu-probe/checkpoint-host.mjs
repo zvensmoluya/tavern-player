@@ -2,7 +2,7 @@
 // This entry is only loaded with an explicitly supplied, audited local program.
 import { prepareSchemaScript } from './schema-script.mjs';
 
-export function installCheckpointHost(mvu, program) {
+export async function installCheckpointHost(mvu, program) {
     const copy = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     const chat = [];
     const handlers = new Map();
@@ -82,7 +82,7 @@ export function installCheckpointHost(mvu, program) {
         registerMvuSchema: mvu.registerMvuSchema,
     });
     const source = prepareSchemaScript(program.schemaScript);
-    Function(source)();
+    await Function("return " + source)();
     const resetTrace = () => { diagnostics = []; events = []; };
     const result = (sourceText, processedText, data) => ({ sourceText, processedText, data: copy(data) });
     return {

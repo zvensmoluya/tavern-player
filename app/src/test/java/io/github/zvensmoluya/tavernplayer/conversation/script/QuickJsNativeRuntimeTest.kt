@@ -61,6 +61,17 @@ class QuickJsNativeRuntimeTest {
         expectFailure { QuickJsNativeRuntime().validate(program("export function present() {}")) }
     }
 
+    @Test fun runtimeFormsAcceptStringOptionsAndRejectFixedFormFields() = runBlocking {
+        fun form(field: String) = program("export function present(){return {surface:'form',title:'Input',fields:[$field]};} export function buy() {}")
+            .copy(surfaces = listOf(NativeSurfaceEntry("input", "main", "present", NativeSurfaceType.FORM)))
+        val runtime = QuickJsNativeRuntime()
+        val valid = runtime.present(form("{id:'mode',label:'Mode',value:'A',required:true,options:['A','B']}"), empty, "r").single().data.fields.single()
+        assertEquals("A", valid.value)
+        assertEquals(listOf("A", "B"), valid.options)
+        for (invalid in listOf("type:'TEXT'", "initialValues:['A']", "placeholder:'hint'", "options:[{value:'A',label:'A'}]", "value:1"))
+            expectFailure { runtime.present(form("{id:'mode',label:'Mode',$invalid}"), empty, "invalid") }
+    }
+
     @Test fun noTopLevelOrProjectionEffectsAndNoComponentTreeEscape() = runBlocking {
         val runtime = QuickJsNativeRuntime()
         for (body in listOf(

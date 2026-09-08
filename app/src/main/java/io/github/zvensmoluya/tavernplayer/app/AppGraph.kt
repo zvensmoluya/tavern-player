@@ -31,14 +31,14 @@ class AppGraph(context: Context) {
     val promptCompiler = PromptCompiler()
     val personaRepository = PersonaRepository(appContext.filesDir)
     val characterRepository = CharacterRepository(appContext.filesDir)
-    val nativeCompilationService = io.github.zvensmoluya.tavernplayer.characters.NativeCompilationService(
-        ModelGatewayConversationGenerator(gateway, connectionRepository),
-    )
     val presetRepository = PresetRepository(appContext.filesDir)
     val shelfTransferClient = ShelfTransferClient()
     val mvuRuntime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {
         appContext.assets.open("mvu/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
+    val nativeCompilationService = io.github.zvensmoluya.tavernplayer.characters.NativeCompilationService(
+        ModelGatewayConversationGenerator(gateway, connectionRepository), mvuRuntime = mvuRuntime,
+    )
     val ejsRuntime = io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime(loadBundle = {
         appContext.assets.open("ejs/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
     })

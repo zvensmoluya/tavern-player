@@ -105,7 +105,7 @@ export class ProbeHost {
         if (schemaScript) {
             // The fixture's sole import is wired to the pinned dependency already in the bundle.
             const source = prepareSchemaScript(schemaScript);
-            vm.runInContext(source, this.context, { timeout: 5_000 });
+            this.schemaReady = vm.runInContext(source, this.context, { timeout: 5_000 });
         }
     }
 
@@ -113,7 +113,7 @@ export class ProbeHost {
         if (options.type !== 'message') throw new Error('Chat/global storage is outside this probe');
     }
 
-    async initialize() { await this.mvu.initCheck(); }
+    async initialize() { await this.schemaReady; await this.mvu.initCheck(); }
 
     state(id = this.chat.length - 1) {
         const message = this.chat[id];

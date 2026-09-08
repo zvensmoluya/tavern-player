@@ -2,6 +2,15 @@ package io.github.zvensmoluya.tavernplayer.content
 
 import kotlinx.serialization.Serializable
 
+/** The model selects ownership from source evidence before seeing a branch-specific contract. */
+@Serializable
+data class NativeCompilationSelection(val runtime: NativeStateSource, val schemaSourceId: String? = null)
+
+sealed interface NativeCompilationSelectionResult {
+    data class Ready(val selection: NativeCompilationSelection) : NativeCompilationSelectionResult
+    data class Rejected(val issues: List<NativeAdaptationValidationIssue>) : NativeCompilationSelectionResult
+}
+
 /** Model-authored native behavior; original large text is resolved on the device. */
 @Serializable
 data class NativeCompilationDraft(

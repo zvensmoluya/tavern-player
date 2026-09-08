@@ -23,6 +23,35 @@ class NativeOperationsTest {
     private val action = NativeSurfaceAction("run", "Run", "run")
     private fun invocation(record: ConversationRecord) = NativeSurfaceInvocation("actions", record.nativeRevision(), action)
 
+    @Test fun openingContextExposesOriginalIndicesOnlyBeforeConversationStarts() {
+        val original = record()
+        val opening = original.turns.single().let { turn -> turn.copy(
+            variants = turn.variants.mapIndexed { index, variant -> variant.copy(openingSourceIndex = index * 2) },
+            selectedVariantIndex = 1,
+        ) }
+        val first = original.copy(turns = listOf(opening))
+        assertEquals(JsonPrimitive(2), first.nativeContext()["openingSourceIndex"])
+        assertEquals(JsonArray(listOf(JsonPrimitive(0), JsonPrimitive(2))), first.nativeContext()["openingSourceIndices"])
+        assertEquals(JsonPrimitive(0), first.copy(turns = listOf(opening.copy(selectedVariantIndex = 0))).nativeContext()["openingSourceIndex"])
+        val continued = first.copy(turns = first.turns + original.turns.single().copy(id = "later"))
+        assertEquals(JsonNull, continued.nativeContext()["openingSourceIndex"])
+        assertEquals(JsonArray(emptyList()), continued.nativeContext()["openingSourceIndices"])
+        assertEquals(JsonNull, original.nativeContext()["openingSourceIndex"])
+    }
+
+    @Test fun directMvuWritePreservesObjectOrScalarSchemaAndRejectsChanges() {
+        for (schema in listOf<JsonElement>(JsonObject(emptyMap()), JsonPrimitive("pinned helper marker"))) {
+            val old = MvuStateSnapshot("bundle", "program", buildJsonObject {
+                put("schema", schema); put("stat_data", buildJsonObject { put("value", 1) })
+            })
+            val next = JsonObject(old.data + ("stat_data" to buildJsonObject { put("value", 2) }))
+            assertEquals(schema, old.withDirectReplacement(next).data["schema"])
+            reject { old.withDirectReplacement(JsonObject(next - "schema")) }
+            reject { old.withDirectReplacement(JsonObject(next + ("schema" to JsonPrimitive("changed")))) }
+            reject { old.withDirectReplacement(JsonObject(next + ("stat_data" to JsonPrimitive(2)))) }
+        }
+    }
+
     @Test fun actionWritesAreDurableBranchHeadsWithoutChangingMessageEndHistory() {
         val original = record()
         var record = NativeOperations.begin(original, invocation(original), "op")
