@@ -40,7 +40,12 @@ class NativeCompilationLiveTest {
         }.toMap()
         val output = File(root, "app/build/native-compilation-runs/${System.currentTimeMillis()}").apply { mkdirs() }
         val customSourceHash = System.getenv("TAVERN_COMPILER_SOURCE_SHA256")?.takeIf { it.isNotBlank() }
-        val sample = if (customSourceHash == null) "C-03" else "C-04"
+        val sample = when (customSourceHash) {
+            null -> "C-03"
+            "fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe" -> "C-04"
+            "7df0b58b2a46ac9ae2169c45f715a58760ebdad63017c5a860222d808beabe32" -> "C-05"
+            else -> "sample-${customSourceHash.take(12)}"
+        }
         File(output, "progress.txt").writeText("Preparing $sample\n")
         val sourceHash = customSourceHash ?: "0d9f771474cab7f170f33700e9a0db6b87df96451a4da473c0cfa9f8b70e8c22"
         val source = File(root, "source").walkTopDown().first { file ->
@@ -154,6 +159,8 @@ class NativeCompilationLiveTest {
                         "{}", """{"audit_b":{"数量":3,"描述":"audit_updated"}}""",
                     )
                     var inventorySurfaceId: String? = null
+                    val itemKeys = mutableMapOf<String, String>()
+                    fun displayText(item: NativeSurfaceItem) = listOf(item.title, item.status, item.description).joinToString(" ")
                     val audit = buildJsonArray {
                         cases.forEachIndexed { index, inventory ->
                             val entries = Json.parseToJsonElement(inventory).jsonObject
@@ -162,17 +169,20 @@ class NativeCompilationLiveTest {
                             val surfaces = runtime.present(program, changed, "audit-$index")
                             if (index == 0) inventorySurfaceId = surfaces.single { surface ->
                                 surface.data.surface == NativeSurfaceType.COLLECTION &&
-                                    surface.data.items.map { it.key }.toSet() == entries.keys
+                                    surface.data.items.size == entries.size &&
+                                    entries.keys.all { name -> surface.data.items.count { name in displayText(it) } == 1 }
                             }.id
                             val inventorySurface = surfaces.single { it.id == inventorySurfaceId }.data
-                            assertEquals(entries.keys, inventorySurface.items.map { it.key }.toSet())
-                            inventorySurface.items.forEach { item ->
-                                val original = entries.getValue(item.key).jsonObject
+                            assertEquals(entries.size, inventorySurface.items.size)
+                            entries.forEach { (name, value) ->
+                                val item = inventorySurface.items.single { name in displayText(it) }
+                                val previousKey = itemKeys.putIfAbsent(name, item.key)
+                                if (previousKey != null) assertEquals("Item identity changed with content", previousKey, item.key)
+                                val original = value.jsonObject
                                 // Original C-04 loop uses quantity || 1 and description || '暂无描述'.
                                 val count = original.getValue("数量").jsonPrimitive.int.takeUnless { it == 0 } ?: 1
                                 val description = original.getValue("描述").jsonPrimitive.content.ifEmpty { "暂无描述" }
-                                val text = listOf(item.title, item.status, item.description).joinToString(" ")
-                                assertTrue("Inventory name lost", item.key in text)
+                                val text = displayText(item)
                                 assertTrue("Source count fallback lost", "x$count" in text)
                                 assertTrue("Source description fallback lost", description in text)
                             }

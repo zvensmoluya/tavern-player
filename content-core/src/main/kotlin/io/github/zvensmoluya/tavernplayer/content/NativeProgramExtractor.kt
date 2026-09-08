@@ -42,10 +42,8 @@ internal class NativeProgramExtractor {
                 } else warnings += source.id + "：模板分隔符不明确，已保留完整混合文本供模型判断"
             }
             payload += buildJsonObject {
-                put("id", source.id); put("path", source.path); put("kind", source.kind); put("active", source.active)
+                put("id", source.id); put("kind", source.kind); put("active", source.active)
                 put("metadata", metadata); put("content", content)
-                source.bookId?.let { put("bookId", it) }; source.entryId?.let { put("entryId", it) }
-                source.regexId?.let { put("regexId", it) }
             }
         }
         val extensions = data["extensions"] as? JsonObject ?: JsonObject(emptyMap())
@@ -86,16 +84,15 @@ internal class NativeProgramExtractor {
             val html = Regex("<(?:script|input|textarea|form|html)\\b", RegexOption.IGNORE_CASE).containsMatchIn(entry.content)
             val protocol = Regex("<(?:UpdateVariable|JSONPatch|status_current_variable)\\b", RegexOption.IGNORE_CASE).containsMatchIn(entry.content)
             books += buildJsonObject {
-                put("sourceId", id); put("bookId", book.id); put("entryId", entry.id); put("metadata", JsonObject(metadata))
+                put("sourceId", id); put("metadata", JsonObject(metadata))
                 put("contentIncluded", rules || dynamic || macros || html || protocol)
-                put("characters", entry.content.length)
             }
             if (rules || dynamic || macros || html || protocol) {
                 add(NativeProgramSource(id, "$root/character_book/entries/$ei/content",
                     if (dynamic) "EJS_TEMPLATE" else "WORLD_BOOK_RULES", entry.enabled,
                     entry.content, book.id, entry.id), projectEjs = dynamic && !html)
             } else {
-                // The metadata index is also a valid assessment source; its prose stays local.
+                // Retain the original source locally even when only metadata is sent.
                 sources += NativeProgramSource(id, "$root/character_book/entries/$ei/content", "STATIC_WORLD_BOOK",
                     entry.enabled, entry.content, book.id, entry.id)
             }
@@ -118,9 +115,7 @@ internal class NativeProgramExtractor {
         if (omitted > 0) warnings += "$omitted 个静态世界书正文未发送；按标题和结构选取规则可能遗漏自然语言行为，不能视为完整语义审计"
         require(sources.size <= 512) { "程序来源数量超过预算，未截断" }
         val request = buildJsonObject {
-            put("version", NativeCompilationInstructions.VERSION)
             put("sources", JsonArray(payload)); put("worldBooks", JsonArray(books))
-            put("preservedLocally", buildJsonObject { put("narrative", true); put("openings", 1 + character.alternateFirstMessages.size) })
             put("assetIds", JsonArray(availableAssetIds.sorted().map(::JsonPrimitive)))
             put("warnings", JsonArray(warnings.map(::JsonPrimitive)))
             put("dependencyContext", "Card JS runs in SillyTavern/Tavern Helper, not standalone JS. MVU processes model variable-update blocks and stores per-message state. Prompt Template evaluates EJS when building prompts. Regex display and outgoing-prompt paths differ. External imports are NOT fetched/executed here; their exact versions and implementation are unverified. Card schema and update-format rules are primary evidence; do not assume all MVU versions behave identically.")

@@ -5,7 +5,7 @@ import kotlinx.serialization.descriptors.*
 
 /** Source behavior is interpreted by the model; only the target Player contract is fixed. */
 object NativeCompilationInstructions {
-    const val VERSION = "native-compiler-9"
+    const val VERSION = "native-compiler-11"
 
     val text: String by lazy {
         """
@@ -22,15 +22,22 @@ object NativeCompilationInstructions {
         Disabled sources are not active entry points, but disabled initvar can initialize MVU.
         Inspect source data flow and host API calls; do not assume compatibility from the framework name.
 
+        TRANSLATION PRIORITY
+        Preserve source data reads, calculations and side-effect order before choosing presentation.
+        Retain missing/null/empty-value behavior and type conversions; do not invent business defaults
+        or silently correct surprising source behavior. Use supported original MVU/EJS execution,
+        fixed views for faithful direct display/forms, and JS Surfaces for custom calculations/interactions.
+        Player owns layout, refresh scheduling, persistence and entry validation. Generate only the
+        helpers and behavior needed by the source, not replacement infrastructure for those Player services.
+
         OUTPUT
         One NativeCompilationDraft JSON object, no markdown or extra fields. Omit unused optional fields.
-        summary and assessments use concise Chinese. Assess concrete functional groups; ordinary
-        static worldbook entries need none. targets are JSON pointers into your returned draft configuration,
-        e.g. /stateBindings/0, /forms/0, /mvu, /ejsSourceIds/0. Do not target summary or assessments. Report exact unsupported behavior.
-        At most ONE assessment per sourceId. A source with both restored and unsupported behavior gets
-        one UNCERTAIN assessment: describe both parts in reason and point targets to the restored parts.
-        Never emit separate conflicting assessments for the same source.
-        IDs and alias keys use lowercase snake_case matching [a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15}.
+        summary is one concise Chinese sentence describing the adaptation.
+        limitations is optional: list only concrete source-backed functionality you cannot preserve.
+        Omit it when there are no identified gaps. Do not rate each source, write success reports,
+        or restate host restrictions. Focus reasoning on source behavior and faithful executable translation.
+        Declared configuration IDs and state-binding aliases match [a-z][a-z0-9]*(?:[._-][a-z0-9]+){0,15}.
+        This does not constrain dynamic Surface item keys or original source references; see items below.
         Original paths/labels may be Chinese. JsonValue means a JSON value, not an encoded string.
 
         STATE OWNERSHIP — choose only what this card actually uses
@@ -38,9 +45,7 @@ object NativeCompilationInstructions {
           resolves the script verbatim, runs pinned MVU/Zod, initializes from the original snapshot,
           and owns replace/delta/insert/remove, coercion/defaults and registered update callbacks.
           Omit state, assistantStateAdapters and playerChoices entirely. Do not recreate business state,
-          schema defaults, inventory rows or phase logic. Use stateBindings for simple display, or script projections for derived/dynamic display.
-          script.variables.replaceMvu is a direct full checkpoint data replacement, NOT MVU protocol parsing.
-          It does not run Schema or MVU update callbacks. Use only when source has these direct-write semantics.
+          schema defaults, inventory rows or phase logic. Script writes must follow the MVU_REPLACE host semantics below.
         - Non-MVU card: omit mvu. Declare only necessary Player state and scalar assistantStateAdapters
           from source evidence. Preserve original initial values/types, never UI mock values.
           UPDATE_VARIABLE_JSON_PATCH_V1 maps JSON pointers under stat_data (without /stat_data).
@@ -84,10 +89,8 @@ object NativeCompilationInstructions {
         PROGRAMMABLE NATIVE SURFACES (preferred for custom UI/behavior)
         Open program expression, control UI expression. Player owns layout, spacing, feedback and accessibility.
         For custom computed displays, use script projections whenever fixed bindings/collections cannot
-        preserve the source's conditions, formatting or fallbacks. Inspect these expressions explicitly;
-        direct field display is not equivalent to source expressions such as quantity || 1 or description || fallback.
-        Preserve even surprising zero/empty-string behavior. Missing browser layout APIs do not prevent
-        translating display calculations into a controlled Surface. Use fixed bindings only for faithful direct reads.
+        preserve the source's conditions, formatting or fallbacks. Missing browser layout APIs do not
+        prevent translating display calculations into a controlled Surface.
         script.version=1; modules: {id,code,sourceIds,transformation}. code is ES module source, not bytecode.
         Include complete needed helper functions; imports resolve ONLY exact module IDs in this artifact.
         No browser/DOM/jQuery/fetch/require or implicit lodash globals. Rewrite their semantic use into JS.
@@ -103,6 +106,9 @@ object NativeCompilationInstructions {
         Projection context is frozen and has NO effectful host APIs; recomposition cannot trigger actions.
         NativeSurfaceData {surface,title,description?,items?,fields?,actions?,emptyLabel?}.
         Collection/Status/Scene items {key,title,description?,status?,actions?}; unique stable keys.
+        Item key is a nonblank string up to 256 characters, unique within that Surface; Chinese is allowed.
+        Prefer an existing source ID or object property name. Derive identity only when needed to meet
+        these requirements; hashing is not required. Identity must survive unrelated row edits/reordering.
         Status uses title/value pairs via item.title/item.description; Scene is descriptive text in v1.
         Form has fields {id,label,value?,required?,options?}; empty options = text, otherwise single select.
         Action Group has actions and descriptive text. No nested items/fields on Action Group.
@@ -114,6 +120,7 @@ object NativeCompilationInstructions {
         VARIABLES_READ: await context.variables.read() -> current full state object (copy).
         MVU_REPLACE: await context.variables.replaceMvu(fullData) -> null; requires mvu; direct replacement
           with stat_data object and schema object retained. No schema coercion/callback/protocol update.
+          Use only where the source has these direct-write semantics.
         PROGRAM_STATE_REPLACE: await context.program.replace(object) -> null; private state checkpoint.
         DRAFT_REPLACE: await context.draft.replace(string) -> null; replaces current input, never sends.
           Original draft text is context.draftText in handlers (context.draft is the host there).
@@ -130,8 +137,6 @@ object NativeCompilationInstructions {
         A simple example: present(c) returns {surface:'collection',title:'物品',items:
           Object.entries(c.state.stat_data.inventory).map(([key,v])=>({key,title:key,description:String(v)}))}.
         Prefer existing fixed forms when they faithfully preserve original multi-select/templates.
-        Source assessments may target /script/modules/0 or /script/surfaces/0; do not claim behavior
-        equivalence merely because a module loads. Missing assessments are uncertainty, not execution failures.
 
         NATIVE PRESENTATION
         - Source HTML/DOM/polling is not executed. Its variable reads and labels can still be restored
@@ -159,8 +164,7 @@ object NativeCompilationInstructions {
           one enum gate/assignment and editable draft; use only when this behavior exists in source.
         - No undeclared host APIs, remote images or recurring memory workflows.
           A form replaces only its selected display regex; status bindings do not remove source regex.
-          Compatibility remains PARTIAL until independent gameplay verification. Avoid duplicate
-          assessments explaining ordinary static prose or repeating the entire contract.
+          Player records validation results and compatibility status; do not self-certify equivalence.
 
         """.trimIndent() + "\n\n" + contract()
     }

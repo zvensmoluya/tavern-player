@@ -1,6 +1,6 @@
 # Tavern Player 当前产品边界
 
-> 当前（2026-09-08）：已按用户决定进入实现，`native-compiler-9` 接通 JS 动态投影、高层 Native Surface 和操作检查点。开放程序表达、收紧界面表达；通用组件树不是默认能力。实际接口与验证边界见 [首轮实现](native-script-surfaces-20260908.md)。下文早期版本和暂停决定保留为历史。
+> 当前（2026-09-08）：已按用户决定进入实现，`native-compiler-11` 接通 JS 动态投影、高层 Native Surface 和操作检查点。开放程序表达、收紧界面表达；通用组件树不是默认能力。实际接口与验证边界见 [首轮实现](native-script-surfaces-20260908.md)。下文早期版本和暂停决定保留为历史。
 
 
 > 后续实现：MVU 已接入适配产物和聊天事务，世界书 EJS 已通过只读宿主在 QuickJS 执行，当前编译契约为 native-compiler-7；见 [MVU 聊天接入](mvu-chat-integration-20260907.md)、[EJS 接入](ejs-quickjs-integration-20260907.md)和[状态绑定](native-state-bindings-20260907.md)。下文先前阶段的未接入描述保留为历史记录。

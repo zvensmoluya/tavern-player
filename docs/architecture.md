@@ -19,7 +19,7 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-9` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
+`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-11` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
 
 `app` 在编译与安装时校验真实 QuickJS 模块加载及导出，显示时执行只读投影。用户操作通过显式声明的状态读取、MVU 直接替换、程序私有状态、草稿及辅助生成接口调用宿主。操作检查点独立保存于消息候选，保留原消息结束快照；宿主写入先保存再发布，切换候选恢复所属 head，中断不自动重发请求。结构和加载检查均不证明整卡等价。宿主范围、取消语义和本地验证见 [JS 动态原生 Surface](native-script-surfaces-20260908.md)。
 

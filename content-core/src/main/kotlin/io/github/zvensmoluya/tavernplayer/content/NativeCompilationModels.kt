@@ -13,7 +13,7 @@ data class NativeCompilationDraft(
     val forms: List<NativeCompilationForm> = emptyList(),
     val messagePanels: List<NativeMessagePanelView> = emptyList(),
     val playerChoices: List<NativePlayerChoice> = emptyList(),
-    val assessments: List<NativeCompilationAssessment> = emptyList(),
+    val limitations: List<String> = emptyList(),
     val mvu: NativeCompilationMvu? = null,
     val ejsSourceIds: List<String> = emptyList(),
     val stateBindings: List<NativeStateBinding> = emptyList(),
@@ -33,12 +33,6 @@ data class NativeCompilationTemplate(
     val after: String, val before: String,
     /** Whole interpolation spelling -> Native form field ID; model analyzes its meaning. */
     val bindings: Map<String, String> = emptyMap(),
-)
-@Serializable
-data class NativeCompilationAssessment(
-    val sourceId: String, val disposition: NativeCompilationDisposition, val reason: String,
-    /** JSON pointers into draft configuration; checked after successful local assembly. */
-    val targets: List<String> = emptyList(),
 )
 @Serializable
 enum class NativeCompilationDisposition { RESTORED, PRESENTATION_ONLY, UNSUPPORTED, UNCERTAIN }

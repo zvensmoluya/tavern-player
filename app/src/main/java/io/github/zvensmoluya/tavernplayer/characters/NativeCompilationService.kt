@@ -58,7 +58,7 @@ class NativeCompilationService(
                 else -> Unit
             }
         }
-        onProgress("正在本地组装并校验适配…")
+        onProgress("正在整理响应格式、校验执行契约并组装适配…")
         var result = if (finished) withContext(Dispatchers.Default) { compiler.complete(character, output.toString(), availableAssetIds) }
         else NativeCompilationResult.Rejected(listOf(NativeAdaptationValidationIssue(
             "response", "COMPILER_INCOMPLETE", "模型输出未完整结束；保留已有适配，可重新尝试",
@@ -69,14 +69,16 @@ class NativeCompilationService(
                 io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime().validate(program)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
-                result = scriptFailure()
-            } catch (_: Exception) { result = scriptFailure() }
+                result = scriptFailure(true)
+            } catch (_: Exception) { result = scriptFailure(false) }
         }
         return NativeCompilationAttempt(result, output.toString(), usage, connection.selectedModel, finishReason)
     }
 
-    private fun scriptFailure() = NativeCompilationResult.Rejected(listOf(NativeAdaptationValidationIssue(
-        "script", "SCRIPT_LOAD_FAILED", "JS 模块加载失败：请检查语法、导出、依赖或执行限制；已有适配未更改",
+    private fun scriptFailure(timedOut: Boolean) = NativeCompilationResult.Rejected(listOf(NativeAdaptationValidationIssue(
+        "script", if (timedOut) "SCRIPT_LOAD_TIMEOUT" else "SCRIPT_LOAD_FAILED",
+        if (timedOut) "执行契约已通过，但 JS 模块加载超时；已有适配未更改"
+        else "执行契约已通过，但 JS 模块加载失败：请检查语法、导出或依赖；已有适配未更改",
     )))
 
     private fun prepare(character: CharacterAsset, availableAssetIds: Set<String>, connection: StoredConnection): GenerationPlan {

@@ -13,14 +13,9 @@ class NativeAdaptationCompiler {
         fun reject(code: String, message: String) = NativeCompilationResult.Rejected(
             listOf(NativeAdaptationValidationIssue("response", code, message)))
         if (response.length > MAX_OUTPUT_CHARS) return reject("COMPILER_OUTPUT_TOO_LARGE", "模型适配结果超过大小限制")
-        val draft = try {
-            val text = response.trim().let {
-                if (it.startsWith("```json\n") && it.endsWith("\n```")) it.removePrefix("```json\n").removeSuffix("\n```") else it
-            }
-            json.decodeFromString<NativeCompilationDraft>(text)
-        } catch (_: IllegalArgumentException) {
-            return reject("COMPILER_INVALID_JSON", "模型未返回符合约定的完整适配 JSON")
-        }
+        val received = try { NativeCompilationReceiver.receive(response) }
+        catch (error: NativeCompilationInputFailure) { return NativeCompilationResult.Rejected(error.issues) }
+        val draft = received.draft
         return try {
             val view = NativeProgramExtractor().extract(character, availableAssetIds)
             require(draft.summary.isNotBlank() && draft.summary.length <= 1024) { "需要简短的适配摘要" }
@@ -56,24 +51,11 @@ class NativeAdaptationCompiler {
                     require(src.active && src.kind == "SCRIPT") { "MVU Schema 必须引用启用的原卡脚本" }
                     NativeMvuProgram(src.content)
                 })
-            require(draft.assessments.size <= 512 && draft.assessments.map { it.sourceId }.distinct().size == draft.assessments.size) { "来源评估重复或过多" }
-            val tree = json.encodeToJsonElement(draft)
-            val targetRoots = setOf("state", "stateBindings", "assistantStateAdapters", "status", "collections", "forms",
-                "messagePanels", "playerChoices", "mvu", "ejsSourceIds", "script")
-            draft.assessments.forEach {
-                source(it.sourceId)
-                require(it.reason.isNotBlank() && it.reason.length <= 1024) { "评估必须简短且说明具体影响" }
-                require(it.targets.size <= 32 && it.targets.all { target -> target.removePrefix("/").substringBefore("/") in targetRoots && resolve(tree, target) != null }) { "评估指向不存在的适配结果" }
-            }
             val evidence = buildList {
-                view.sources.filter { it.active && it.kind !in setOf("STATIC_WORLD_BOOK", "EXTENSION_METADATA") || draft.assessments.any { assessment -> assessment.sourceId == it.id } }.forEach { src ->
-                    val assessment = draft.assessments.singleOrNull { it.sourceId == src.id }
-                    val claim = assessment?.disposition ?: NativeCompilationDisposition.UNCERTAIN
-                    val disposition = if (claim == NativeCompilationDisposition.RESTORED && assessment?.targets.isNullOrEmpty())
-                        NativeCompilationDisposition.UNCERTAIN else claim
-                    add(NativeCompilationEvidence(src.path, src.kind,
-                        if (!src.active) NativeCompilationDisposition.UNCERTAIN else disposition,
-                        assessment?.reason ?: "此来源未评估；保留原件，不声明行为已经迁移"))
+                addAll(received.notes)
+                // Advisory gaps do not participate in executable artifact validation.
+                draft.limitations.map { it.trim() }.filter { it.isNotEmpty() }.distinct().forEach {
+                    add(NativeCompilationEvidence("/", "模型报告的功能缺口", NativeCompilationDisposition.UNSUPPORTED, it))
                 }
                 view.warnings.forEach { add(NativeCompilationEvidence("/", "输入覆盖边界", NativeCompilationDisposition.UNCERTAIN, it)) }
                 if (adaptation.collections.any { collection -> adaptation.stateBindings.none { it.key == collection.stateKey && it.source == NativeStateSource.MVU } }) add(NativeCompilationEvidence("/", "动态集合",
@@ -82,13 +64,11 @@ class NativeAdaptationCompiler {
             adaptation = adaptation.copy(report = NativeCompatibilityReport(
                 // Installation/type checks are not a proof of source program equivalence.
                 status = NativeCompatibilityStatus.PARTIAL, summary = draft.summary,
-                restoredBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.RESTORED }.map { it.impact }.distinct(),
-                degradedPresentation = evidence.filter { it.disposition == NativeCompilationDisposition.PRESENTATION_ONLY }.map { it.impact }.distinct(),
+                restoredBehaviors = emptyList(),
+                degradedPresentation = emptyList(),
                 unsupportedBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.UNSUPPORTED }.map { it.impact }.distinct(),
                 warnings = listOf("已验证引用、结构和安装约束；程序含义由模型判断，未证明整卡行为等价。远程依赖未执行或核对精确版本。") +
-                    evidence.filter { it.disposition == NativeCompilationDisposition.UNCERTAIN && it.impact != "此来源未评估；保留原件，不声明行为已经迁移" }.map { it.impact }.distinct() +
-                    listOfNotNull(evidence.count { it.impact == "此来源未评估；保留原件，不声明行为已经迁移" }.takeIf { it > 0 }
-                        ?.let { "有 $it 个启用来源未评估；不能据此判断其行为已迁移。" }),
+                    evidence.filter { it.disposition == NativeCompilationDisposition.UNCERTAIN }.map { it.impact }.distinct(),
             ), compilationEvidence = evidence)
             val validation = NativeAdaptationValidator().validate(adaptation, expectedSourceSha256 = character.sourceSha256,
                 availableAssetIds = availableAssetIds, worldBooks = character.worldBooks,
@@ -140,20 +120,6 @@ class NativeAdaptationCompiler {
             }
         }
         return out.toString()
-    }
-
-    private fun resolve(root: JsonElement, pointer: String): JsonElement? {
-        if (!pointer.startsWith('/') || pointer == "/") return null
-        var current = root
-        for (token in pointer.drop(1).split('/')) {
-            val key = token.replace("~1", "/").replace("~0", "~")
-            current = when (val node = current) {
-                is JsonObject -> node[key]
-                is JsonArray -> key.toIntOrNull()?.let { node.getOrNull(it) }
-                else -> null
-            } ?: return null
-        }
-        return current.takeUnless { it is JsonNull }
     }
 
     companion object {

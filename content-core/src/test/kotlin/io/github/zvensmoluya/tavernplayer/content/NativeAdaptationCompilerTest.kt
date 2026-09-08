@@ -39,6 +39,14 @@ class NativeAdaptationCompilerTest {
         val code = "import 'https://example.test/module.js';\n// semantic comment\nconst t = " + tick + "visible $" + "{x / 2}" + tick + ";\nwhile (ready()) { doSomething('meaningful string'); }"
         val source = card(code).copy(nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), report = NativeCompatibilityReport(summary = "PRIVATE_MANUAL")))
         val request = Json.parseToJsonElement(compiler.prepare(source, emptySet())).jsonObject
+        assertFalse("Compiler bookkeeping must stay outside model source material", request.containsKey("version"))
+        assertFalse(request.containsKey("preservedLocally"))
+        request.getValue("sources").jsonArray.forEach { entry ->
+            assertTrue(entry.jsonObject.keys.intersect(setOf("path", "bookId", "entryId", "regexId")).isEmpty())
+        }
+        request.getValue("worldBooks").jsonArray.forEach { entry ->
+            assertTrue(entry.jsonObject.keys.intersect(setOf("bookId", "entryId", "characters")).isEmpty())
+        }
         val scripts = request["sources"]!!.jsonArray.map { it.jsonObject }.filter { it["kind"] == JsonPrimitive("SCRIPT") }
         assertEquals(code, scripts.single()["content"]!!.jsonPrimitive.content)
         val all = request.toString()
@@ -135,21 +143,35 @@ class NativeAdaptationCompilerTest {
         assertTrue(NativeProgramExtractor().extract(withDescription(program), emptySet()).sources.any { it.content == program })
     }
 
-    @Test fun invalidTargetsAndUnknownRuntimePowersReject() {
-        val draft = NativeCompilationDraft("错误", assessments = listOf(NativeCompilationAssessment("script0", NativeCompilationDisposition.RESTORED, "映射", listOf("/forms/9"))))
-        assertTrue(compiler.complete(card(), Json.encodeToString(draft), emptySet()) is NativeCompilationResult.Rejected)
+    @Test fun unknownRuntimePowersReject() {
         assertTrue(compiler.complete(card(), """{"summary":"no","executeJs":"evil()"}""", emptySet()) is NativeCompilationResult.Rejected)
         assertTrue(compiler.complete(card(), """{"summary":"no","memories":[]}""", emptySet()) is NativeCompilationResult.Rejected)
     }
 
-    @Test fun unbackedClaimsAndMissingAssessmentsRemainUncertain() {
-        val draft = NativeCompilationDraft("部分", assessments = listOf(NativeCompilationAssessment("script0", NativeCompilationDisposition.RESTORED, "模型声明")))
-        val ready = compiler.complete(card(), Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
+    @Test fun echoedCompilerVersionIsRecordedWithoutRelaxingExecutableFields() {
+        val draft = Json.encodeToJsonElement(NativeCompilationDraft("原件保留")).jsonObject
+        fun response(version: JsonElement) = JsonObject(draft + ("version" to version))
+        val input = response(JsonPrimitive(NativeCompilationInstructions.VERSION))
+        val ready = compiler.complete(card(), input.toString(), emptySet()) as NativeCompilationResult.Ready
+        assertTrue(ready.evidence.any { it.sourcePath == "/version" && it.behavior == "输入规范化" })
+        assertNull(ready.adaptation.script)
+        listOf(JsonPrimitive("native-compiler-0"), JsonPrimitive(1), JsonNull).forEach {
+            val rejected = compiler.complete(card(), response(it).toString(), emptySet()) as NativeCompilationResult.Rejected
+            assertEquals("COMPILER_VERSION_MISMATCH", rejected.issues.single().code)
+        }
+        val unknown = JsonObject(input + ("executeJs" to JsonPrimitive("evil()")))
+        assertTrue(compiler.complete(card(), unknown.toString(), emptySet()) is NativeCompilationResult.Rejected)
+        val nested = JsonObject(input + ("script" to buildJsonObject {
+            put("version", 99); put("modules", JsonArray(emptyList())); put("surfaces", JsonArray(emptyList()))
+        }))
+        assertTrue(compiler.complete(card(), nested.toString(), emptySet()) is NativeCompilationResult.Rejected)
+    }
+
+    @Test fun missingAdvisoryReportDoesNotInventUnassessedWarningsOrSuccessClaims() {
+        val ready = compiler.complete(card(), Json.encodeToString(NativeCompilationDraft("部分")), emptySet()) as NativeCompilationResult.Ready
         assertEquals(NativeCompatibilityStatus.PARTIAL, ready.adaptation.report.status)
         assertTrue(ready.adaptation.report.restoredBehaviors.isEmpty())
-        assertTrue(ready.adaptation.report.warnings.contains("模型声明"))
-        assertTrue(ready.adaptation.report.warnings.any { "未评估" in it })
-        assertEquals(1, ready.adaptation.report.warnings.count { "未评估" in it })
+        assertFalse(ready.adaptation.report.warnings.any { "未评估" in it })
         assertEquals(ready.evidence, ready.adaptation.compilationEvidence)
     }
 
@@ -159,21 +181,21 @@ class NativeAdaptationCompilerTest {
                 listOf("script0"), "提取原显示计算")),
             surfaces = listOf(NativeSurfaceEntry("items", "main", "present", NativeSurfaceType.COLLECTION)),
         )
-        val draft = NativeCompilationDraft("动态显示", script = program, assessments = listOf(
-            NativeCompilationAssessment("script0", NativeCompilationDisposition.RESTORED, "物品显示", listOf("/script/surfaces/0"))))
+        val draft = NativeCompilationDraft("动态显示", script = program)
         val ready = compiler.complete(card(), Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
         assertEquals(program, ready.adaptation.script)
-        assertEquals(listOf("物品显示"), ready.adaptation.report.restoredBehaviors)
+        assertTrue(ready.adaptation.report.restoredBehaviors.isEmpty())
         val unknown = program.copy(modules = program.modules.map { it.copy(sourceIds = listOf("missing")) })
         assertTrue(compiler.complete(card(), Json.encodeToString(draft.copy(script = unknown)), emptySet()) is NativeCompilationResult.Rejected)
         val broken = program.copy(surfaces = listOf(NativeSurfaceEntry("items", "missing", "present", NativeSurfaceType.COLLECTION)))
         assertTrue(compiler.complete(card(), Json.encodeToString(draft.copy(script = broken)), emptySet()) is NativeCompilationResult.Rejected)
     }
 
-    @Test fun metadataOnlyWorldBookIsAValidAssessmentSource() {
-        val draft = NativeCompilationDraft("保留背景", assessments = listOf(NativeCompilationAssessment(
-            "book0.entry3", NativeCompilationDisposition.UNCERTAIN, "仅有元数据，未审计正文")))
-        assertTrue(compiler.complete(card(), Json.encodeToString(draft), emptySet()) is NativeCompilationResult.Ready)
+    @Test fun advisoryGapsAreTrimmedDeduplicatedAndDoNotBlockCompilation() {
+        val draft = NativeCompilationDraft("部分", limitations = listOf(" 缺少历史消息写入接口 ", "", "缺少历史消息写入接口"))
+        val ready = compiler.complete(card(), Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
+        assertEquals(listOf("缺少历史消息写入接口"), ready.adaptation.report.unsupportedBehaviors)
+        assertEquals(1, ready.evidence.count { it.behavior == "模型报告的功能缺口" })
     }
 
     @Test fun mvuSelectsExactEnabledSourceAndRejectsCompetingWriters() {
