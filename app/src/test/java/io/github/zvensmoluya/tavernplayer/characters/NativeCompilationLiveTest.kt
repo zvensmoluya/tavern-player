@@ -5,6 +5,7 @@ import io.github.zvensmoluya.modelgateway.catalog.ModelCatalog
 import io.github.zvensmoluya.tavernplayer.connections.*
 import io.github.zvensmoluya.tavernplayer.content.*
 import io.github.zvensmoluya.tavernplayer.conversation.*
+import io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import java.io.File
 import java.security.MessageDigest
@@ -33,7 +34,7 @@ class NativeCompilationLiveTest {
         assumeTrue("set TAVERN_COMPILER_LIVE=1 to spend real provider tokens", System.getenv("TAVERN_COMPILER_LIVE") == "1")
         val root = generateSequence(File(checkNotNull(System.getProperty("user.dir")))) { it.parentFile }.first { File(it, "settings.gradle.kts").isFile }
         val config = File(root, ".env").readLines().mapNotNull { line ->
-            line.trim().takeIf { it.isNotBlank() && !it.startsWith('#') && '=' in it }?.let {
+            line.removePrefix("\uFEFF").trim().takeIf { it.isNotBlank() && !it.startsWith('#') && '=' in it }?.let {
                 it.substringBefore('=').trim() to it.substringAfter('=').trim().removeSurrounding("\"").removeSurrounding("'")
             }
         }.toMap()
@@ -42,7 +43,7 @@ class NativeCompilationLiveTest {
         val sample = if (customSourceHash == null) "C-03" else "C-04"
         File(output, "progress.txt").writeText("Preparing $sample\n")
         val sourceHash = customSourceHash ?: "0d9f771474cab7f170f33700e9a0db6b87df96451a4da473c0cfa9f8b70e8c22"
-        val source = File(root, "source").listFiles()!!.first { file ->
+        val source = File(root, "source").walkTopDown().first { file ->
             file.isFile && MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) } == sourceHash
         }
         val directory = temporary.newFolder()
@@ -120,9 +121,11 @@ class NativeCompilationLiveTest {
                 assertTrue(adaptation.assistantStateAdapters.isEmpty())
                 assertTrue(adaptation.progressions.isEmpty())
                 assertTrue(adaptation.worldBookTextSelections.isEmpty())
-                assertTrue("C-04 needs status bindings", adaptation.stateBindings.isNotEmpty())
+                assertTrue("C-04 needs a status view", adaptation.stateBindings.isNotEmpty() ||
+                    adaptation.script?.surfaces?.any { it.surface == NativeSurfaceType.STATUS } == true)
                 assertTrue(adaptation.stateBindings.all { it.source == NativeStateSource.MVU })
-                assertTrue("C-04 needs an actual inventory view", adaptation.collections.isNotEmpty())
+                assertTrue("C-04 needs an actual inventory view", adaptation.collections.isNotEmpty() ||
+                    adaptation.script?.surfaces?.any { it.surface == NativeSurfaceType.COLLECTION } == true)
             }
             assertTrue(characters.installNativeAdaptation(imported.character.id, adaptation) is NativeAdaptationInstallResult.Installed)
             val installed = CharacterRepository(directory).get(imported.character.id)!!
@@ -135,6 +138,50 @@ class NativeCompilationLiveTest {
             val restored = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
             assertEquals(adaptation, restored.character.nativeAdaptation)
             File(output, "conversation.json").writeText(Json.encodeToString(restored))
+            adaptation.script?.let { program ->
+                val runtime = QuickJsNativeRuntime()
+                val projected = runtime.present(program, restored.nativeContext(), restored.nativeRevision())
+                File(output, "surface-projection.json").writeText(Json.encodeToString(projected.map { it.data }))
+                assertTrue("Initial projection must expose content", projected.isNotEmpty())
+                assertEquals("Reload must preserve projected content",
+                    runtime.present(program, record.nativeContext(), record.nativeRevision()), projected)
+                if (sourceHash == "fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe") {
+                    val context = restored.nativeContext()
+                    val stateData = context.getValue("state").jsonObject
+                    val statData = stateData.getValue("stat_data").jsonObject
+                    val cases = listOf(
+                        """{"audit_a":{"数量":0,"描述":""},"audit_b":{"数量":2,"描述":"audit_description"}}""",
+                        "{}", """{"audit_b":{"数量":3,"描述":"audit_updated"}}""",
+                    )
+                    var inventorySurfaceId: String? = null
+                    val audit = buildJsonArray {
+                        cases.forEachIndexed { index, inventory ->
+                            val entries = Json.parseToJsonElement(inventory).jsonObject
+                            val changed = JsonObject(context + ("state" to JsonObject(stateData +
+                                ("stat_data" to JsonObject(statData + ("物品栏" to entries))))))
+                            val surfaces = runtime.present(program, changed, "audit-$index")
+                            if (index == 0) inventorySurfaceId = surfaces.single { surface ->
+                                surface.data.surface == NativeSurfaceType.COLLECTION &&
+                                    surface.data.items.map { it.key }.toSet() == entries.keys
+                            }.id
+                            val inventorySurface = surfaces.single { it.id == inventorySurfaceId }.data
+                            assertEquals(entries.keys, inventorySurface.items.map { it.key }.toSet())
+                            inventorySurface.items.forEach { item ->
+                                val original = entries.getValue(item.key).jsonObject
+                                // Original C-04 loop uses quantity || 1 and description || '暂无描述'.
+                                val count = original.getValue("数量").jsonPrimitive.int.takeUnless { it == 0 } ?: 1
+                                val description = original.getValue("描述").jsonPrimitive.content.ifEmpty { "暂无描述" }
+                                val text = listOf(item.title, item.status, item.description).joinToString(" ")
+                                assertTrue("Inventory name lost", item.key in text)
+                                assertTrue("Source count fallback lost", "x$count" in text)
+                                assertTrue("Source description fallback lost", description in text)
+                            }
+                            add(Json.encodeToJsonElement(inventorySurface))
+                        }
+                    }
+                    File(output, "inventory-audit.json").writeText(audit.toString())
+                }
+            }
             val reader = ConversationStateReader(adaptation, restored.runtimeState)
             val missing = adaptation.stateBindings.filter { reader[it.key] == null }.map { it.key }
             File(output, "binding-audit.json").writeText(buildJsonObject {

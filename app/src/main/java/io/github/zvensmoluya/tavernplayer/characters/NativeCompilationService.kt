@@ -59,12 +59,25 @@ class NativeCompilationService(
             }
         }
         onProgress("正在本地组装并校验适配…")
-        val result = if (finished) withContext(Dispatchers.Default) { compiler.complete(character, output.toString(), availableAssetIds) }
+        var result = if (finished) withContext(Dispatchers.Default) { compiler.complete(character, output.toString(), availableAssetIds) }
         else NativeCompilationResult.Rejected(listOf(NativeAdaptationValidationIssue(
             "response", "COMPILER_INCOMPLETE", "模型输出未完整结束；保留已有适配，可重新尝试",
         )))
+        (result as? NativeCompilationResult.Ready)?.adaptation?.script?.let { program ->
+            onProgress("正在加载 JS 模块并校验导出入口…")
+            try {
+                io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime().validate(program)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
+                result = scriptFailure()
+            } catch (_: Exception) { result = scriptFailure() }
+        }
         return NativeCompilationAttempt(result, output.toString(), usage, connection.selectedModel, finishReason)
     }
+
+    private fun scriptFailure() = NativeCompilationResult.Rejected(listOf(NativeAdaptationValidationIssue(
+        "script", "SCRIPT_LOAD_FAILED", "JS 模块加载失败：请检查语法、导出、依赖或执行限制；已有适配未更改",
+    )))
 
     private fun prepare(character: CharacterAsset, availableAssetIds: Set<String>, connection: StoredConnection): GenerationPlan {
         val limits = connection.effectiveTokenLimits()

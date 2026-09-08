@@ -149,6 +149,25 @@ class NativeAdaptationCompilerTest {
         assertTrue(ready.adaptation.report.restoredBehaviors.isEmpty())
         assertTrue(ready.adaptation.report.warnings.contains("模型声明"))
         assertTrue(ready.adaptation.report.warnings.any { "未评估" in it })
+        assertEquals(1, ready.adaptation.report.warnings.count { "未评估" in it })
+        assertEquals(ready.evidence, ready.adaptation.compilationEvidence)
+    }
+
+    @Test fun generatedModulesRequireActualEnabledSourcesAndSurfaceReferences() {
+        val program = NativeScriptProgram(
+            modules = listOf(NativeScriptModule("main", "export function present(c){return {surface:'collection',title:'Items',items:[]};}",
+                listOf("script0"), "提取原显示计算")),
+            surfaces = listOf(NativeSurfaceEntry("items", "main", "present", NativeSurfaceType.COLLECTION)),
+        )
+        val draft = NativeCompilationDraft("动态显示", script = program, assessments = listOf(
+            NativeCompilationAssessment("script0", NativeCompilationDisposition.RESTORED, "物品显示", listOf("/script/surfaces/0"))))
+        val ready = compiler.complete(card(), Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
+        assertEquals(program, ready.adaptation.script)
+        assertEquals(listOf("物品显示"), ready.adaptation.report.restoredBehaviors)
+        val unknown = program.copy(modules = program.modules.map { it.copy(sourceIds = listOf("missing")) })
+        assertTrue(compiler.complete(card(), Json.encodeToString(draft.copy(script = unknown)), emptySet()) is NativeCompilationResult.Rejected)
+        val broken = program.copy(surfaces = listOf(NativeSurfaceEntry("items", "missing", "present", NativeSurfaceType.COLLECTION)))
+        assertTrue(compiler.complete(card(), Json.encodeToString(draft.copy(script = broken)), emptySet()) is NativeCompilationResult.Rejected)
     }
 
     @Test fun metadataOnlyWorldBookIsAValidAssessmentSource() {

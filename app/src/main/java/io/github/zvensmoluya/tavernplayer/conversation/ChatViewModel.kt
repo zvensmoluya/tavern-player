@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.serialization.json.*
+import io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime
 
 enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTED }
 
@@ -99,6 +104,9 @@ data class ChatUiState(
     val running: Boolean = false,
     val setupSaving: Boolean = false,
     val choiceSaving: Boolean = false,
+    val nativeActionRunning: Boolean = false,
+    val nativeSurfaces: List<NativeRenderedSurface> = emptyList(),
+    val nativeSurfaceError: String? = null,
     val choicePreview: NativePlayerChoicePreview? = null,
     val nativeChoices: List<NativePlayerChoiceOption> = emptyList(),
     val retryAvailable: Boolean = false,
@@ -112,7 +120,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || loadingConversation
+    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || nativeActionRunning || loadingConversation
     val openingChoices: List<NativeOpeningChoice> get() {
         val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
         return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
@@ -139,6 +147,7 @@ class ChatViewModel(
     private val adaptationRuntime: NativeAdaptationRuntime = NativeAdaptationRuntime(),
     private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
     private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
+    private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -155,6 +164,10 @@ class ChatViewModel(
         ),
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+    private var nativeActionJob: Job? = null
+    private var nativeProjectionJob: Job? = null
+    private var nativeProjectionRevision: String? = null
+    private val nativeHostMutex = Mutex()
     private var generationJob: Job? = null
     private var persistenceJob: Job? = null
     private var persistenceDirty = false
@@ -207,7 +220,7 @@ class ChatViewModel(
 
     fun loadConversation(conversationId: String) {
         if (_uiState.value.running && generationJob == null) return
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         if (conversationRepository?.get(conversationId) == null) return
         if (generationJob != null || persistenceJob != null || persistenceDirty) {
             _uiState.update { it.copy(loadingConversation = true) }
@@ -245,10 +258,165 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         record = record.withDraft(value)
         _uiState.update { it.copy(input = value, message = null, nativeChoices = NativePlayerChoiceController().options(record)) }
+        refreshNativeSurfaces()
         schedulePersist()
+    }
+
+    private fun refreshNativeSurfaces() {
+        if (_uiState.value.running) {
+            nativeProjectionJob?.cancel()
+            nativeProjectionRevision = null
+            _uiState.update { it.copy(nativeSurfaces = emptyList()) }
+            return
+        }
+        val program = record.character.nativeAdaptation?.script
+        val revision = if (program == null) null else record.nativeRevision()
+        if (revision == nativeProjectionRevision) return
+        nativeProjectionRevision = revision
+        nativeProjectionJob?.cancel()
+        _uiState.update { it.copy(nativeSurfaces = emptyList(), nativeSurfaceError = null) }
+        if (program == null || revision == null) return
+        val snapshot = record
+        nativeProjectionJob = viewModelScope.launch {
+            try {
+                val surfaces = nativeScriptRuntime.present(program, snapshot.nativeContext(), revision)
+                if (record.nativeRevision() == revision) _uiState.update { it.copy(nativeSurfaces = surfaces) }
+            } catch (cancelled: CancellationException) {
+                if (cancelled !is TimeoutCancellationException) throw cancelled
+                if (nativeProjectionRevision == revision) _uiState.update { it.copy(nativeSurfaceError = "界面计算超时") }
+            } catch (_: Exception) {
+                if (nativeProjectionRevision == revision) _uiState.update { it.copy(nativeSurfaceError = "原生界面计算失败，请检查适配程序") }
+            }
+        }
+    }
+
+    fun invokeNativeAction(invocation: NativeSurfaceInvocation) {
+        if (_uiState.value.busy) return
+        val program = record.character.nativeAdaptation?.script ?: return
+        val rendered = _uiState.value.nativeSurfaces.singleOrNull { it.id == invocation.surfaceId } ?: return
+        try { NativeOperations.authorize(record, rendered, invocation) }
+        catch (error: IllegalArgumentException) { _uiState.update { it.copy(message = error.message) }; return }
+        val operationId = idGenerator()
+        val input = rendered.data.fields.associate { it.id to (invocation.input[it.id] ?: it.value) }
+        val normalized = invocation.copy(input = input)
+        val connection = _uiState.value.selectedConnection
+        _uiState.update { it.copy(nativeActionRunning = true, message = null) }
+        nativeActionJob = viewModelScope.launch {
+            try {
+                persistNow()
+                currentCoroutineContext().ensureActive()
+                saveNativeRecord(NativeOperations.begin(record, normalized, operationId))
+                val context = record.nativeContext().let { JsonObject(it + ("draftText" to JsonPrimitive(record.draft))) }
+                nativeScriptRuntime.invoke(program, normalized.action.handler, context, normalized.action.args, input) { method, value ->
+                    withContext(Dispatchers.Main.immediate) {
+                        nativeHostMutex.withLock {
+                            currentCoroutineContext().ensureActive()
+                            NativeOperations.active(record, operationId)
+                            when (method) {
+                                "variables.read" -> record.nativeContext().getValue("state")
+                                "variables.replaceMvu" -> {
+                                    val data = value as? JsonObject ?: error("MVU 数据必须为对象")
+                                    require(data["stat_data"] is JsonObject && data["schema"] is JsonObject) { "MVU 数据必须保留 stat_data 和 schema" }
+                                    val old = requireNotNull(record.runtimeState.mvuState)
+                                    saveNativeRecord(NativeOperations.commit(record, operationId, record.runtimeState.copy(mvuState = old.copy(data = data))))
+                                    JsonNull
+                                }
+                                "program.replace" -> {
+                                    val data = value as? JsonObject ?: error("程序状态必须为对象")
+                                    require(data.toString().length <= 65_536)
+                                    saveNativeRecord(NativeOperations.commit(record, operationId, record.runtimeState.copy(scriptState = data)))
+                                    JsonNull
+                                }
+                                "draft.replace" -> {
+                                    val text = (value as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("草稿必须为文字")
+                                    require(text.length <= 65_536)
+                                    saveNativeRecord(NativeOperations.commit(record, operationId, record.runtimeState, text))
+                                    JsonNull
+                                }
+                                "generation.text" -> {
+                                    val selectedConnection = requireNotNull(connection) { "请先配置可用模型" }
+                                    val request = value as? JsonObject ?: error("生成请求必须为对象")
+                                    require(request.keys == setOf("prompt"))
+                                    val prompt = (request["prompt"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: error("缺少生成提示词")
+                                    require(prompt.isNotBlank() && prompt.length <= 65_536)
+                                    val requestId = idGenerator()
+                                    saveNativeRecord(NativeOperations.generation(record, operationId, requestId))
+                                    val limits = selectedConnection.effectiveTokenLimits()
+                                    val contextLimit = (limits.contextTokens ?: 128_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                                    val outputLimit = minOf(2048L, limits.outputTokens ?: 2048L, contextLimit.toLong() - 1).toInt()
+                                    require(outputLimit > 0)
+                                    val plan = GenerationPlan(
+                                        messages = listOf(PreparedMessage(MessageRole.USER, prompt, PromptOrigin("native-action", listOf(operationId, requestId)))),
+                                        maxOutputTokens = outputLimit, declaredContextTokens = contextLimit,
+                                        assistantPrefill = "", presetId = "native-auxiliary", presetName = "原生操作辅助生成",
+                                        diagnostics = emptyList(), trace = emptyList(),
+                                    )
+                                    val budget = generator.validateTokens(selectedConnection, plan)
+                                    require(budget != null && budget.inputTokens.toLong() + outputLimit <= contextLimit) { "辅助生成超过上下文预算" }
+                                    val text = StringBuilder()
+                                    var complete = false
+                                    generator.stream(selectedConnection, plan).collect { event ->
+                                        currentCoroutineContext().ensureActive()
+                                        when (event) {
+                                            is GenerationEvent.TextDelta -> { require(text.length + event.text.length <= 65_536); text.append(event.text) }
+                                            is GenerationEvent.Finished -> complete = event.reason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")
+                                            else -> Unit
+                                        }
+                                    }
+                                    currentCoroutineContext().ensureActive()
+                                    NativeOperations.active(record, operationId)
+                                    require(complete) { "辅助生成未完整结束" }
+                                    JsonPrimitive(text.toString())
+                                }
+                                else -> error("未支持的宿主方法")
+                            }
+                        }
+                    }
+                }
+                saveNativeRecord(NativeOperations.finish(record, operationId, NativeOperationStatus.COMPLETE))
+            } catch (cancelled: CancellationException) {
+                val saved = finishNativeFailure(operationId, if (cancelled is TimeoutCancellationException) NativeOperationStatus.FAILED else NativeOperationStatus.CANCELLED)
+                _uiState.update { it.copy(message = if (saved) "操作已停止，已保存的变更保留" else "操作已停止，结束状态未能保存；请检查存储后重试") }
+                if (cancelled !is TimeoutCancellationException) throw cancelled
+            } catch (_: Exception) {
+                val saved = finishNativeFailure(operationId, NativeOperationStatus.FAILED)
+                _uiState.update { it.copy(message = if (saved) "操作未完成，已保存的变更保留；请检查适配和模型连接" else "操作未完成，结束状态未能保存；请检查存储后重试") }
+            } finally {
+                _uiState.update { it.copy(nativeActionRunning = false) }
+                nativeActionJob = null
+                viewModelScope.launch { refreshDisplayCache() }
+            }
+        }
+    }
+
+    fun cancelNativeAction() { nativeActionJob?.cancel() }
+
+    private suspend fun saveNativeRecord(proposed: ConversationRecord) {
+        currentCoroutineContext().ensureActive()
+        withContext(NonCancellable) {
+            val saved = conversationRepository?.save(proposed) ?: proposed
+            record = saved
+            syncRecord(input = saved.draft)
+        }
+    }
+
+    private suspend fun finishNativeFailure(id: String, status: NativeOperationStatus) = withContext(NonCancellable) {
+        if (record.turns.lastOrNull()?.selected?.nativeOperations?.any { it.id == id && it.status == NativeOperationStatus.RUNNING } == true) {
+            val stopped = NativeOperations.finish(record, id, status)
+            try { saveNativeRecord(stopped) }
+            catch (_: Exception) {
+                // Only the receipt changes in memory; no failed state write is published. The next
+                // persistNow must save this stopped receipt before a subsequent action can begin.
+                record = stopped
+                persistenceDirty = true
+                syncRecord()
+                return@withContext false
+            }
+        }
+        true
     }
 
     fun submitNativeForm(formId: String, values: Map<String, List<String>>) {
@@ -465,7 +633,7 @@ class ChatViewModel(
                 val generationId = idGenerator()
                 val historyBefore = record.turns.take(turnIndex).map { it.selected.message }
                 val runtimeBefore = selected.runtimeStateBefore
-                    ?: record.turns.getOrNull(turnIndex - 1)?.selected?.runtimeStateAfter
+                    ?: record.turns.getOrNull(turnIndex - 1)?.selected?.nativeHead()
                     ?: ConversationRuntimeState()
                 val modelId = connection?.selectedModel ?: selected.model.orEmpty()
                 val editedVariant = when (turn.role) {
@@ -508,6 +676,7 @@ class ChatViewModel(
                                 runtimeStateBefore = runtimeBefore,
                                 projectionRuntimeStateBefore = runtimeBefore,
                                 runtimeStateAfter = projected.runtimeState,
+                                nativeOperations = emptyList(),
                             )
                         }
                     }
@@ -567,6 +736,7 @@ class ChatViewModel(
                                 projectionRuntimeStateBefore = projectionRuntime,
                                 runtimeStateAfter = projectedRuntime,
                                 playerChoiceCommits = emptyList(),
+                                nativeOperations = emptyList(),
                             )
                         }
                     }
@@ -654,7 +824,7 @@ class ChatViewModel(
 
     fun resetConversation() {
         if (_uiState.value.running && generationJob == null) return
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.loadingConversation) return
+        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         _uiState.update { it.copy(loadingConversation = true) }
         viewModelScope.launch {
             try {
@@ -1240,7 +1410,7 @@ class ChatViewModel(
         val selected = turn.variants[next]
         record = record.copy(
             turns = record.turns.mapIndexed { index, item -> if (index == lastIndex) item.copy(selectedVariantIndex = next) else item },
-            runtimeState = selected.runtimeStateAfter ?: record.runtimeState,
+            runtimeState = selected.nativeHead() ?: record.runtimeState,
         )
         syncRecord(trace = record.persistedTrace())
         schedulePersist()
@@ -1291,7 +1461,9 @@ class ChatViewModel(
             displayContents = displayCache,
             displayReasoning = displayReasoningCache,
         ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving,
-            memorySaving = current.memorySaving)
+            memorySaving = current.memorySaving, nativeActionRunning = current.nativeActionRunning,
+            nativeSurfaces = current.nativeSurfaces, nativeSurfaceError = current.nativeSurfaceError)
+        refreshNativeSurfaces()
     }
 
     private fun showCompilationFailure(
@@ -1474,6 +1646,7 @@ class ChatViewModel(
         private val presetSource: ActivePresetSource,
         private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
         private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
+    private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =

@@ -20,6 +20,20 @@ import org.robolectric.annotation.Config
 class NativeCompilationScreenTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun `adaptation details stay collapsed and repeated warnings render once`() {
+        val adaptation = io.github.zvensmoluya.tavernplayer.content.NativeAdaptation(sourceSha256 = "a".repeat(64),
+            report = io.github.zvensmoluya.tavernplayer.content.NativeCompatibilityReport(summary = "适配摘要",
+                warnings = listOf("未验证的功能", "未验证的功能")))
+        compose.setContent { TavernPlayerTheme {
+            CharacterDetailScreen(CharacterAsset("sample", name = "中性样本", nativeAdaptation = adaptation),
+                emptyList(), null, {}, {}, {}, importing = false)
+        } }
+        compose.onNodeWithTag("characterDetail").performScrollToNode(hasText("查看适配说明"))
+        compose.onAllNodesWithText("未验证的功能").assertCountEquals(0)
+        compose.onNodeWithText("查看适配说明").performClick()
+        compose.onAllNodesWithText("未验证的功能").assertCountEquals(1)
+    }
+
     @Test fun `detail selects a compiler model and provides cancellable preparation`() {
         var selection by mutableStateOf("model-a")
         var running by mutableStateOf(false)

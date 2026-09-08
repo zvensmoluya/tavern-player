@@ -1,5 +1,8 @@
 # Tavern Player Native Domain Operations 设计草案
 
+> 历史设计：2026-09-08 用户已选择“JS 自由、UI 受控”，并授权实现。本文排除任意程序/回调的旧限制不再作为当前边界；Player 维护高层原生界面的原则继续保留。当前能力见 [JS 动态原生 Surface](native-script-surfaces-20260908.md)。
+
+
 > 状态：产品与架构草案，尚未形成实现契约。
 >
 > 本文补充 [`Tavern Player Native Adaptation 设计原则0903.md`](Tavern%20Player%20Native%20Adaptation%20设计原则0903.md) 中尚未展开的行为迁移边界。文中的概念名称不构成对现有 `AdaptationArtifact v1` 的兼容承诺。

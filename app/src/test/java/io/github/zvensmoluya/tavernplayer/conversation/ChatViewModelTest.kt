@@ -48,6 +48,130 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    @Test fun `native actions persist independent commits reject duplicate clicks and restore candidate heads`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("native-actions").toFile()
+        try {
+            val program = nativeActionProgram("await c.program.replace({count:(c.programState.count || 0)+1}); await c.draft.replace('chosen');")
+            val character = DemoConversationContent.character.copy(firstMessage = "A", alternateFirstMessages = listOf("B"),
+                nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
+            val conversations = ConversationRepository(directory, PromptCompiler())
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations, FixedPresetSource())
+            vm.loadConversation(saved.id)
+            val before = awaitNative(vm)
+            val surface = before.nativeSurfaces.single()
+            val invocation = NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single())
+            vm.invokeNativeAction(invocation)
+            vm.invokeNativeAction(invocation)
+            awaitNative(vm, "1")
+            var disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertEquals("chosen", disk.draft)
+            assertEquals(1, disk.turns.single().selected.nativeOperations.size)
+            assertNull(disk.turns.single().selected.runtimeStateAfter!!.scriptState)
+            assertEquals(JsonPrimitive(1), disk.runtimeState.scriptState!!["count"])
+            vm.invokeNativeAction(invocation) // stale version, even though action contents are identical
+            assertFalse(vm.uiState.value.nativeActionRunning)
+            assertEquals(1, conversations.get(saved.id)!!.turns.single().selected.nativeOperations.size)
+            vm.nextVariant()
+            awaitNative(vm, "0")
+            assertEquals("", vm.uiState.value.input)
+            vm.previousVariant()
+            awaitNative(vm, "1")
+            vm.editMessage(vm.uiState.value.messages.single().message.id, "Edited", MessageEditMode.RESTART)
+            awaitNative(vm, "0")
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                kotlinx.coroutines.withTimeout(5000) { conversations.conversations.first { it.first().turns.single().selected.nativeOperations.isEmpty() } }
+            }
+            disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertTrue(disk.turns.single().selected.nativeOperations.isEmpty())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `cancelled auxiliary generation retains previous durable write and prevents later write`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("native-cancel").toFile()
+        try {
+            val program = nativeActionProgram("await c.program.replace({count:1}); await c.generation.text({prompt:'Describe'}); await c.program.replace({count:2});")
+            val character = DemoConversationContent.character.copy(firstMessage = "A", nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
+            val conversations = ConversationRepository(directory, PromptCompiler())
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val started = CompletableDeferred<Unit>()
+            val generator = object : ConversationGenerator {
+                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) = ProviderTokenValidation(10, TokenCountQuality.EXACT, "test")
+                override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
+                    started.complete(Unit)
+                    awaitCancellation()
+                }
+            }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
+            vm.loadConversation(saved.id)
+            val surface = awaitNative(vm).nativeSurfaces.single()
+            vm.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single()))
+            kotlinx.coroutines.withTimeout(5000) { started.await() }
+            vm.cancelNativeAction()
+            awaitNative(vm, "1")
+            val disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertEquals(JsonPrimitive(1), disk.runtimeState.scriptState!!["count"])
+            val operation = disk.turns.single().selected.nativeOperations.single()
+            assertEquals(NativeOperationStatus.CANCELLED, operation.status)
+            assertEquals(1, operation.commits.size)
+            assertEquals(1, operation.generationRequests.size)
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun `failed native write never publishes success and can retry after storage recovers`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("native-save-failure").toFile()
+        try {
+            val program = nativeActionProgram("await c.program.replace({count:1}); await c.generation.text({prompt:'Describe'}); await c.program.replace({count:2});")
+            val character = DemoConversationContent.character.copy(firstMessage = "A", nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
+            val conversations = ConversationRepository(directory, PromptCompiler())
+            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val target = java.io.File(directory, "tavern/conversations/" + saved.id + ".json")
+            val backup = java.io.File(directory, "saved.json")
+            var blockOnce = true
+            val generator = object : ConversationGenerator {
+                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) = ProviderTokenValidation(10, TokenCountQuality.EXACT, "test")
+                override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
+                    if (blockOnce) {
+                        blockOnce = false
+                        check(target.renameTo(backup))
+                        check(target.mkdir())
+                        java.io.File(target, "blocker").writeText("test")
+                    }
+                    emit(GenerationEvent.TextDelta("Result")); emit(GenerationEvent.Finished("stop"))
+                }
+            }
+            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
+            vm.loadConversation(saved.id)
+            fun invoke(surface: NativeRenderedSurface) = vm.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single()))
+            invoke(awaitNative(vm).nativeSurfaces.single())
+            val failed = awaitNative(vm, "1")
+            assertTrue(failed.message.orEmpty().contains("结束状态未能保存"))
+            assertEquals(JsonPrimitive(1), conversations.get(saved.id)!!.runtimeState.scriptState!!["count"])
+            check(java.io.File(target, "blocker").delete()); check(target.delete()); check(backup.renameTo(target))
+            invoke(failed.nativeSurfaces.single())
+            awaitNative(vm, "2")
+            val disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertEquals(JsonPrimitive(2), disk.runtimeState.scriptState!!["count"])
+            assertEquals(listOf(NativeOperationStatus.FAILED, NativeOperationStatus.COMPLETE), disk.turns.single().selected.nativeOperations.map { it.status })
+        } finally { directory.deleteRecursively() }
+    }
+
+    private fun nativeActionProgram(body: String): io.github.zvensmoluya.tavernplayer.content.NativeScriptProgram {
+        val code = "export function present(c){return {surface:'action_group',title:String(c.programState.count || 0),actions:[{id:'run',label:'Run',handler:'run'}]};} export async function run(c){" + body + "}"
+        return io.github.zvensmoluya.tavernplayer.content.NativeScriptProgram(
+            modules = listOf(io.github.zvensmoluya.tavernplayer.content.NativeScriptModule("main", code, listOf("fixture"), "Synthetic operation")),
+            surfaces = listOf(io.github.zvensmoluya.tavernplayer.content.NativeSurfaceEntry("actions", "main", "present", io.github.zvensmoluya.tavernplayer.content.NativeSurfaceType.ACTION_GROUP)),
+            handlers = listOf(io.github.zvensmoluya.tavernplayer.content.NativeHandlerEntry("run", "main", "run")),
+            capabilities = io.github.zvensmoluya.tavernplayer.content.NativeScriptCapability.entries.toSet() - io.github.zvensmoluya.tavernplayer.content.NativeScriptCapability.MVU_REPLACE,
+        )
+    }
+
+    private suspend fun awaitNative(vm: ChatViewModel, title: String? = null): ChatUiState = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        kotlinx.coroutines.withTimeout(10000) {
+            vm.uiState.first { !it.busy && it.nativeSurfaces.isNotEmpty() && (title == null || it.nativeSurfaces.single().data.title == title) }
+        }
+    }
+
     @Test fun `mvu and ejs real engines follow chat candidates edits resets and disk recovery`() = runTest {
         val directory = Files.createTempDirectory("mvu-chat").toFile()
         val assets = java.io.File(System.getProperty("mvuProbeAssets"), "mvu")

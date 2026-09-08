@@ -1,5 +1,8 @@
 # Tavern Player Native Adaptation 设计原则
 
+> 历史设计：2026-09-08 用户已选择“JS 自由、UI 受控”，并授权实现。本文排除任意程序/回调的旧限制不再作为当前边界；Player 维护高层原生界面的原则继续保留。当前能力见 [JS 动态原生 Surface](native-script-surfaces-20260908.md)。
+
+
 > 状态：当前目标方向，尚未完全反映仓库现有实现。
 >
 > 本文定义 Tavern Player 希望收敛到的产品与架构边界，不把现有 `AdaptationArtifact v1`、通用 UI Node 或 Action 视为必须保留的兼容契约。

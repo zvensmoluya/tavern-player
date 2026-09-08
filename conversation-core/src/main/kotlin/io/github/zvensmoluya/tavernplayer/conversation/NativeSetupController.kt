@@ -30,7 +30,7 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
             opening.variants.indices.singleOrNull { opening.variants[it].openingSourceIndex == target }
                 ?: return reject("开局目标不存在或没有可用正文")
         } ?: opening.selectedVariantIndex
-        val targetState = opening.variants[targetIndex].runtimeStateAfter ?: record.runtimeState
+        val targetState = opening.variants[targetIndex].nativeHead() ?: record.runtimeState
         val draft = when (val result = forms.submitForm(adaptation, submission, record.persona.name, record.character.promptName)) {
             is NativeFormSubmissionResult.Draft -> result.text
             is NativeFormSubmissionResult.Rejected -> return reject(result.message)
@@ -86,6 +86,7 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
                         runtimeStateBefore = (variant.runtimeStateBefore ?: record.runtimeState).initialized(),
                         projectionRuntimeStateBefore = (variant.projectionRuntimeStateBefore ?: record.runtimeState).initialized(),
                         runtimeStateAfter = (variant.runtimeStateAfter ?: record.runtimeState).initialized(),
+                        nativeOperations = variant.nativeOperations.map { operation -> operation.copy(commits = operation.commits.map { commit -> commit.copy(runtime = commit.runtime.initialized()) }) },
                     )
                 })
             },

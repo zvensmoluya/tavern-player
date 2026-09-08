@@ -17,6 +17,7 @@ data class NativeCompilationDraft(
     val mvu: NativeCompilationMvu? = null,
     val ejsSourceIds: List<String> = emptyList(),
     val stateBindings: List<NativeStateBinding> = emptyList(),
+    val script: NativeScriptProgram? = null,
 )
 @Serializable
 data class NativeCompilationMvu(val schemaSourceId: String)

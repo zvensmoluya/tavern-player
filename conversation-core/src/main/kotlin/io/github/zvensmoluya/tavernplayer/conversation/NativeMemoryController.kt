@@ -82,7 +82,8 @@ object NativeMemoryController {
         fun ConversationRuntimeState.clean() = copy(memories = memories.filterValues { variantId !in it.sourceVariantIds })
         return record.copy(runtimeState = record.runtimeState.clean(), turns = record.turns.map { turn -> turn.copy(
             variants = turn.variants.map { it.copy(runtimeStateBefore = it.runtimeStateBefore?.clean(),
-                projectionRuntimeStateBefore = it.projectionRuntimeStateBefore?.clean(), runtimeStateAfter = it.runtimeStateAfter?.clean()) }
+                projectionRuntimeStateBefore = it.projectionRuntimeStateBefore?.clean(), runtimeStateAfter = it.runtimeStateAfter?.clean(),
+                nativeOperations = it.nativeOperations.map { operation -> operation.copy(commits = operation.commits.map { commit -> commit.copy(runtime = commit.runtime.clean()) }) }) }
         ) })
     }
 

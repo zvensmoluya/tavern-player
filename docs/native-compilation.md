@@ -1,6 +1,9 @@
 # 导入期自动适配实验
 
-> 当前（2026-09-07）：`native-compiler-7` 已改为原程序选择与原生展示绑定。MVU 卡不再生成独立业务状态；EJS 不再翻译成阶段表和原文分支。见 [状态绑定与编译精简](native-state-bindings-20260907.md)。以下 v1–v6 设计、暂停决定和实验结果作为历史记录，不代表当前输出契约。
+> 当前（2026-09-08）：已按用户决定进入实现，`native-compiler-9` 接通 JS 动态投影、高层 Native Surface 和操作检查点。开放程序表达、收紧界面表达；通用组件树不是默认能力。实际接口与验证边界见 [首轮实现](native-script-surfaces-20260908.md)。下文早期版本和暂停决定保留为历史。
+
+
+> 历史（2026-09-07）：`native-compiler-7` 已改为原程序选择与原生展示绑定。MVU 卡不再生成独立业务状态；EJS 不再翻译成阶段表和原文分支。见 [状态绑定与编译精简](native-state-bindings-20260907.md)。以下 v1–v6 设计、暂停决定和实验结果作为历史记录，不代表当前输出契约。
 
 > 后续实现：MVU 已接入适配产物和聊天事务，当前编译契约为 native-compiler-6；MVU 见 [聊天接入](mvu-chat-integration-20260907.md)，原始世界书 EJS 的只读执行与 `ejsSourceIds` 见 [EJS 接入](ejs-quickjs-integration-20260907.md)。下文先前阶段的未接入描述保留为历史记录。
 

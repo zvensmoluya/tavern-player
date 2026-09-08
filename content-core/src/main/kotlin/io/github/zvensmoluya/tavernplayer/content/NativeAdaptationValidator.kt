@@ -17,6 +17,7 @@ class NativeAdaptationValidator {
         regexScripts: List<RegexDefinition>? = null,
     ): NativeAdaptationValidationResult {
         val issues = mutableListOf<NativeAdaptationValidationIssue>()
+        issues += NativeScriptValidator.validate(adaptation.script, adaptation.mvu != null)
         issues += NativeWorldBookTextSelectionValidator.validate(adaptation, worldBooks)
         issues += NativePlayerChoiceValidator.validate(adaptation)
         issues += NativeGuideReader.validate(adaptation.guide, regexScripts)

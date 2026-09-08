@@ -19,9 +19,9 @@ app ───────────────> model-gateway
 
 模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。内容 runtime 不具备联网、脚本执行或 WebView 能力。
 
-`content-core` 定义 Native 内容适配、只读 `NativeStateReader`、路径绑定和确定性校验。`NativeAdaptationCompiler` 保留完整卡内 JS、HTML/正则、EJS 代码及关联规则，让模型选择受支持的原程序并生成展示配置。`native-compiler-7` 的 MVU 分支只接受原 Schema 引用和只读 `stateBindings`，拒绝复制状态、旧消息写入器和 Player 写入选择；非 MVU 卡仍可生成必要的 Player 状态与标量协议映射。EJS 只选择原模板，不再生成阶段表或原文分支选择；对应编译字段和组装代码已删除。普通表单仍引用原 JS 草稿模板。元数据省略默认值，不再上传无用途的原文区间清单；完整源码仍提供给模型检查依赖与展示语义。
+`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-9` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
 
-本地恢复原程序、计算哈希并验证类型、路径语法、来源可用性、引用和资源上限。`app` 的 `NativeCompilationService` 使用独立连接完成一次模型请求，成功后复用安装入口；结构验证不证明模型选对了语义路径，不做自动 repair。手工适配保留其既有 Player 能力。见 [状态绑定与编译精简](native-state-bindings-20260907.md) 与 [运行契约](adaptation-runtime-v1.md)。
+`app` 在编译与安装时校验真实 QuickJS 模块加载及导出，显示时执行只读投影。用户操作通过显式声明的状态读取、MVU 直接替换、程序私有状态、草稿及辅助生成接口调用宿主。操作检查点独立保存于消息候选，保留原消息结束快照；宿主写入先保存再发布，切换候选恢复所属 head，中断不自动重发请求。结构和加载检查均不证明整卡等价。宿主范围、取消语义和本地验证见 [JS 动态原生 Surface](native-script-surfaces-20260908.md)。
 
 ## Tavern Shelf 接收
 

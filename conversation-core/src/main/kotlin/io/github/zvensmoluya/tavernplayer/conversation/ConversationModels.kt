@@ -147,6 +147,8 @@ data class ConversationRuntimeState(
     val generationIndex: Int = 0,
     val lastGenerationType: String = "normal",
     val mvuState: MvuStateSnapshot? = null,
+    val scriptState: kotlinx.serialization.json.JsonObject? = null,
+    val nativeCommitId: String? = null,
 )
 
 @Serializable
@@ -293,6 +295,7 @@ data class MessageVariant(
     // 原件中的开场位置：0 为 firstMessage，后续为 alternateFirstMessages；普通生成没有此值。
     val openingSourceIndex: Int? = null,
     val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
+    val nativeOperations: List<NativeOperationRecord> = emptyList(),
 )
 
 @Serializable
@@ -318,6 +321,7 @@ data class ConversationRecord(
     val updatedAtEpochMillis: Long,
     val draft: String = "",
     val choiceDraft: ConversationChoiceDraft? = null,
+    val nativeDraftOrigin: NativeDraftOrigin? = null,
 )
 
 @Serializable
@@ -336,9 +340,14 @@ data class ConversationChoiceDraft(val variantId: String, val commitId: String, 
 
 /** 用户改写草稿后，它成为普通输入；未改写的选择草稿不能悄悄带到另一候选。 */
 fun ConversationRecord.withDraft(value: String): ConversationRecord =
-    copy(draft = value, choiceDraft = choiceDraft?.takeIf { it.text == value })
+    copy(draft = value, choiceDraft = choiceDraft?.takeIf { it.text == value }, nativeDraftOrigin = nativeDraftOrigin?.takeIf { it.text == value })
 
 fun ConversationRecord.reconcileChoiceDraft(): ConversationRecord {
+    nativeDraftOrigin?.let { origin ->
+        if (draft != origin.text) return copy(nativeDraftOrigin = null).reconcileChoiceDraft()
+        if (turns.none { it.selected.id == origin.variantId && it.selected.nativeOperations.any { op -> op.id == origin.operationId } })
+            return copy(draft = "", nativeDraftOrigin = null).reconcileChoiceDraft()
+    }
     val origin = choiceDraft ?: return this
     if (draft != origin.text) return copy(choiceDraft = null)
     val stillSelected = turns.any { turn ->

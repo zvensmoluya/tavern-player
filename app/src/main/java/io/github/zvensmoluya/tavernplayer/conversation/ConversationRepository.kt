@@ -37,7 +37,7 @@ class ConversationRepository(
         root.mkdirs()
         AtomicFileStore.cleanupTemporaryFiles(root)
         val loaded = loadAll().map { record ->
-            val recovered = record.recoverInterruptedStreams()
+            val recovered = NativeOperations.recover(record.recoverInterruptedStreams())
             if (recovered != record) writeRecord(recovered)
             recovered
         }

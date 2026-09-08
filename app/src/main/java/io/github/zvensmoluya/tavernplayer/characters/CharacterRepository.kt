@@ -172,6 +172,16 @@ class CharacterRepository internal constructor(
                 regexScripts = manifest.character.regexScripts,
             )
             if (!validation.valid) return@withLock NativeAdaptationInstallResult.Rejected(validation.issues)
+            adaptation.script?.let { program ->
+                try {
+                    io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime().validate(program)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
+                    return@withLock NativeAdaptationInstallResult.Rejected(listOf(NativeAdaptationValidationIssue("script", "SCRIPT_LOAD_FAILED", "JS 模块加载超时")))
+                } catch (_: Exception) {
+                    return@withLock NativeAdaptationInstallResult.Rejected(listOf(NativeAdaptationValidationIssue("script", "SCRIPT_LOAD_FAILED", "JS 模块语法、依赖或导出入口无效")))
+                }
+            }
             val updated = manifest.character.copy(nativeAdaptation = adaptation)
             writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(manifest.copy(character = updated)))
             _characters.value = _characters.value.map { if (it.id == characterId) updated else it }.sortedWith(CHARACTER_ORDER)

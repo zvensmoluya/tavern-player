@@ -1,6 +1,8 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -84,6 +86,8 @@ fun ChatRoute(
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
             submitNativeForm = viewModel::submitNativeForm,
+            invokeNativeAction = viewModel::invokeNativeAction,
+            cancelNativeAction = viewModel::cancelNativeAction,
             previewPlayerChoice = viewModel::previewPlayerChoice,
             confirmPlayerChoice = viewModel::confirmPlayerChoice,
             cancelPlayerChoice = viewModel::cancelPlayerChoice,
@@ -108,6 +112,8 @@ data class ChatScreenActions(
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
+    val invokeNativeAction: (NativeSurfaceInvocation) -> Unit = {},
+    val cancelNativeAction: () -> Unit = {},
     val submitNativeForm: (formId: String, values: Map<String, List<String>>) -> Unit = { _, _ -> },
     val previewPlayerChoice: (String) -> Unit = {},
     val confirmPlayerChoice: () -> Unit = {},
@@ -203,7 +209,7 @@ fun ChatScreen(
         },
         bottomBar = {
             Column {
-                if (state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide || state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) {
+                if (state.character.nativeAdaptation?.script != null || state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide || state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) {
                     TextButton(
                         onClick = { nativeDetailsVisible = true },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("openNativeDetails"),
@@ -349,6 +355,19 @@ fun ChatScreen(
                         actions.previewPlayerChoice(id)
                     }
                 }
+                if (state.nativeActionRunning) item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(Modifier.size(24.dp))
+                        TextButton(onClick = actions.cancelNativeAction) { Text("停止操作") }
+                    }
+                }
+                state.nativeSurfaceError?.let { error -> item { Text(error, color = MaterialTheme.colorScheme.error) } }
+                if (state.character.nativeAdaptation?.script != null) state.message?.let { notice ->
+                    item("native-operation-notice") { Text(notice) }
+                }
+                state.nativeSurfaces.forEach { surface -> item("script-${surface.id}") {
+                    NativeScriptSurfaceCard(surface, !state.busy, actions.invokeNativeAction)
+                } }
                 state.nativeStatus?.let { status -> item { NativeStatusCard(status, state.nativeState) } }
                 state.nativeScenes.forEach { scene -> item {
                     NativeSceneCard(scene, state.nativeState) { resolveAssetPath(state.character.assetId, it) }

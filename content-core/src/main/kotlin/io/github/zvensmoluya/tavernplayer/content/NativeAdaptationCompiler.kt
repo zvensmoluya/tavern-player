@@ -25,6 +25,9 @@ class NativeAdaptationCompiler {
             val view = NativeProgramExtractor().extract(character, availableAssetIds)
             require(draft.summary.isNotBlank() && draft.summary.length <= 1024) { "需要简短的适配摘要" }
             fun source(id: String) = view.sources.singleOrNull { it.id == id } ?: error("未知程序来源：$id")
+            draft.script?.modules?.forEach { module ->
+                module.sourceIds.forEach { id -> require(source(id).active) { "生成模块不能激活停用来源" } }
+            }
             val forms = draft.forms.map { form ->
                 val src = source(form.sourceId)
                 require(src.active && src.regexId != null) { "本轮表单必须来自启用的显示正则" }
@@ -36,12 +39,13 @@ class NativeAdaptationCompiler {
                     submitLabel = form.submitLabel, replacedDisplayRegexIds = listOf(src.regexId))
             }
             require(draft.mvu == null || (draft.state.isEmpty() && draft.assistantStateAdapters.isEmpty() && draft.playerChoices.isEmpty())) {
-                "MVU 卡只输出只读路径绑定，不能复制状态或创建第二个写入机制"
+                "MVU 卡不能复制业务状态或创建旧写入器；自定义操作必须使用声明的 JS 宿主"
             }
             var adaptation = NativeAdaptation(sourceSha256 = character.sourceSha256, state = draft.state,
                 assistantStateAdapters = draft.assistantStateAdapters, status = draft.status, collections = draft.collections,
                 forms = forms, messagePanels = draft.messagePanels, stateBindings = draft.stateBindings,
                 playerChoices = draft.playerChoices,
+                script = draft.script,
                 ejsTemplates = draft.ejsSourceIds.map { id ->
                     val src = source(id)
                     require(src.active && src.bookId != null && src.entryId != null && "<%" in src.content) { "EJS 必须引用启用的世界书模板" }
@@ -55,14 +59,14 @@ class NativeAdaptationCompiler {
             require(draft.assessments.size <= 512 && draft.assessments.map { it.sourceId }.distinct().size == draft.assessments.size) { "来源评估重复或过多" }
             val tree = json.encodeToJsonElement(draft)
             val targetRoots = setOf("state", "stateBindings", "assistantStateAdapters", "status", "collections", "forms",
-                "messagePanels", "playerChoices", "mvu", "ejsSourceIds")
+                "messagePanels", "playerChoices", "mvu", "ejsSourceIds", "script")
             draft.assessments.forEach {
                 source(it.sourceId)
                 require(it.reason.isNotBlank() && it.reason.length <= 1024) { "评估必须简短且说明具体影响" }
                 require(it.targets.size <= 32 && it.targets.all { target -> target.removePrefix("/").substringBefore("/") in targetRoots && resolve(tree, target) != null }) { "评估指向不存在的适配结果" }
             }
             val evidence = buildList {
-                view.sources.filter { it.kind != "STATIC_WORLD_BOOK" || draft.assessments.any { assessment -> assessment.sourceId == it.id } }.forEach { src ->
+                view.sources.filter { it.active && it.kind !in setOf("STATIC_WORLD_BOOK", "EXTENSION_METADATA") || draft.assessments.any { assessment -> assessment.sourceId == it.id } }.forEach { src ->
                     val assessment = draft.assessments.singleOrNull { it.sourceId == src.id }
                     val claim = assessment?.disposition ?: NativeCompilationDisposition.UNCERTAIN
                     val disposition = if (claim == NativeCompilationDisposition.RESTORED && assessment?.targets.isNullOrEmpty())
@@ -78,12 +82,14 @@ class NativeAdaptationCompiler {
             adaptation = adaptation.copy(report = NativeCompatibilityReport(
                 // Installation/type checks are not a proof of source program equivalence.
                 status = NativeCompatibilityStatus.PARTIAL, summary = draft.summary,
-                restoredBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.RESTORED }.map { it.impact },
-                degradedPresentation = evidence.filter { it.disposition == NativeCompilationDisposition.PRESENTATION_ONLY }.map { it.impact },
-                unsupportedBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.UNSUPPORTED }.map { it.impact },
+                restoredBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.RESTORED }.map { it.impact }.distinct(),
+                degradedPresentation = evidence.filter { it.disposition == NativeCompilationDisposition.PRESENTATION_ONLY }.map { it.impact }.distinct(),
+                unsupportedBehaviors = evidence.filter { it.disposition == NativeCompilationDisposition.UNSUPPORTED }.map { it.impact }.distinct(),
                 warnings = listOf("已验证引用、结构和安装约束；程序含义由模型判断，未证明整卡行为等价。远程依赖未执行或核对精确版本。") +
-                    evidence.filter { it.disposition == NativeCompilationDisposition.UNCERTAIN }.map { it.impact },
-            ))
+                    evidence.filter { it.disposition == NativeCompilationDisposition.UNCERTAIN && it.impact != "此来源未评估；保留原件，不声明行为已经迁移" }.map { it.impact }.distinct() +
+                    listOfNotNull(evidence.count { it.impact == "此来源未评估；保留原件，不声明行为已经迁移" }.takeIf { it > 0 }
+                        ?.let { "有 $it 个启用来源未评估；不能据此判断其行为已迁移。" }),
+            ), compilationEvidence = evidence)
             val validation = NativeAdaptationValidator().validate(adaptation, expectedSourceSha256 = character.sourceSha256,
                 availableAssetIds = availableAssetIds, worldBooks = character.worldBooks,
                 openingCount = 1 + character.alternateFirstMessages.size, regexScripts = character.regexScripts)

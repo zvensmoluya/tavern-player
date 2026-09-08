@@ -461,16 +461,22 @@ fun CharacterDetailScreen(
                         Text("暂无原生适配；原始卡片仍可按文字角色卡使用。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Text(adaptation.report.summary.ifBlank { "已安装经过本地校验的原生适配。" })
-                        if (adaptation.report.restoredBehaviors.isNotEmpty()) {
-                            Text("已恢复：${adaptation.report.restoredBehaviors.joinToString("；")}")
-                        }
-                        if (adaptation.report.degradedPresentation.isNotEmpty()) {
-                            Text("表现降级：${adaptation.report.degradedPresentation.joinToString("；")}")
-                        }
+                        var reportExpanded by remember(character.id, adaptation) { mutableStateOf(false) }
                         if (adaptation.report.unsupportedBehaviors.isNotEmpty()) {
-                            Text("暂不支持：${adaptation.report.unsupportedBehaviors.joinToString("；")}")
+                            Text("待支持 ${adaptation.report.unsupportedBehaviors.distinct().size} 项功能", style = MaterialTheme.typography.bodySmall)
                         }
-                        adaptation.report.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        TextButton(onClick = { reportExpanded = !reportExpanded }) { Text(if (reportExpanded) "收起适配说明" else "查看适配说明") }
+                        if (reportExpanded) {
+                            listOf("已映射" to adaptation.report.restoredBehaviors,
+                                "表现调整" to adaptation.report.degradedPresentation,
+                                "暂不支持" to adaptation.report.unsupportedBehaviors,
+                                "验证说明" to adaptation.report.warnings).forEach { (title, entries) ->
+                                if (entries.isNotEmpty()) {
+                                    Text(title, style = MaterialTheme.typography.labelLarge)
+                                    entries.distinct().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                }
+                            }
+                        }
                     }
                 }
             }
