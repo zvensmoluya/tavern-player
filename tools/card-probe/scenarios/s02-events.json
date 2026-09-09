@@ -1,0 +1,1 @@
+{"host":{"state":{"stat_data":{}}},"steps":[{"type":"state","value":{"stat_data":{"probe_counter":7}}},{"type":"event","name":"Mvu.events.VARIABLE_INITIALIZED"},{"type":"event","name":"Mvu.events.VARIABLE_UPDATE_ENDED"}]}

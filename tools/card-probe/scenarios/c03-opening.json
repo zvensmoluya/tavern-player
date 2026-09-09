@@ -1,0 +1,1 @@
+{"steps":[{"type":"input","selector":"#name","value":"Probe"},{"type":"click","selector":"#confirm-btn"}]}

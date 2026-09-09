@@ -48,3 +48,5 @@
 - [当前编译产物的 Android 实测](native-surface-device-verification-20260908.md)
 - [扩展依赖与原生图像能力初查](native-image-dependencies-research-20260908.md)
 - [世界书运行语义：差异分类与待办](world-book-semantics-audit-20260907.md)
+
+- [HTML Surface 探针复核](html-surface-probe-20260909.md)：阶段调用观察，已停止扩建；不作为完整宿主契约。

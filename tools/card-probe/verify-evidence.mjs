@@ -1,0 +1,21 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { here } from './lib/cards.mjs';
+const read = name => JSON.parse(fs.readFileSync(path.join(here,'build/scenarios',name+'.json'),'utf8'));
+const opening=read('s02-opening');
+assert.equal(opening.projection.source,'first');assert.equal(opening.projection.regexIndex,4);
+assert.equal(opening.final.messages[0].swipe_id,1);
+assert.ok(opening.final.log.some(e=>e.phase==='step-0:click'&&e.t==='call'&&e.p==='setChatMessages'));
+assert.ok(opening.actions.every(a=>a.status==='executed'));
+const events=read('s02-events');
+assert.equal(events.projection.source,'alt:5');assert.equal(events.projection.regexIndex,6);
+for (const phase of ['load','step-1:event','step-2:event']) assert.ok(events.final.log.some(e=>e.phase===phase&&e.t==='call'&&e.p==='Mvu.getMvuData'));
+assert.equal(events.final.state.stat_data.probe_counter,7);
+const parent=read('c03-opening');
+assert.equal(parent.projection.source,'first');
+assert.ok(parent.final.log.some(e=>e.t==='console.error'&&e.p.includes('#send_textarea')));
+assert.ok(parent.final.log.some(e=>e.t==='call'&&e.p==='toastr.error'));
+assert.ok(!parent.final.log.some(e=>e.t==='call'&&e.p==='setChatMessages'));
+for (const r of [opening,events,parent]) {assert.equal(r.final.dropped,0);assert.equal(r.transportErrors.length,0);}
+console.log('Scenario evidence verified: opening write, event rereads, parent DOM dependency.');
