@@ -179,6 +179,20 @@ export function createHost({ initial, actor, request, notify = () => {}, broadca
     return true;
   }
   const api = {
+    // Match the helper's wrapper contract: report failures and rethrow them, never
+    // turn a failed initializer into a successful result. Duck typing is needed
+    // because author promises are created in a different iframe realm.
+    errorCatched: fn => (...args) => {
+      const onError = error => {
+        notify('error', String(error?.stack || error?.message || error));
+        throw error;
+      };
+      try {
+        const result = fn(...args);
+        return result != null && (typeof result === 'object' || typeof result === 'function') && typeof result.then === 'function'
+          ? result.then(undefined, onError) : result;
+      } catch (error) { return onError(error); }
+    },
     getVariables, replaceVariables, updateVariablesWith,
     getChatMessages, setChatMessages,
     getCurrentMessageId: () => { if (!actor.turnId) throw new Error('Not a message context'); return index(); }, getLastMessageId: () => state.messages.length - 1,

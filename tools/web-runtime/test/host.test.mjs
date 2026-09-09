@@ -3,6 +3,27 @@ import assert from 'node:assert/strict';
 import { createHost } from '../src/host.mjs';
 import { inspect, imports, cssResources } from '../src/programs.mjs';
 
+test('errorCatched preserves results and reports then rethrows sync and async failures', async () => {
+  const notices = [];
+  const host = createHost({ initial: snapshot(), actor: {}, request: async () => ({}), notify: (...args) => notices.push(args) });
+  let calls = 0;
+  const wrapped = host.api.errorCatched((a, b) => { calls++; return a + b; });
+  assert.equal(calls, 0);
+  assert.equal(wrapped(2, 3), 5);
+  assert.equal(calls, 1);
+  assert.equal(await host.api.errorCatched(async value => value)(7), 7);
+  assert.deepEqual(notices, []);
+  const syncError = new Error('sync initialization failed');
+  assert.throws(() => host.api.errorCatched(() => { throw syncError; })(), error => error === syncError);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0][0], 'error');
+  assert.match(notices[0][1], /sync initialization failed/);
+  const asyncError = new Error('async initialization failed');
+  await assert.rejects(host.api.errorCatched(async () => { throw asyncError; })(), error => error === asyncError);
+  assert.equal(notices.length, 2);
+  assert.match(notices[1][1], /async initialization failed/);
+});
+
 const snapshot = () => ({ revision: 'r0', conversationId: 'c', draft: '', chatVariables: {}, scriptVariables: {}, mvu: null,
   worldbooks: [], messages: [
     { id: 'm0', turnId: 't0', variantId: 'v0', message_id: 0, role: 'assistant', name: 'Actor', message: 'Opening', is_hidden: false,

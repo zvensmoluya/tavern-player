@@ -10,10 +10,10 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     const root = 'https://player.invalid', origin = 'https://card.test', epoch = 'epoch';
     const frames = new Map(); let number = 0, sent = 0;
     const display = 'Narrative\n\n```html\n<body><button id="change">Change</button><button id="send">Send</button><p id="count"></p><script>' +
-      'window.boots=(window.boots||0)+1;document.getElementById("count").textContent=String(window.boots);' +
+      '$(errorCatched(()=>{window.boots=(window.boots||0)+1;document.getElementById("count").textContent=String(window.boots);' +
       'document.getElementById("change").onclick=()=>{replaceVariables({score:3});document.getElementById("count").textContent=String(getVariables().score)};' +
       'document.getElementById("send").onclick=()=>{parent.$("#send_textarea").val("From card");parent.$("#send_but").click()};' +
-      '</script></body>\n```';
+      '}));</script></body>\n```';
     let snapshot = { conversationId: 'c', revision: 'r0', chatVariables: {}, scriptVariables: {}, draft: '', mvu: null, worldbooks: [],
       program: { sources: [] }, presetProgram: { sources: [] }, presetHash: 'preset',
       messages: [{ id: 'm', turnId: 't', variantId: 'v', message_id: 0, name: 'Actor', role: 'assistant', status: 'COMPLETE',
@@ -56,6 +56,8 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     const child = () => page.frames().find(frame => frame.url() === 'about:srcdoc');
     for (let i = 0; i < 100 && !child(); i++) await new Promise(resolve => setTimeout(resolve, 20));
     const frame = child(); assert.ok(frame);
+    await frame.waitForFunction(() => typeof errorCatched === 'function' && window.boots === 1);
+    assert.equal(await frame.evaluate(async () => await errorCatched(async () => 42)()), 42);
     await frame.locator('#change').click();
     await frame.locator('#count').filter({ hasText: '3' }).waitFor();
     await page.waitForFunction(() => document.getElementById('notice').textContent === '');

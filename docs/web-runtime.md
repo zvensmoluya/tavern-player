@@ -16,6 +16,8 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 
 ## 接口范围
 
+`errorCatched(fn)` 可包装同步或异步初始化函数：正常时保留参数、返回值和同步/异步行为，失败时显示诊断并继续抛出原错误。支持作者页面常用的 `$(errorCatched(...))` 启动方式。
+
 参照提交和文件记录在 [upstream-contract.json](../tools/web-runtime/upstream-contract.json)。Tavern Helper 基线为 `3de7ef981f378517779eb32ab5ecb82c033e4db4`，ST 基线为 `8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8`。MVU、Schema 辅助库和 EJS 使用已有 [公共程序锁](../tools/mvu-probe/upstream-lock.json)。浏览器库由 npm lock 固定，构建产物附带许可证和文件哈希清单。
 
 | 能力 | 当前支持 | 明确限制 |
