@@ -18,6 +18,7 @@ dependencies {
     api(project(":content-core"))
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jtokkit)
+    implementation(libs.snakeyaml)
 
     testImplementation(libs.junit)
 }

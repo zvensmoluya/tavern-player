@@ -246,7 +246,7 @@ Setup 表单也可使用 `openingIndices` 绑定原卡开场：0 为 first messa
 
 `second-pressure-manual.json` 对应第二张复杂卡：九项状态，八项允许模型写入；关系阶段由有限阈值和事件门槛判定，原卡五项本幕资料独立附着到回复。动态关系反馈已按派生阶段选择唯一原文，保留公共角色指向与标签。远程 CG、任意 JS、后台 RUBY 任务仍明确列为未迁移，不用 PARTIAL 标签替代这些具体差异。
 
-原卡的两个固定读取宏 `get_message_variable::stat_data` / `format_message_variable::stat_data` 可根据已声明 Adapter 的精确映射重建当前状态的只读 JSON。不会建立第二份 MVU 存储，也不执行 JavaScript、EJS 或任意状态路径查询。
+原卡的两个固定读取宏 `get_message_variable::stat_data` / `format_message_variable::stat_data` 优先读取当前 MVU 检查点；没有 MVU 数据时可根据已声明 Adapter 的精确映射重建当前状态的只读投影。2026-09-09 起，get 输出字符串或紧凑 JSON，format 输出字符串或块式 YAML，并按行前缀缩进；两者递归过滤 `$` 开头的内部字段，原状态不变。宏本身不会建立第二份 MVU 存储，也不执行 JavaScript、EJS 或任意状态路径查询。输出格式边界见[世界书状态展开](helper-world-book-state-read-20260909.md)。
 
 
 ### 对话记忆

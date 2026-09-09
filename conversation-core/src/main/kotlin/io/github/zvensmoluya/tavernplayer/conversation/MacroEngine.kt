@@ -125,14 +125,32 @@ class MacroEngine {
         var current = resolveScopedIf(SCOPED_COMMENT.replace(source, ""), context, transaction, diagnostics, depth)
         repeat(MAX_DEPTH - depth) {
             var resolvedAny = false
-            val next = MACRO_PATTERN.replace(current) { match ->
-                val token = match.groupValues[1].trim()
-                if (token.startsWith("/if", true) || token.equals("else", true)) return@replace match.value
-                val parsed = parseMacroToken(token)
-                if (parsed.name.equals("if", true) && parsed.arguments.size <= 1) return@replace match.value
-                val replacement = resolveToken(token, match.value, context, transaction, diagnostics, depth + 1)
-                if (replacement != match.value) resolvedAny = true
-                replacement
+            val next = buildString {
+                var cursor = 0
+                var sourceLineOutputStart = 0
+                MACRO_PATTERN.findAll(current).forEach { match ->
+                    append(current, cursor, match.range.first)
+                    if (current.substring(cursor, match.range.first).contains('\n')) {
+                        sourceLineOutputStart = lastIndexOf('\n') + 1
+                    }
+                    cursor = match.range.last + 1
+                    val token = match.groupValues[1].trim()
+                    val parsed = parseMacroToken(token)
+                    if (token.startsWith("/if", true) || token.equals("else", true) ||
+                        (parsed.name.equals("if", true) && parsed.arguments.size <= 1)) {
+                        append(match.value)
+                        return@forEach
+                    }
+                    val replacement = resolveToken(token, match.value, context, transaction, diagnostics, depth + 1)
+                    if (replacement != match.value) resolvedAny = true
+                    if (parsed.name.equals("format_message_variable", true) && replacement != match.value) {
+                        // Upstream counts the whole expanded prefix on the original source line,
+                        // including newlines produced by an earlier formatted macro.
+                        val prefixLength = length - sourceLineOutputStart
+                        append(replacement.replace("\n", "\n" + " ".repeat(prefixLength)))
+                    } else append(replacement)
+                }
+                append(current, cursor, current.length)
             }
             val scoped = resolveScopedIf(next, context, transaction, diagnostics, depth)
             if (scoped != next) resolvedAny = true
@@ -250,7 +268,7 @@ class MacroEngine {
         val args = rawArgs.map { resolveDocument(it, context, transaction, diagnostics, depth + 1) }
 
         if (name in setOf("get_message_variable", "format_message_variable") && args == listOf("stat_data") && context.legacyStateJson != null) {
-            return context.legacyStateJson
+            return MessageVariableFormatter.format(context.legacyStateJson, yaml = name == "format_message_variable")
         }
         if (name in BLOCKED_MACROS || name.contains("globalvar")) {
             diagnostics += warning("UNSUPPORTED_MACRO", "Macro {{$name}} 属于已排除能力，保持原文", name)

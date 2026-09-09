@@ -636,6 +636,33 @@ class PromptCompilerTest {
     }
 
     @Test
+    fun `world book variable read follows the supplied MVU checkpoint without changing it`() {
+        val original = baseInput()
+        val input = original.copy(
+            character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book", entries = listOf(
+                WorldBookEntryDefinition("state-read", constant = true, content = "Current state: {{format_message_variable::stat_data}}"),
+                WorldBookEntryDefinition("disabled-read", enabled = false, constant = true, content = "DISABLED {{format_message_variable::stat_data}}"),
+            )))),
+            preset = original.preset.copy(
+                prompts = original.preset.prompts + PromptDefinition("worldInfoBefore", role = ContentRole.SYSTEM, marker = true),
+                promptOrder = listOf(PromptOrderEntry("worldInfoBefore")) + original.preset.promptOrder,
+            ),
+        )
+        // Reusing an earlier snapshot represents a candidate switch or restored branch.
+        for (score in listOf(3, 8, 3)) {
+            val data = kotlinx.serialization.json.Json.parseToJsonElement("""{"stat_data":{"score":$score},"schema":"opaque"}""").let {
+                it as kotlinx.serialization.json.JsonObject
+            }
+            val checkpoint = MvuStateSnapshot("b".repeat(64), "c".repeat(64), data)
+            val plan = (compiler.compile(input.copy(runtimeState = ConversationRuntimeState(mvuState = checkpoint))) as CompilationResult.Success).plan
+            assertTrue(plan.messages.any { it.content.contains("Current state: score: $score") })
+            assertFalse(plan.messages.any { it.content.contains("format_message_variable") || it.content.contains("DISABLED") })
+            assertEquals(listOf("state-read"), plan.activatedWorldBookEntries)
+            assertEquals(checkpoint, plan.runtimeState.mvuState)
+        }
+    }
+
+    @Test
     fun `adaptation state meaning is projected as fixed data rather than an authored prompt`() {
         val input = baseInput().copy(
             character = baseInput().character.copy(

@@ -113,7 +113,7 @@ class NativeSetupControllerTest {
         val state = ConversationRuntimeState(conversationState = ConversationStateSnapshot(mapOf("location" to JsonPrimitive("海边"))))
         val result = PromptCompiler().expandConversationText("{{get_message_variable::stat_data}}\n{{format_message_variable::stat_data}}", snapshot, Persona("p", "旅人"), state) as TextExpansionResult.Success
         val expected = "{\"世界\":{\"地点\":\"海边\"}}"
-        assertEquals("$expected\n$expected", result.text)
+        assertEquals("$expected\n世界:\n  地点: 海边", result.text)
         assertEquals(state, result.runtimeState)
         assertTrue(result.diagnostics.isEmpty())
     }

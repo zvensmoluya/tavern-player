@@ -59,8 +59,32 @@ internal class NativeProgramExtractor {
                 (obj["scripts"] as? JsonArray)?.let { scripts(it, "$path/$index/scripts", active, depth + 1) }
             }
         }
-        val helper = extensions["tavern_helper"] as? JsonObject
-        (helper?.get("scripts") as? JsonArray)?.let { scripts(it, "$root/extensions/tavern_helper/scripts") }
+        val helperPath = "$root/extensions/tavern_helper"
+        var scriptsPath = "$helperPath/scripts"
+        // Tavern Helper accepts both an object and serialized key/value entries.
+        // Keep the original JSON pointer; never silently discard ambiguous entries.
+        val helper = when (val raw = extensions["tavern_helper"]) {
+            null -> null
+            is JsonObject -> raw
+            is JsonArray -> {
+                val fields = linkedMapOf<String, JsonElement>()
+                raw.forEachIndexed { index, item ->
+                    val pair = item as? JsonArray
+                    require(pair != null && pair.size == 2) { "$helperPath/$index：助手字段必须是两个元素的键值对" }
+                    val key = pair[0] as? JsonPrimitive
+                    require(key != null && key.isString) { "$helperPath/$index/0：助手字段名必须是字符串" }
+                    require(key.content !in fields) { "$helperPath/$index/0：重复的助手字段 ${key.content}，未覆盖或丢弃" }
+                    fields[key.content] = pair[1]
+                    if (key.content == "scripts") scriptsPath = "$helperPath/$index/1"
+                }
+                JsonObject(fields)
+            }
+            else -> throw IllegalArgumentException("$helperPath：不支持的助手容器，必须是对象或键值对数组")
+        }
+        helper?.get("scripts")?.let {
+            require(it is JsonArray) { "$scriptsPath：助手 scripts 必须是数组" }
+            scripts(it, scriptsPath)
+        }
         helper?.filterKeys { it != "scripts" }?.takeIf { it.isNotEmpty() }?.let {
             add(NativeProgramSource("helper-metadata", "$root/extensions/tavern_helper", "EXTENSION_METADATA", true, JsonObject(it).toString()))
         }
