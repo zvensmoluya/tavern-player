@@ -414,7 +414,7 @@ class PromptCompiler(
             activationOverrides = input.runtimeState.worldBookActivationOverrides,
             turnIndex = input.runtimeState.generationIndex,
             messageCount = input.history.size,
-            inputBudgetTokens = (contextLimit - outputLimit).coerceAtLeast(0),
+            inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
             prepareEntry = { bookId, entry, entryTransaction ->
                 if (input.character.nativeAdaptation?.ejsTemplates.orEmpty().any { it.bookId == bookId && it.entryId == entry.id }) {
@@ -449,7 +449,7 @@ class PromptCompiler(
         trace += CompilationTraceEntry(
             stage = "world-book-budget",
             sourceIds = activation.activatedEntryIds,
-            decision = "used=${activation.usedBudgetTokens} budget=${activation.budgetTokens}",
+            decision = "used=${activation.usedBudgetTokens} budget=${activation.budgetTokens ?: "undeclared"}",
         )
         val outlets = activation.injections.filter { it.position == WorldBookPosition.OUTLET }
             .filter { it.outletName.isNotBlank() }

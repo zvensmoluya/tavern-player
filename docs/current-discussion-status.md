@@ -119,7 +119,7 @@
 
 - Context 管理是必须能力。保留 ST 的内容取舍语义，包括回复 token 预留、必选 Prompt、历史由近到远进入、examples 与 history 的预算关系、World Book 独立预算，以及 depth injection 等内容的既定优先关系。
 - Tokenizer、模型 context window 和实际请求 token 计算由 Tavern Player 自己正确实现。兼容目标是 ST 的 context semantics，不是 ST 当前的 token accounting implementation。
-- 模型连接覆盖和模型目录给出的 context / output limits 是已验证能力，存在时会约束 Preset 声明的预算。两者都缺失时，播放器按 Preset 声明分配预算并明确标记“未经 Provider 验证”，不再维护模型名称能力表；Preset 也没有声明 context 时才使用 128K 产品默认预算。任何运行时约束都不能静默改写 Preset 资产。
+- 模型连接覆盖和模型目录给出的 context / output limits 是已验证能力，存在时会约束 Preset 声明的预算。两者都缺失时，播放器按 Preset 声明分配预算并明确标记“未经 Provider 验证”，不再维护模型名称能力表；Preset 也没有声明 context 时不设置本地上下文上限，不凭模型名称或产品默认值裁剪消息，由 Provider 接受请求或返回超限错误。任何运行时约束都不能静默改写 Preset 资产。
 - 模型连接允许按模型 ID 手动覆盖 context / output token 上限，用于目录不声明能力的自定义模型。覆盖值属于连接侧模型能力，逐字段优先于目录元数据，不绑定或改写 Preset。
 
 ## 5. Provider 与回复能力

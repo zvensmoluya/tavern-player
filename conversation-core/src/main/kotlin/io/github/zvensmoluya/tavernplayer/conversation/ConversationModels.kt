@@ -227,7 +227,7 @@ enum class TokenCountQuality { EXACT, ESTIMATED }
 @Serializable
 data class TokenAccountingReport(
     val inputTokens: Int,
-    val contextLimit: Int,
+    val contextLimit: Int? = null,
     val reservedOutputTokens: Int,
     val quality: TokenCountQuality,
     val tokenizer: String,

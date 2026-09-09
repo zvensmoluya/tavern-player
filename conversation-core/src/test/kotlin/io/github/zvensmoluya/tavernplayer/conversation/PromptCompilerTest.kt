@@ -197,7 +197,7 @@ class PromptCompilerTest {
         val original = baseInput()
         val input = original.copy(
             modelId = "gpt-4o",
-            modelContextTokens = null,
+            modelContextTokens = 128_000,
             character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book"))),
             preset = original.preset.copy(
                 generationSettings = original.preset.generationSettings.copy(maxContextTokens = null),
@@ -212,6 +212,26 @@ class PromptCompilerTest {
         assertTrue(result.plan.messages.any { it.content.startsWith("128000") })
         assertEquals(128_000, result.plan.tokenAccounting?.contextLimit)
         assertTrue(result.plan.trace.any { it.stage == "world-book-budget" && it.decision.contains("budget=31872") })
+    }
+
+    @Test
+    fun `unknown context stays undeclared through macros world books and generation plan`() {
+        val original = baseInput()
+        val result = compiler.compile(original.copy(
+            modelId = "custom-model",
+            modelContextTokens = null,
+            character = original.character.copy(worldBooks = listOf(WorldBookDefinition("book"))),
+            preset = original.preset.copy(
+                generationSettings = original.preset.generationSettings.copy(maxContextTokens = null),
+                prompts = original.preset.prompts.map { prompt ->
+                    if (prompt.identifier == "main") prompt.copy(content = "context=[{{maxContext}}] prompt=[{{maxPrompt}}]") else prompt
+                },
+            ),
+        )) as CompilationResult.Success
+        assertTrue(result.plan.messages.any { it.content.startsWith("context=[] prompt=[]") })
+        assertEquals(null, result.plan.declaredContextTokens)
+        assertEquals(null, result.plan.tokenAccounting?.contextLimit)
+        assertTrue(result.plan.trace.any { it.stage == "world-book-budget" && it.decision.contains("budget=undeclared") })
     }
 
     @Test

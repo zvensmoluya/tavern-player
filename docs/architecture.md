@@ -80,16 +80,17 @@ World Book 的 sticky / cooldown 状态以 `bookId:entryId` 保存；delay 根�
 
 ## Token 与 Provider
 
-导入期 Native 编译独立于普通聊天预算：不使用默认 128K context／16K output，也不以保守 token 估算阻止完整源码请求。连接的模型输出上限存在时直接使用；未知时省略协议可选的输出限制。Anthropic 的 `max_tokens` 必填，缺少模型声明时使用 65,536 回退值。真实上下文容量由 Provider 判定；本地来源、格式及运行资源校验仍然执行。
+导入期 Native 编译独立于普通聊天预算：不使用固定 context／16K output 兜底，也不以保守 token 估算阻止完整源码请求。连接的模型输出上限存在时直接使用；未知时省略协议可选的输出限制。Anthropic 的 `max_tokens` 必填，缺少模型声明时使用 65,536 回退值。真实上下文容量由 Provider 判定；本地来源、格式及运行资源校验仍然执行。
 
 `TokenAccounting` 先进行本地内容选择：
 
 - 已映射的 OpenAI 模型使用 JTokkit 的 r50k / p50k / cl100k / o200k 编码与消息 framing；
 - 未知或自定义 endpoint 使用带消息开销的保守 UTF-8 估算；
 - 当前模型的用户覆盖和模型目录是已验证能力：存在时会约束 Preset 声明的 context / output 预算；
-- 已验证能力缺失时，context / output 直接采用 Preset 声明并标记为未验证，不再按模型名称猜测能力；Preset 也没有声明 context 时才采用 128K 产品默认预算。output 始终不能超过本轮有效 context。
+- 已验证能力缺失时，context / output 直接采用 Preset 声明并标记为未验证，不再按模型名称猜测能力；Preset 也没有声明 context 时不设置本地上下文上限，由 Provider 判定请求是否超限。output 受明确的本轮 context 约束；未知 context 不产生额外约束。此规则同时用于普通聊天和原生动作辅助生成。
+- context 未声明时，`maxContext` / `maxPrompt` 宏返回空值；世界书不套用依赖 context 的百分比预算，但仍遵守世界书显式 token budget。Token 计数继续记录，未知容量不触发本地裁剪。
 
-最终协议请求构造后，Anthropic 与 Gemini 使用官方 count-tokens endpoint 验证；OpenAI 已映射模型使用本地精确计数；其余请求保持 `ESTIMATED`。超限时最多按同一优先级重新裁剪三次。
+最终协议请求构造后，Anthropic 与 Gemini 使用官方 count-tokens endpoint 验证；OpenAI 已映射模型使用本地精确计数；其余请求保持 `ESTIMATED`。超过已声明的上下文预算时最多按同一优先级重新裁剪三次；容量未知时只记录计数并提交原请求。
 
 `ModelGateway` 保留五个协议原生客户端：OpenAI Responses、OpenAI Chat Completions、Anthropic Messages、Gemini Interactions 和 Gemini GenerateContent。不同协议拥有各自的强类型请求与流式事件，不通过伪通用 OpenAI 请求模型抹平差异，也不依赖 Provider hosted state。
 

@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -130,10 +131,11 @@ class TokenAccountingTest {
     }
 
     @Test
-    fun `missing model and preset context uses a modern product default without claiming capability`() {
+    fun `missing model and preset context preserves requests beyond two million tokens`() {
         val base = input(context = 2_000_000, output = 1_024)
+        val messages = listOf(prepared("x".repeat(2_100_000), "chat-history"), prepared("required", "main"))
         val result = ContextBudgeter().budget(
-            listOf(prepared("required", "main")),
+            messages,
             base.copy(
                 preset = base.preset.copy(
                     generationSettings = base.preset.generationSettings.copy(maxContextTokens = null),
@@ -144,9 +146,12 @@ class TokenAccountingTest {
             ),
         )
 
-        assertEquals(128_000, result.report.contextLimit)
+        assertNull(result.report.contextLimit)
+        assertNull(result.failure)
+        assertEquals(messages, result.messages)
+        assertTrue(result.report.inputTokens > 2_000_000)
         assertEquals(1_024, result.report.reservedOutputTokens)
-        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_BUDGET_DEFAULTED" })
+        assertTrue(result.diagnostics.any { it.code == "MODEL_CONTEXT_BUDGET_UNKNOWN" })
     }
 
     @Test

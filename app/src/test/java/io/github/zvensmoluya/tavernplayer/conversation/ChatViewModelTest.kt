@@ -133,7 +133,10 @@ class ChatViewModelTest {
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             val started = CompletableDeferred<Unit>()
             val generator = object : ConversationGenerator {
-                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) = ProviderTokenValidation(10, TokenCountQuality.EXACT, "test")
+                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan): ProviderTokenValidation {
+                    assertNull(plan.declaredContextTokens)
+                    return ProviderTokenValidation(2_100_000, TokenCountQuality.EXACT, "test")
+                }
                 override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
                     started.complete(Unit)
                     awaitCancellation()
@@ -1610,6 +1613,36 @@ class ChatViewModelTest {
         assertEquals("preset-b", plans.last().presetId)
         assertEquals(222, plans.last().maxOutputTokens)
         assertEquals("preset-b", viewModel.uiState.value.messages.last().metadata?.presetId)
+    }
+
+    @Test
+    fun `unknown context accepts provider counts over two million without reclipping`() = runTest {
+        val preset = DemoConversationContent.preset.copy(
+            generationSettings = DemoConversationContent.preset.generationSettings.copy(maxContextTokens = null),
+        )
+        var validations = 0
+        var captured: GenerationPlan? = null
+        val generator = object : ConversationGenerator {
+            override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan): ProviderTokenValidation {
+                validations++
+                return ProviderTokenValidation(2_100_000, TokenCountQuality.EXACT, "test")
+            }
+            override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
+                captured = plan
+                emit(GenerationEvent.TextDelta("完成"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val vm = ChatViewModel(repository(), PromptCompiler(), generator,
+            presetSource = FixedPresetSource(preset), projectionDispatcher = mainDispatcherRule.dispatcher)
+        vm.updateInput("开始")
+        vm.send()
+        assertEquals(1, validations)
+        val plan = requireNotNull(captured)
+        assertNull(plan.declaredContextTokens)
+        assertEquals(2_100_000, plan.tokenAccounting?.inputTokens)
+        assertFalse(plan.trace.any { it.stage == "context-budget" })
+        assertEquals("完成", vm.uiState.value.messages.last().message.content)
     }
 
     @Test

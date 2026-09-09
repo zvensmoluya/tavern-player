@@ -55,7 +55,7 @@ data class WorldBookActivationResult(
     val diagnostics: List<CompilationDiagnostic>,
     val trace: List<CompilationTraceEntry>,
     val usedBudgetTokens: Int,
-    val budgetTokens: Int,
+    val budgetTokens: Int?,
 )
 
 class WorldBookEngine(
@@ -75,7 +75,7 @@ class WorldBookEngine(
         previousState: Map<String, WorldBookEntryRuntimeState>,
         activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turnIndex: Int,
-        inputBudgetTokens: Int,
+        inputBudgetTokens: Int?,
         messageCount: Int = projectedHistory.size,
         literalEntryIds: Set<String> = emptySet(),
         prepareEntry: (String, WorldBookEntryDefinition, MacroTransaction) -> WorldBookPreparedText? = { _, _, _ -> null },
@@ -86,8 +86,10 @@ class WorldBookEngine(
         val diagnostics = mutableListOf<CompilationDiagnostic>()
         val trace = mutableListOf<CompilationTraceEntry>()
         val states = previousState.mapValues { (_, state) -> state.advance() }.toMutableMap()
-        val globalBudget = (inputBudgetTokens * DEFAULT_BUDGET_PERCENT / 100).coerceAtLeast(0)
-        var remainingGlobal = globalBudget
+        val globalBudget = inputBudgetTokens?.let { (it.toLong() * DEFAULT_BUDGET_PERCENT / 100).coerceAtLeast(0).toInt() }
+        // Unknown context has no percentage-derived cap; explicit book budgets still apply.
+        val accountingBudget = globalBudget ?: Int.MAX_VALUE
+        var remainingGlobal = accountingBudget
         val activated = mutableListOf<WorldBookEntryDefinition>()
 
         val preparedContent = java.util.IdentityHashMap<WorldBookEntryDefinition, String>()
@@ -200,7 +202,7 @@ class WorldBookEngine(
             runtimeState = states,
             diagnostics = diagnostics.distinctBy { it.code to it.sourceId },
             trace = trace,
-            usedBudgetTokens = globalBudget - remainingGlobal,
+            usedBudgetTokens = accountingBudget - remainingGlobal,
             budgetTokens = globalBudget,
         )
     }

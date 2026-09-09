@@ -248,7 +248,7 @@ class WorldBookEngineTest {
             entries = listOf(entry("ordinary", constant = true, content = "ordinary"), exempt))
         val result = activate(book, emptyList(), budget = 0)
         assertEquals(listOf("exempt"), result.activatedEntryIds)
-        assertTrue(result.usedBudgetTokens > result.budgetTokens)
+        assertTrue(result.usedBudgetTokens > requireNotNull(result.budgetTokens))
         assertTrue(result.trace.any { it.sourceIds == listOf("exempt") && "bypassed" in it.decision })
         assertTrue(activate(book, emptyList(), overrides = WorldBookActivationOverrides(books = mapOf("book" to false)), budget = 0).injections.isEmpty())
         assertTrue(activate(book.copy(entries = listOf(exempt.copy(enabled = false))), emptyList(), budget = 0).injections.isEmpty())
@@ -388,13 +388,25 @@ class WorldBookEngineTest {
         assertTrue(dropped.activatedEntryIds.isEmpty())
     }
 
+    @Test
+    fun `unknown context admits large entries but respects explicit book budgets`() {
+        val content = "x".repeat(150_000)
+        val book = WorldBookDefinition("book", entries = listOf(entry("large", constant = true, content = content)))
+        val unlimited = activate(book, emptyList(), budget = null)
+        assertEquals(listOf("large"), unlimited.activatedEntryIds)
+        assertEquals(null, unlimited.budgetTokens)
+        assertEquals(content, unlimited.injections.single().content)
+        val limited = activate(book.copy(tokenBudget = 100), emptyList(), budget = null)
+        assertTrue(limited.activatedEntryIds.isEmpty())
+    }
+
     private fun activate(
         book: WorldBookDefinition,
         history: List<ConversationMessage>,
         state: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
         overrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         turn: Int = 0,
-        budget: Int = 10_000,
+        budget: Int? = 10_000,
         characterScan: WorldBookCharacterScan = WorldBookCharacterScan(),
         target: WorldBookEngine = engine,
     ) = target.activate(

@@ -20,7 +20,7 @@ data class MacroContext(
     val original: String? = null,
     val conversationId: String = "preview",
     val generationId: String = "preview-0",
-    val maxContextTokens: Int = 32_768,
+    val maxContextTokens: Int? = null,
     val maxResponseTokens: Int = 1_024,
     val firstIncludedMessageId: Int? = null,
     val firstDisplayedMessageId: Int? = 0,
@@ -305,9 +305,9 @@ class MacroEngine {
             "//" -> ""
             "reverse" -> args.joinToString("::").reverseCodePoints()
             "input" -> context.inputText
-            "maxcontext" -> context.maxContextTokens.toString()
+            "maxcontext" -> context.maxContextTokens?.toString().orEmpty()
             "maxresponse" -> context.maxResponseTokens.toString()
-            "maxprompt" -> max(0, context.maxContextTokens - context.maxResponseTokens).toString()
+            "maxprompt" -> context.maxContextTokens?.let { max(0, it - context.maxResponseTokens).toString() }.orEmpty()
             "if" -> inlineIf(args)
             "random" -> randomChoice(args, legacyArgument, transaction)
             "pick" -> deterministicChoice(args, legacyArgument, context)

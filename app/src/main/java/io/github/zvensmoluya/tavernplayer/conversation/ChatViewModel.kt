@@ -344,8 +344,8 @@ class ChatViewModel(
                                     val requestId = idGenerator()
                                     saveNativeRecord(NativeOperations.generation(record, operationId, requestId))
                                     val limits = selectedConnection.effectiveTokenLimits()
-                                    val contextLimit = (limits.contextTokens ?: 128_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                                    val outputLimit = minOf(2048L, limits.outputTokens ?: 2048L, contextLimit.toLong() - 1).toInt()
+                                    val contextLimit = limits.contextTokens?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
+                                    val outputLimit = minOf(2048L, limits.outputTokens ?: 2048L, contextLimit?.toLong()?.minus(1) ?: Long.MAX_VALUE).toInt()
                                     require(outputLimit > 0)
                                     val plan = GenerationPlan(
                                         messages = listOf(PreparedMessage(MessageRole.USER, prompt, PromptOrigin("native-action", listOf(operationId, requestId)))),
@@ -354,7 +354,7 @@ class ChatViewModel(
                                         diagnostics = emptyList(), trace = emptyList(),
                                     )
                                     val budget = generator.validateTokens(selectedConnection, plan)
-                                    require(budget != null && budget.inputTokens.toLong() + outputLimit <= contextLimit) { "辅助生成超过上下文预算" }
+                                    require(contextLimit == null || (budget != null && budget.inputTokens.toLong() + outputLimit <= contextLimit)) { "辅助生成超过上下文预算" }
                                     val text = StringBuilder()
                                     var complete = false
                                     generator.stream(selectedConnection, plan).collect { event ->
@@ -949,7 +949,7 @@ class ChatViewModel(
                 break
             }
             val contextLimit = accounting.contextLimit
-            val overflow = validation.inputTokens + candidate.maxOutputTokens - contextLimit
+            val overflow = contextLimit?.let { validation.inputTokens.toLong() + candidate.maxOutputTokens - it } ?: 0L
             validationDiagnostics += CompilationDiagnostic(
                 DiagnosticSeverity.WARNING,
                 if (validation.quality == TokenCountQuality.EXACT) "PROVIDER_TOKEN_COUNT_EXACT" else "PROVIDER_TOKEN_COUNT_ESTIMATED",
@@ -983,7 +983,7 @@ class ChatViewModel(
             }
             localInputLimit = (
                 accounting.inputTokens - overflow - PROVIDER_RECLIP_SAFETY_TOKENS
-                ).coerceAtLeast(0)
+                ).coerceAtLeast(0).toInt()
         }
         val finalPlan = checkNotNull(plan)
         val adapterId = connection.protocol.name

@@ -127,7 +127,7 @@ class NativeWorldBookTextProjectorTest {
             is CompilationResult.Failure -> assertTrue(result.diagnostics.any { it.code == "MANDATORY_CONTEXT_OVERFLOW" })
             is CompilationResult.Success -> {
                 val accounting = checkNotNull(result.plan.tokenAccounting)
-                assertTrue(accounting.inputTokens + accounting.reservedOutputTokens <= accounting.contextLimit)
+                assertTrue(accounting.inputTokens + accounting.reservedOutputTokens <= requireNotNull(accounting.contextLimit))
                 assertTrue(result.plan.trace.any { it.stage == "context-budget" && "world-book" in it.decision })
             }
         }

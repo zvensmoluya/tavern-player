@@ -113,14 +113,14 @@ data class TokenBudgetResult(
 class ContextBudgeter(
     private val accounting: TokenAccounting = DefaultTokenAccounting(),
 ) {
-    fun contextLimit(input: NormalGenerationInput): Int {
+    fun contextLimit(input: NormalGenerationInput): Int? {
         val declaredBudget = input.preset.generationSettings.maxContextTokens
         val verifiedLimit = input.modelContextTokens
         return when {
             verifiedLimit != null && declaredBudget != null -> minOf(verifiedLimit, declaredBudget)
             verifiedLimit != null -> verifiedLimit
             declaredBudget != null -> declaredBudget
-            else -> DEFAULT_UNVERIFIED_CONTEXT_BUDGET
+            else -> null
         }
     }
 
@@ -128,7 +128,7 @@ class ContextBudgeter(
         val contextLimit = contextLimit(input)
         val requestedOutput = input.preset.generationSettings.maxOutputTokens
         val verifiedLimit = input.modelOutputTokens
-        return minOf(requestedOutput, verifiedLimit ?: Int.MAX_VALUE, contextLimit)
+        return minOf(requestedOutput, verifiedLimit ?: Int.MAX_VALUE, contextLimit ?: Int.MAX_VALUE)
     }
 
     fun budget(
@@ -138,7 +138,7 @@ class ContextBudgeter(
         val contextLimit = contextLimit(input)
         val outputTokens = outputLimit(input)
         val inputLimit = minOf(
-            (contextLimit - outputTokens).coerceAtLeast(0),
+            contextLimit?.let { (it - outputTokens).coerceAtLeast(0) } ?: Int.MAX_VALUE,
             input.maxInputTokens ?: Int.MAX_VALUE,
         )
         val working = messages.toMutableList()
@@ -149,12 +149,12 @@ class ContextBudgeter(
             diagnostics += CompilationDiagnostic(
                 severity = DiagnosticSeverity.WARNING,
                 code = if (declaredContext == null) {
-                    "MODEL_CONTEXT_BUDGET_DEFAULTED"
+                    "MODEL_CONTEXT_BUDGET_UNKNOWN"
                 } else {
                     "MODEL_CONTEXT_BUDGET_UNVERIFIED"
                 },
                 message = if (declaredContext == null) {
-                    "模型目录与 Preset 均未提供 context；本轮使用产品默认预算 $contextLimit tokens，未经 Provider 验证"
+                    "模型目录与 Preset 均未提供 context；本轮不设置本地上下文上限，由 Provider 判定请求是否超限"
                 } else {
                     "模型目录未提供 context 上限；本轮按 Preset 声明分配 $contextLimit tokens，未经 Provider 验证"
                 },
@@ -172,7 +172,7 @@ class ContextBudgeter(
                 },
             )
         } else if (outputTokens < requestedOutputTokens) {
-            val clampedByContext = contextLimit < minOf(requestedOutputTokens, input.modelOutputTokens)
+            val clampedByContext = contextLimit != null && contextLimit < minOf(requestedOutputTokens, input.modelOutputTokens)
             diagnostics += CompilationDiagnostic(
                 severity = DiagnosticSeverity.WARNING,
                 code = if (clampedByContext) "OUTPUT_BUDGET_CONTEXT_CLAMPED" else "MODEL_OUTPUT_LIMIT_CLAMPED",
@@ -208,7 +208,7 @@ class ContextBudgeter(
         diagnostics += CompilationDiagnostic(
             severity = DiagnosticSeverity.WARNING,
             code = if (count.quality == TokenCountQuality.EXACT) "TOKEN_COUNT_EXACT" else "TOKEN_COUNT_ESTIMATED",
-            message = "Context $contextLimit，输入 ${count.tokens}，预留回复 $outputTokens；计数器 ${count.tokenizer}",
+            message = "Context ${contextLimit ?: "未声明"}，输入 ${count.tokens}，预留回复 $outputTokens；计数器 ${count.tokenizer}",
         )
         val failure = if (count.tokens > inputLimit) {
             CompilationDiagnostic(
@@ -233,8 +233,4 @@ class ContextBudgeter(
 
     private fun PreparedMessage.isLastUserMessage(messages: List<PreparedMessage>): Boolean =
         role == MessageRole.USER && this === messages.lastOrNull { it.origin.stage == "chat-history" && it.role == MessageRole.USER }
-
-    companion object {
-        private const val DEFAULT_UNVERIFIED_CONTEXT_BUDGET = 128_000
-    }
 }

@@ -40,7 +40,7 @@ class MacroEngineTest {
         val result = engine.evaluate(
             "{{setvar::points::2}}{{addvar::points::3}}{{incvar points}}/" +
                 "{{getvar::points}}/{{maxContextTokens}}/{{comment hidden}}/{{roll: 6}}",
-            context(),
+            context().copy(maxContextTokens = 32_768),
             transaction,
         )
 

@@ -815,7 +815,7 @@ private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
                 item("token-accounting") {
                     TraceBlock(
                         title = "Context 与 Token",
-                        content = "context=${accounting.contextLimit} input=${accounting.inputTokens} " +
+                        content = "context=${accounting.contextLimit ?: "未声明"} input=${accounting.inputTokens} " +
                             "reservedOutput=${accounting.reservedOutputTokens} quality=${accounting.quality} " +
                             "counter=${accounting.tokenizer}",
                     )
