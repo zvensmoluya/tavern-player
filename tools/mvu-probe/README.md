@@ -1,10 +1,10 @@
 # MVU 接入实验
 
-当前 Gradle 构建会调用此工具，生成应用使用的固定框架资产（`build/app-assets/mvu`）；只含框架、provenance 与许可证，不含原卡或测试夹具。测试资产仍在独立的 `build/android-assets`。详见 [聊天接入](../../docs/mvu-chat-integration-20260907.md)。
+当前 Gradle 构建会调用此工具，生成应用使用的固定框架资产（`build/app-assets/mvu`）；只含框架、provenance 与许可证，不含原卡或测试夹具。测试资产仍在独立的 `build/android-assets`。详见 [聊天接入](../../docs/archive/mvu-chat-integration-20260907.md)。
 
 直接运行固定版本的 MVU 初始化、更新和消息处理源码，以及卡所引用的 `registerMvuSchema` 辅助库；不重新实现四种更新操作。Node 宿主提供消息、候选、世界书、事件和诊断接口，验证公共依赖能否脱离酒馆网页工作。
 
-这是开发实验。现已提供 [QuickJS Kotlin 宿主](../../app/src/main/java/io/github/zvensmoluya/tavernplayer/conversation/mvu/QuickJsMvuRuntime.kt) 与 JVM/Android 共用验证，已接入声明 MVU 的适配产物、正常聊天和 Prompt 变量读取；原生界面不会自动绑定这些变量。Node 参照实验见 [实验记录](../../docs/mvu-integration-probe-20260907.md)，后续见 [QuickJS 接入记录](../../docs/mvu-quickjs-integration-20260907.md)。
+这是开发实验。现已提供 [QuickJS Kotlin 宿主](../../app/src/main/java/io/github/zvensmoluya/tavernplayer/conversation/mvu/QuickJsMvuRuntime.kt) 与 JVM/Android 共用验证，已接入声明 MVU 的适配产物、正常聊天和 Prompt 变量读取；原生界面不会自动绑定这些变量。Node 参照实验见 [实验记录](../../docs/archive/mvu-integration-probe-20260907.md)，后续见 [QuickJS 接入记录](../../docs/archive/mvu-quickjs-integration-20260907.md)。
 
 ## 运行
 
@@ -54,7 +54,7 @@ npm --prefix tools/mvu-probe run probe -- $env:COMMUNITY_CARD
 
 `npm run probe:ejs` 按哈希读取仓库本地 C-04 原件，或使用 `npm run probe:ejs -- <local-source>`；按提交和文件哈希下载参照扩展源码，比较原始模板输出。生成的原件、参照及用例仅进入忽略的 `build/`，其中 `build/android-assets/ejs/` 供 JVM/Android 测试使用。普通 APK 不包含这些样本。
 
-宿主接口、历史范围中的上游特殊行为和验证见 [EJS 接入记录](../../docs/ejs-quickjs-integration-20260907.md)。
+宿主接口、历史范围中的上游特殊行为和验证见 [EJS 接入记录](../../docs/archive/ejs-quickjs-integration-20260907.md)。
 
 
 ## Schema 模块加载

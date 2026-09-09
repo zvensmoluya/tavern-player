@@ -30,10 +30,10 @@ We're building the player.
 
 ## Current documentation
 
-- [Product and compatibility scope](docs/current-discussion-status.md)
+- [Documentation index: current, reference, and archive](docs/README.md)
+- [Product and compatibility scope](docs/product-direction.md)
 - [Implemented architecture](docs/architecture.md)
-- [SillyTavern turn-generation source study](docs/st-research.md)
-- [Community preset sample study](docs/preset-import-capabilities.md)
+- [HTML Surface and compilation-free playback direction](docs/html-surface-discussion-20260909.md)
 
 ## Open source
 
