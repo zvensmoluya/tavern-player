@@ -339,6 +339,7 @@ fun CharacterDetailScreen(
     onCancelCompilation: () -> Unit = {},
     onOpenModels: () -> Unit = {},
     onReadWorldBooks: () -> Unit = {},
+    onOpenResources: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -415,6 +416,14 @@ fun CharacterDetailScreen(
                             )
                         }
                         Text("阅读", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+            item("image-resources") {
+                Card(onClick = onOpenResources, modifier = Modifier.fillMaxWidth().testTag("characterResources")) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("角色资源", style = MaterialTheme.typography.titleMedium)
+                        Text("保存和查看角色图片", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }

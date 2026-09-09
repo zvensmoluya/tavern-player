@@ -66,7 +66,7 @@ internal fun interface StaticImageInspector {
     fun inspect(bytes: ByteArray): StaticImageInfo?
 }
 
-private object AndroidStaticImageInspector : StaticImageInspector {
+internal object AndroidStaticImageInspector : StaticImageInspector {
     override fun inspect(bytes: ByteArray): StaticImageInfo? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -91,6 +91,7 @@ class CharacterRepository internal constructor(
     }
     private val _characters = MutableStateFlow<List<CharacterAsset>>(emptyList())
     val characters: StateFlow<List<CharacterAsset>> = _characters.asStateFlow()
+    val imageResources = CharacterImageRepository(filesDir, ::get, ::assetFile)
 
     init {
         root.mkdirs()

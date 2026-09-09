@@ -43,6 +43,9 @@ data class CharacterLibraryUiState(
     val importDiagnostics: List<CompatibilityDiagnostic> = emptyList(),
     val message: String? = null,
     val openConversationId: String? = null,
+    val imageStates: Map<String, CharacterImageState> = emptyMap(),
+    val imageWorkingIds: Set<String> = emptySet(),
+    val imageErrors: Map<String, String> = emptyMap(),
 ) {
     val busy: Boolean get() = importing || compilingCharacterId != null
     val selectedCharacter: CharacterAsset?
@@ -62,10 +65,16 @@ class CharacterLibraryViewModel(
     private val connectionRepository: ConnectionRepository? = null,
 ) : ViewModel() {
     private var compilationJob: Job? = null
+    private val imageJobs = mutableMapOf<String, Job>()
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            characterRepository.imageResources.states.collect { states ->
+                _uiState.update { it.copy(imageStates = states) }
+            }
+        }
         if (connectionRepository != null) viewModelScope.launch {
             connectionRepository.state.collect { state ->
                 val choices = state.connections.filter { it.selectedModel.isNotBlank() }
@@ -223,6 +232,26 @@ class CharacterLibraryViewModel(
 
     fun selectCharacter(characterId: String?) {
         _uiState.update { it.copy(selectedCharacterId = characterId, message = null) }
+    }
+
+    fun loadImages(characterId: String) = runImageJob(characterId) { characterRepository.imageResources.load(characterId) }
+    fun prepareImages(characterId: String) = runImageJob(characterId) { characterRepository.imageResources.prepare(characterId) }
+    fun cancelImages(characterId: String) { imageJobs[characterId]?.cancel() }
+    fun imagePath(characterId: String, entry: CharacterImageEntry): String? = characterRepository.imageResources.file(characterId, entry)?.absolutePath
+
+    private fun runImageJob(characterId: String, action: suspend () -> Unit) {
+        if (imageJobs[characterId]?.isActive == true) return
+        _uiState.update { it.copy(imageWorkingIds = it.imageWorkingIds + characterId, imageErrors = it.imageErrors - characterId) }
+        imageJobs[characterId] = viewModelScope.launch {
+            try { action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                _uiState.update { it.copy(imageErrors = it.imageErrors + (characterId to (error.message?.take(160) ?: "角色资源准备失败"))) }
+            } finally {
+                _uiState.update { it.copy(imageWorkingIds = it.imageWorkingIds - characterId) }
+                imageJobs.remove(characterId)
+            }
+        }
     }
 
     fun reportMessage(message: String) {

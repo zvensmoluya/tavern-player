@@ -97,6 +97,8 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 ## Android 仓库与界面
 
+角色详情提供独立“角色资源”入口。`CharacterImageDiscovery` 只提取原卡中的静态图片引用；`CharacterImageRepository` 在用户点击准备后，通过独立 HTTP 客户端下载并校验，保存到 `filesDir/tavern/characters/{id}/resources/images`，按内容哈希在角色内去重。页面仅从本地文件预览，下载完成项跨进程复用，不进入相册，也不自动淘汰。普通导入仍不抓取远程资源；该入口不调用模型、不修改原卡或 Native 编译协议。支持范围和限制见[角色图片资源](character-image-resources-20260909.md)。
+
 角色详情提供世界书阅读入口；`WorldBookReaderScreen` 按书展示全部条目并支持标题、关键词及正文搜索。正文以可选择的原始文字分块呈现，保留 Macro、EJS 与 HTML 字面内容，不运行程序、不修改启用状态，也不创建独立世界书资产。阅读页保留搜索与列表滚动位置，支持返回条目列表及角色详情。
 
 `QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](mvu-chat-integration-20260907.md)。

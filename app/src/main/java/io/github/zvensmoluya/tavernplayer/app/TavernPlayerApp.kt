@@ -108,12 +108,26 @@ fun TavernPlayerApp(
                     onCancelCompilation = characterLibraryViewModel::cancelCompilation,
                     onOpenModels = ::openModels,
                     onReadWorldBooks = { surface = AppSurface.CHARACTER_WORLD_BOOKS },
+                    onOpenResources = { surface = AppSurface.CHARACTER_RESOURCES },
                     message = libraryState.message,
                 )
             }
         }
         AppSurface.CHARACTER_WORLD_BOOKS -> libraryState.selectedCharacter?.let { character ->
             WorldBookReaderScreen(character, onBack = { surface = AppSurface.CHARACTER_DETAIL })
+        }
+        AppSurface.CHARACTER_RESOURCES -> libraryState.selectedCharacter?.let { character ->
+            LaunchedEffect(character.id) { characterLibraryViewModel.loadImages(character.id) }
+            io.github.zvensmoluya.tavernplayer.characters.CharacterResourcesScreen(
+                state = libraryState.imageStates[character.id],
+                working = character.id in libraryState.imageWorkingIds,
+                error = libraryState.imageErrors[character.id],
+                onPrepare = { characterLibraryViewModel.prepareImages(character.id) },
+                onCancel = { characterLibraryViewModel.cancelImages(character.id) },
+                onReload = { characterLibraryViewModel.loadImages(character.id) },
+                resolvePath = { characterLibraryViewModel.imagePath(character.id, it) },
+                onBack = { surface = AppSurface.CHARACTER_DETAIL },
+            )
         }
         AppSurface.CHAT -> ChatRoute(
             viewModel = chatViewModel,
@@ -148,6 +162,7 @@ internal enum class AppSurface {
     CHARACTER_LIBRARY,
     CHARACTER_DETAIL,
     CHARACTER_WORLD_BOOKS,
+    CHARACTER_RESOURCES,
     CHAT,
     MODEL_CONFIGURATION,
     PRESET_CENTER,
@@ -160,6 +175,7 @@ internal fun selectAppSurface(
 ): AppSurface = when {
     requested == AppSurface.CHARACTER_DETAIL && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
     requested == AppSurface.CHARACTER_WORLD_BOOKS && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
+    requested == AppSurface.CHARACTER_RESOURCES && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
     requested == AppSurface.CHAT && !hasSelectedCharacter -> AppSurface.CHARACTER_LIBRARY
     else -> requested
 }
