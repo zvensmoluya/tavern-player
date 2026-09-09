@@ -39,7 +39,24 @@ android {
 
 android.sourceSets.named("main") {
     assets.directories.add("../tools/mvu-probe/build/app-assets")
+    assets.directories.add("../tools/web-runtime/build/app-assets")
 }
+
+val installWebDependencies by tasks.registering(Exec::class) {
+    workingDir(rootProject.file("tools/web-runtime"))
+    inputs.files("../tools/web-runtime/package.json", "../tools/web-runtime/package-lock.json")
+    outputs.file(rootProject.file("tools/web-runtime/node_modules/.package-lock.json"))
+    if (System.getProperty("os.name").startsWith("Windows")) commandLine("cmd", "/c", "npm", "ci")
+    else commandLine("npm", "ci")
+}
+val prepareWebRuntime by tasks.registering(Exec::class) {
+    dependsOn(installWebDependencies)
+    workingDir(rootProject.file("tools/web-runtime"))
+    inputs.files(rootProject.fileTree("tools/web-runtime") { exclude("build/**", "node_modules/**") })
+    outputs.dir(rootProject.file("tools/web-runtime/build/app-assets"))
+    commandLine("node", "build.mjs")
+}
+tasks.named("preBuild") { dependsOn(prepareWebRuntime) }
 
 // Android and desktop tests execute the same Kotlin host with the matching native engine.
 configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
@@ -75,6 +92,7 @@ android.sourceSets.configureEach {
 
 tasks.withType<Test>().configureEach {
     systemProperty("mvuProbeAssets", rootProject.layout.projectDirectory.dir("tools/mvu-probe/build/android-assets").asFile.path)
+    systemProperty("webRuntimeAssets", rootProject.layout.projectDirectory.dir("tools/web-runtime/build/app-assets/web").asFile.path)
 }
 
 val preparePressureCardAndroidTestAsset by tasks.registering(Copy::class) {
@@ -93,6 +111,7 @@ tasks.matching { task ->
 }
 
 dependencies {
+    implementation(libs.webkit)
     implementation(project(":content-core"))
     implementation(project(":conversation-core"))
     implementation(project(":model-gateway"))

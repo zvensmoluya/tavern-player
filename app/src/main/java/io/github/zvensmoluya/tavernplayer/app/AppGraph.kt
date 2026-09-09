@@ -42,10 +42,16 @@ class AppGraph(context: Context) {
     val ejsRuntime = io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime(loadBundle = {
         appContext.assets.open("ejs/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
     })
+    val browserEnvironment = io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment(
+        appContext, characterRepository.imageResources,
+        io.github.zvensmoluya.tavernplayer.conversation.web.WebResourceRepository(appContext.filesDir),
+        characterRepository::assetFile, characterRepository::avatarFile,
+    )
     val conversationRepository = ConversationRepository(
         filesDir = appContext.filesDir,
         compiler = promptCompiler,
         mvuRuntime = mvuRuntime,
+        prepareBrowser = browserEnvironment::prepare,
     )
     val conversationGenerator = StateConfirmingConversationGenerator(
         ModelGatewayConversationGenerator(gateway, connectionRepository),

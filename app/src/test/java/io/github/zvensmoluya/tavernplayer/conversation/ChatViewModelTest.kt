@@ -48,6 +48,37 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    @Test fun `browser writes save literally and reject stale or failed operations`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("browser-writes").toFile()
+        val conversations = ConversationRepository(directory, PromptCompiler())
+        val saved = conversations.create(DemoConversationContent.character, DemoConversationContent.persona,
+            DemoConversationContent.preset, ConversationExecutionMode.BROWSER)
+        val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> error("No generation expected") }, conversations, FixedPresetSource())
+        try {
+            vm.loadConversation(saved.id)
+            awaitMvuIdle(vm)
+            val actor = BrowserActor("page", saved.turns[0].id, saved.turns[0].selected.id)
+            val revision = vm.uiState.value.browserSnapshot.getValue("revision").jsonPrimitive.content
+            val args = kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"chat","data":{"score":7}}""").jsonObject
+            vm.invokeBrowser(actor, revision, "variables.replace", args)
+            assertEquals(JsonPrimitive(7), conversations.get(saved.id)!!.runtimeState.browserChatVariables["score"])
+            try { vm.invokeBrowser(actor, revision, "variables.replace", args); throw AssertionError("Stale revision accepted") }
+            catch (_: IllegalArgumentException) {}
+            // Obstruct the actual atomic writer without mocking the bridge or the proposal controller.
+            val target = java.io.File(directory, "tavern/conversations/${saved.id}.json")
+            assertTrue(target.delete()); assertTrue(target.mkdir()); java.io.File(target, "obstruction").writeText("blocked")
+            try {
+                vm.invokeBrowser(actor, vm.uiState.value.browserSnapshot.getValue("revision").jsonPrimitive.content,
+                    "variables.replace", kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"chat","data":{"score":99}}""").jsonObject)
+                throw AssertionError("Failed save acknowledged")
+            } catch (_: BrowserPersistenceException) {}
+            assertEquals(JsonPrimitive(7), vm.uiState.value.browserSnapshot.getValue("chatVariables").jsonObject["score"])
+        } finally {
+            androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() }
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun `native surfaces return after chat completion failure and cancellation`() = kotlinx.coroutines.runBlocking {
         for (ending in listOf("complete", "failure", "cancel")) {
             val directory = Files.createTempDirectory("native-chat-refresh").toFile()

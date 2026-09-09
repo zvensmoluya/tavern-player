@@ -23,6 +23,7 @@ class ConversationRepository(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val mvuRuntime: io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime =
         io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime(),
+    private val prepareBrowser: suspend (io.github.zvensmoluya.tavernplayer.content.BrowserProgram) -> io.github.zvensmoluya.tavernplayer.content.BrowserProgram = { it },
 ) {
     private val root = File(filesDir, "tavern/conversations")
     private val mutex = Mutex()
@@ -48,12 +49,16 @@ class ConversationRepository(
         character: CharacterAsset,
         persona: Persona,
         preset: Preset,
+        executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
     ): ConversationRecord = withContext(ioDispatcher) {
         mutex.withLock {
             val timestamp = now()
             val conversationId = idFactory()
             val capturedPreset = preset.snapshot()
-            val snapshot = character.snapshot()
+            val snapshot = if (executionMode == ConversationExecutionMode.BROWSER) character.snapshot().copy(
+                nativeAdaptation = null,
+                browserProgram = prepareBrowser(io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.character(character)),
+            ) else character.snapshot()
             val greetings = listOf(snapshot.firstMessage) + snapshot.alternateFirstMessages
             val adaptationRuntime = NativeAdaptationRuntime()
             val initialRuntime = adaptationRuntime.initialState(snapshot.nativeAdaptation)
@@ -109,6 +114,7 @@ class ConversationRepository(
                 runtimeState = committedRuntime,
                 createdAtEpochMillis = timestamp,
                 updatedAtEpochMillis = timestamp,
+                executionMode = executionMode,
             ))
             writeRecord(record)
             publish(record)

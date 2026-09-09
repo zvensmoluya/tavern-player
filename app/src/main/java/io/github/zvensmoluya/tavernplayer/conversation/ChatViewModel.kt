@@ -10,6 +10,7 @@ import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.mvuProgram
 import io.github.zvensmoluya.tavernplayer.content.NativeCollectionView
 import io.github.zvensmoluya.tavernplayer.content.NativeFormView
 import io.github.zvensmoluya.tavernplayer.content.NativeSceneView
@@ -88,6 +89,11 @@ data class GenerationTraceState(
 )
 
 data class ChatUiState(
+    val executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
+    val browserSnapshot: JsonObject = JsonObject(emptyMap()),
+    val browserOperationRunning: Boolean = false,
+    val browserGenerating: Boolean = false,
+    val browserGeneration: JsonObject = JsonObject(emptyMap()),
     val memories: Map<String, ConversationMemory> = emptyMap(),
     val memorySaving: Boolean = false,
     val conversationId: String? = null,
@@ -120,7 +126,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || nativeActionRunning || loadingConversation
+    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || nativeActionRunning || loadingConversation || browserOperationRunning
     val openingChoices: List<NativeOpeningChoice> get() {
         val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
         return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
@@ -148,6 +154,7 @@ class ChatViewModel(
     private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
     private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
     private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
+    val browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
 ) : ViewModel() {
     private var currentPreset = presetSource.captureActive()
     private var record: ConversationRecord = fallbackRecord(characterAsset, persona, currentPreset)
@@ -168,6 +175,10 @@ class ChatViewModel(
     private var nativeProjectionJob: Job? = null
     private var nativeProjectionRevision: String? = null
     private val nativeHostMutex = Mutex()
+    private val browserHostMutex = Mutex()
+    private var browserGenerationJob: Job? = null
+    private var browserGenerationId: String? = null
+    private var pendingBrowserDraft: String? = null
     private var generationJob: Job? = null
     private var persistenceJob: Job? = null
     private var persistenceDirty = false
@@ -178,7 +189,7 @@ class ChatViewModel(
     private var pendingAssistantRuntime: ConversationRuntimeState? = null
 
     init {
-        if (record.character.nativeAdaptation?.mvu != null) {
+        if (record.character.mvuProgram != null) {
             _uiState.update { it.copy(loadingConversation = true) }
             viewModelScope.launch {
                 try {
@@ -220,7 +231,7 @@ class ChatViewModel(
 
     fun loadConversation(conversationId: String) {
         if (_uiState.value.running && generationJob == null) return
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
+        if (_uiState.value.browserOperationRunning || _uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         if (conversationRepository?.get(conversationId) == null) return
         if (generationJob != null || persistenceJob != null || persistenceDirty) {
             _uiState.update { it.copy(loadingConversation = true) }
@@ -258,9 +269,15 @@ class ChatViewModel(
     }
 
     fun updateInput(value: String) {
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
+        if (_uiState.value.browserOperationRunning) {
+            pendingBrowserDraft = value
+            _uiState.update { it.copy(input = value) }
+            return
+        }
+        if (_uiState.value.browserOperationRunning || _uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         record = record.withDraft(value)
         _uiState.update { it.copy(input = value, message = null, nativeChoices = NativePlayerChoiceController().options(record)) }
+        if (record.executionMode == ConversationExecutionMode.BROWSER) syncRecord(input = value)
         refreshNativeSurfaces()
         schedulePersist()
     }
@@ -360,7 +377,7 @@ class ChatViewModel(
                                     generator.stream(selectedConnection, plan).collect { event ->
                                         currentCoroutineContext().ensureActive()
                                         when (event) {
-                                            is GenerationEvent.TextDelta -> { require(text.length + event.text.length <= 65_536); text.append(event.text) }
+                                            is GenerationEvent.TextDelta -> { require(text.length + event.text.length <= 65_536); text.append(event.text); _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("text" to JsonPrimitive(text.toString())))) } }
                                             is GenerationEvent.Finished -> complete = event.reason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")
                                             else -> Unit
                                         }
@@ -516,7 +533,7 @@ class ChatViewModel(
             try {
                 val generationId = idGenerator()
                 record = mvuRuntime.initialize(record)
-                val historyBefore = record.selectedMessages()
+                val historyBefore = record.promptMessages()
                 val runtimeBeforeInput = record.runtimeState
                 val projected = compiler.projectUserInput(
                     text = inputText,
@@ -676,6 +693,8 @@ class ChatViewModel(
                                 projectionRuntimeStateBefore = runtimeBefore,
                                 runtimeStateAfter = projected.runtimeState,
                                 nativeOperations = emptyList(),
+                                browserHead = null,
+                                browserVariables = JsonObject(emptyMap()),
                             )
                         }
                     }
@@ -736,6 +755,8 @@ class ChatViewModel(
                                 runtimeStateAfter = projectedRuntime,
                                 playerChoiceCommits = emptyList(),
                                 nativeOperations = emptyList(),
+                                browserHead = null,
+                                browserVariables = JsonObject(emptyMap()),
                             )
                         }
                     }
@@ -771,6 +792,12 @@ class ChatViewModel(
                 val notice = if (mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection == null) {
                     "修改已保存；请先配置可用模型"
                 } else null
+                if (record.executionMode == ConversationExecutionMode.BROWSER) {
+                    try { persistNow() } catch (error: Exception) {
+                        record = conversationRepository?.get(record.id) ?: record
+                        throw error
+                    }
+                }
                 syncRecord(
                     running = shouldGenerate,
                     retryAvailable = if (mode == MessageEditMode.TEXT_ONLY) {
@@ -781,7 +808,7 @@ class ChatViewModel(
                     message = notice,
                     trace = if (mode == MessageEditMode.TEXT_ONLY) state.lastTrace else null,
                 )
-                persistNow()
+                if (record.executionMode != ConversationExecutionMode.BROWSER) persistNow()
                 refreshDisplayCache(capturedPreset)
                 if (shouldGenerate) {
                     generate(checkNotNull(connection), idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
@@ -808,7 +835,145 @@ class ChatViewModel(
     }
 
     fun cancel() {
+        browserGenerationJob?.cancel()
         generationJob?.cancel()
+    }
+
+    suspend fun invokeBrowser(actor: BrowserActor, revision: String, method: String, args: JsonObject): JsonObject {
+        if (method == "generation.stop") {
+            BrowserConversation.authorize(record, actor, BrowserConversation.revision(record))
+            require(args.keys.all { it == "id" }) { "未支持的停止参数" }
+            val requested = args["id"]?.jsonPrimitive?.contentOrNull
+            if (requested == null || requested == browserGenerationId) browserGenerationJob?.cancel()
+            if (requested == null) generationJob?.cancel()
+            return buildJsonObject { put("snapshot", BrowserConversation.snapshot(record)); put("value", JsonNull) }
+        }
+        return browserHostMutex.withLock {
+            require(!_uiState.value.busy) { "会话正在处理其他操作" }
+            BrowserConversation.authorize(record, actor, revision)
+            if (method == "chat.send") {
+                require(args.isEmpty() && record.draft.isNotBlank()) { "发送需要非空草稿" }
+                require(_uiState.value.selectedConnection != null) { "请先配置模型" }
+                send()
+                return@withLock buildJsonObject { put("snapshot", BrowserConversation.snapshot(record)); put("value", JsonNull) }
+            }
+            _uiState.update { it.copy(browserOperationRunning = true) }
+            var result: JsonElement = JsonNull
+            try {
+                try { persistNow() } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    record = conversationRepository?.get(record.id) ?: record
+                    throw BrowserPersistenceException(error)
+                }
+                BrowserConversation.authorize(record, actor, revision)
+                when (method) {
+                    "resources.reprepare" -> {
+                        require(actor.id == "native-resource-preparation" && args.isEmpty()) { "资源更新只能从原生界面操作" }
+                        result = JsonPrimitive(requireNotNull(browserEnvironment).resources.reprepare(record.id, record.character.sourceSha256))
+                    }
+                    "generation.generate", "generation.raw" -> {
+                        browserGenerationJob = currentCoroutineContext()[Job]
+                        browserGenerationId = args["generation_id"]?.jsonPrimitive?.contentOrNull ?: idGenerator()
+                        _uiState.update { it.copy(browserGenerating = true, browserGeneration = buildJsonObject { put("id", browserGenerationId); put("text", ""); put("stream", args["should_stream"]?.jsonPrimitive?.booleanOrNull == true); put("status", "running") }) }
+                        result = JsonPrimitive(generateBrowserText(method, args))
+                        _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("status" to JsonPrimitive("complete")))) }
+                    }
+                    else -> {
+                        val proposed = BrowserConversation.apply(record, actor, method, args)
+                        withContext(NonCancellable) {
+                            record = try { conversationRepository?.save(proposed) ?: proposed }
+                            catch (error: Exception) { throw BrowserPersistenceException(error) }
+                            if (method != "messages.set" || args["refresh"]?.jsonPrimitive?.content != "none") refreshDisplayCache()
+                            syncRecord(input = record.draft)
+                        }
+                    }
+                }
+            } finally {
+                browserGenerationJob = null; browserGenerationId = null
+                _uiState.update { it.copy(browserOperationRunning = false, browserGenerating = false) }
+                syncRecord(input = record.draft)
+                pendingBrowserDraft?.let { draft -> pendingBrowserDraft = null; updateInput(draft) }
+            }
+            buildJsonObject {
+                val snapshot = BrowserConversation.snapshot(record)
+                val display = _uiState.value.messages.associateBy { it.message.id }
+                put("snapshot", JsonObject(snapshot + ("messages" to JsonArray(snapshot.getValue("messages").jsonArray.map { raw ->
+                    val message = raw.jsonObject
+                    val projected = display[message.getValue("id").jsonPrimitive.content]
+                    JsonObject(message + mapOf("display" to JsonPrimitive(projected?.displayContent ?: message.getValue("message").jsonPrimitive.content),
+                        "reasoning" to JsonArray(projected?.displayReasoning.orEmpty().map(::JsonPrimitive))))
+                }))))
+                put("value", result)
+                if (method == "messages.set") putJsonObject("refresh") {
+                    put("mode", args["refresh"] ?: JsonPrimitive("affected"))
+                    put("messageIds", JsonArray(args.getValue("messages").jsonArray.map { it.jsonObject.getValue("message_id") }))
+                }
+            }
+        }
+    }
+
+    private suspend fun generateBrowserText(method: String, args: JsonObject): String {
+        val allowed = if (method == "generation.raw") setOf("ordered_prompts", "should_stream", "generation_id")
+            else setOf("user_input", "should_stream", "generation_id", "max_chat_history")
+        require(args.keys.all { it in allowed }) { "生成参数超出 player-web-1 范围" }
+        args["should_stream"]?.let { require(it.jsonPrimitive.booleanOrNull != null) { "should_stream 必须为布尔值" } }
+        val connection = requireNotNull(_uiState.value.selectedConnection) { "请先配置模型" }
+        val preset = presetSource.captureActive()
+        val limits = connection.effectiveTokenLimits()
+        val plan = if (method == "generation.raw") {
+            val prompts = args["ordered_prompts"] as? JsonArray ?: error("缺少 ordered_prompts")
+            require(prompts.isNotEmpty() && prompts.size <= 128) { "提示词数量超出范围" }
+            val messages = prompts.map { value ->
+                val prompt = value as? JsonObject ?: error("首版 raw 生成只支持显式 role/content 提示词")
+                require(prompt.keys == setOf("role", "content")) { "提示词字段不受支持" }
+                val role = when (prompt["role"]?.jsonPrimitive?.content) { "system" -> MessageRole.SYSTEM; "user" -> MessageRole.USER; "assistant" -> MessageRole.ASSISTANT; else -> error("无效 role") }
+                val text = prompt["content"]?.jsonPrimitive?.takeIf { it.isString }?.content ?: error("content 必须为字符串")
+                require(text.length <= 262_144) { "提示词超过限制" }
+                PreparedMessage(role, text, PromptOrigin("browser-auxiliary", listOf(browserGenerationId.orEmpty())))
+            }
+            GenerationPlan(messages = messages, maxOutputTokens = minOf(2048L, limits.outputTokens ?: 2048L).toInt(),
+                declaredContextTokens = limits.contextTokens?.toIntSafe(), assistantPrefill = "", presetId = "browser-raw",
+                presetName = "网页辅助生成", presetContentSha256 = "", diagnostics = emptyList(), trace = emptyList(), runtimeState = record.runtimeState)
+        } else {
+            require(args["user_input"] == null || (args["user_input"] as? JsonPrimitive)?.isString == true) { "user_input 必须为字符串" }
+            val input = args["user_input"]?.jsonPrimitive?.content.orEmpty()
+            require(input.length <= 262_144) { "生成输入超过限制" }
+            val countValue = args["max_chat_history"]
+            require(countValue == null || countValue == JsonPrimitive("all") || (countValue as? JsonPrimitive)?.intOrNull != null) { "max_chat_history 必须为非负整数或 all" }
+            val count = countValue?.jsonPrimitive?.intOrNull
+            require(count == null || count >= 0) { "max_chat_history 必须为非负整数" }
+            var history = record.promptMessages().let { if (count == null) it else it.takeLast(count) }
+            if (input.isNotBlank()) history = history + ConversationMessage(idGenerator(), MessageRole.USER, input, record.persona.name)
+            val compiled = ejsRuntime.compile(compiler, NormalGenerationInput(
+                character = record.character, persona = record.persona, history = history, preset = preset,
+                runtimeState = record.runtimeState, conversationId = record.id, generationId = browserGenerationId.orEmpty(),
+                modelId = connection.selectedModel, modelContextTokens = limits.contextTokens?.toIntSafe(),
+                modelOutputTokens = limits.outputTokens?.toIntSafe(),
+            ), mutableMapOf())
+            when (compiled) {
+                is CompilationResult.Success -> compiled.plan
+                is CompilationResult.Failure -> error(compiled.diagnostics.firstOrNull { it.severity == DiagnosticSeverity.ERROR }?.message ?: "辅助生成编排失败")
+            }
+        }
+        val text = StringBuilder()
+        var finished = false
+        val budget = generator.validateTokens(connection, plan)
+        val declaredContext = plan.declaredContextTokens
+        require(declaredContext == null || (budget != null && budget.inputTokens.toLong() + plan.maxOutputTokens <= declaredContext)) { "辅助生成超过上下文预算" }
+        val prepared = BrowserConversation.withRuntime(record, plan.runtimeState)
+        withContext(NonCancellable) {
+            record = try { conversationRepository?.save(prepared) ?: prepared }
+            catch (error: Exception) { throw BrowserPersistenceException(error) }
+            syncRecord()
+        }
+        generator.stream(connection, plan).collect { event -> when (event) {
+            is GenerationEvent.TextDelta -> { require(text.length + event.text.length <= 2 * 1024 * 1024) { "生成正文超过限制" }; text.append(event.text); _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("text" to JsonPrimitive(text.toString())))) } }
+            is GenerationEvent.Finished -> finished = event.reason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")
+            else -> Unit
+        } }
+        currentCoroutineContext().ensureActive()
+        require(finished) { "辅助生成未完整结束" }
+        return text.toString()
     }
 
     fun selectConnection(connectionId: String) {
@@ -823,7 +988,7 @@ class ChatViewModel(
 
     fun resetConversation() {
         if (_uiState.value.running && generationJob == null) return
-        if (_uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
+        if (_uiState.value.browserOperationRunning || _uiState.value.setupSaving || _uiState.value.choiceSaving || _uiState.value.memorySaving || _uiState.value.nativeActionRunning || _uiState.value.loadingConversation) return
         _uiState.update { it.copy(loadingConversation = true) }
         viewModelScope.launch {
             try {
@@ -855,7 +1020,7 @@ class ChatViewModel(
                     ),
                     record.persona,
                     presetSource.captureActive(),
-                ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis)
+                ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis, character = previous.character, executionMode = previous.executionMode)
                 record = mvuRuntime.initialize(reset)
                 displayCache.clear()
                 displayReasoningCache.clear()
@@ -887,7 +1052,7 @@ class ChatViewModel(
         record = mvuRuntime.initialize(record)
         val evaluationInstant = Instant.ofEpochMilli(now())
         val evaluationZoneId = ZoneId.systemDefault()
-        val history = if (appendAssistantTurn) record.selectedMessages() else record.turns.dropLast(1).map { it.selected.message }
+        val history = if (appendAssistantTurn) record.promptMessages() else record.copy(turns = record.turns.dropLast(1)).promptMessages()
         val runtimeBeforeGeneration = if (appendAssistantTurn) {
             record.runtimeState
         } else {
@@ -1057,7 +1222,7 @@ class ChatViewModel(
                     )
                     replyCompleted = record.findVariant(variant.id)?.status == PersistedMessageStatus.COMPLETE
                 }
-                if (record.character.nativeAdaptation?.mvu != null && record.findVariant(variant.id)?.status == PersistedMessageStatus.STREAMING) {
+                if (record.character.mvuProgram != null && record.findVariant(variant.id)?.status == PersistedMessageStatus.STREAMING) {
                     error("回复未完整结束，MVU 变量未更新")
                 }
                 reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
@@ -1236,7 +1401,7 @@ class ChatViewModel(
             }
             is GenerationEvent.Finished -> {
                 if (record.findVariant(variantId)?.status == PersistedMessageStatus.COMPLETE) return
-                if (record.character.nativeAdaptation?.mvu != null && event.reason !in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")) {
+                if (record.character.mvuProgram != null && event.reason !in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")) {
                     error("回复被截断或未正常结束，MVU 变量未更新")
                 }
                 reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
@@ -1287,7 +1452,7 @@ class ChatViewModel(
         evaluationZoneId: ZoneId,
         streaming: Boolean = true,
     ) {
-        val history = record.selectedMessages().dropLast(1)
+        val history = record.copy(turns = record.turns.dropLast(1)).promptMessages()
         val adaptation = record.character.nativeAdaptation
         val projectionRuntime = record.findVariant(variantId)?.projectionRuntimeStateBefore ?: record.runtimeState
         val narrativeSource = adaptationRuntime.projectAssistantMessage(
@@ -1409,10 +1574,30 @@ class ChatViewModel(
         val next = (turn.selectedVariantIndex + delta).coerceIn(0, turn.variants.lastIndex)
         if (next == turn.selectedVariantIndex) return
         val selected = turn.variants[next]
-        record = record.copy(
+        val proposed = record.copy(
             turns = record.turns.mapIndexed { index, item -> if (index == lastIndex) item.copy(selectedVariantIndex = next) else item },
             runtimeState = selected.nativeHead() ?: record.runtimeState,
         )
+        if (record.executionMode == ConversationExecutionMode.BROWSER) {
+            _uiState.update { it.copy(browserOperationRunning = true) }
+            viewModelScope.launch {
+                try {
+                    persistNow()
+                    withContext(NonCancellable) {
+                        record = conversationRepository?.save(proposed) ?: proposed
+                        refreshDisplayCache()
+                        syncRecord(trace = record.persistedTrace())
+                    }
+                } catch (error: Exception) {
+                    _uiState.update { it.copy(message = "候选未切换：${error.userMessage()}") }
+                } finally {
+                    _uiState.update { it.copy(browserOperationRunning = false) }
+                    pendingBrowserDraft?.let { draft -> pendingBrowserDraft = null; updateInput(draft) }
+                }
+            }
+            return
+        }
+        record = proposed
         syncRecord(trace = record.persistedTrace())
         schedulePersist()
         viewModelScope.launch { refreshDisplayCache() }
@@ -1463,7 +1648,8 @@ class ChatViewModel(
             displayReasoning = displayReasoningCache,
         ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving,
             memorySaving = current.memorySaving, nativeActionRunning = current.nativeActionRunning,
-            nativeSurfaces = current.nativeSurfaces, nativeSurfaceError = current.nativeSurfaceError)
+            nativeSurfaces = current.nativeSurfaces, nativeSurfaceError = current.nativeSurfaceError,
+            browserOperationRunning = current.browserOperationRunning, browserGenerating = current.browserGenerating, browserGeneration = current.browserGeneration)
         refreshNativeSurfaces()
     }
 
@@ -1647,11 +1833,12 @@ class ChatViewModel(
         private val presetSource: ActivePresetSource,
         private val mvuRuntime: MvuConversationRuntime = MvuConversationRuntime(),
         private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
+        private val browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
     private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime, ejsRuntime = ejsRuntime) as T
+            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime, ejsRuntime = ejsRuntime, browserEnvironment = browserEnvironment) as T
     }
 
     companion object {
@@ -1682,6 +1869,16 @@ private fun ConversationRecord.toUiState(
     displayContents: Map<String, String> = emptyMap(),
     displayReasoning: Map<String, List<String>> = emptyMap(),
 ): ChatUiState = ChatUiState(
+    executionMode = executionMode,
+    browserSnapshot = if (executionMode == ConversationExecutionMode.BROWSER) buildJsonObject {
+        BrowserConversation.snapshot(this@toUiState).forEach { (key, value) -> put(key, value) }
+        put("program", Json.encodeToJsonElement(io.github.zvensmoluya.tavernplayer.content.BrowserProgram.serializer(), character.browserProgram ?: io.github.zvensmoluya.tavernplayer.content.BrowserProgram()))
+        put("presetId", activePreset.id)
+        put("presetHash", activePreset.contentSha256)
+        val presetProgram = runCatching { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.preset(activePreset.source) }
+            .getOrElse { io.github.zvensmoluya.tavernplayer.content.BrowserProgram(diagnostics = listOf("当前预设的脚本格式无法装载")) }
+        put("presetProgram", Json.encodeToJsonElement(io.github.zvensmoluya.tavernplayer.content.BrowserProgram.serializer(), presetProgram))
+    } else JsonObject(emptyMap()),
     conversationId = id,
     character = character,
     persona = persona,
@@ -1800,3 +1997,5 @@ private val EMPTY_CHARACTER = io.github.zvensmoluya.tavernplayer.content.Charact
     id = "loading",
     name = "",
 ).snapshot()
+
+private fun ConversationRecord.promptMessages(): List<ConversationMessage> = turns.map { it.selected }.filterNot { executionMode == ConversationExecutionMode.BROWSER && it.browserHidden }.map { it.message }

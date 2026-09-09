@@ -32,6 +32,7 @@ data class NativeSurfaceInvocation(
 
 /** Message-end snapshots remain immutable; subsequent action commits form that branch's head. */
 fun MessageVariant.nativeHead(): ConversationRuntimeState? {
+    browserHead?.let { return it }
     val action = nativeOperations.asReversed().firstNotNullOfOrNull { it.commits.lastOrNull() } ?: return runtimeStateAfter
     // Existing explicit choice/memory workflows may subsequently save a newer snapshot based on this commit.
     // Their copies retain its identity; a message-end snapshot from before the action cannot match it.

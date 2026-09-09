@@ -1,6 +1,6 @@
 # Tavern Player 当前实现架构
 
-> 状态：描述当前仓库已经建立的边界，整理于 2026-09-09。HTML Surface / Host Compatibility Layer 尚未实现；新的直接运行路线见[当前讨论](html-surface-discussion-20260909.md)。文中 Native 编译描述既有可选适配实现，不代表未来兼容主路线。
+> 状态：描述当前仓库已经建立的边界，整理于 2026-09-09。默认网页消息区、宿主桥和原程序装载已接入，范围见[网页运行契约](web-runtime.md)。文中 Native 编译描述独立可选适配实现。
 >
 > 产品与兼容性决定见 [`product-direction.md`](product-direction.md)。
 
@@ -17,13 +17,21 @@ app ───────────────> model-gateway
 - `model-gateway` 是协议边界，负责协议原生请求、最终 token 验证和流式响应。
 - `app` 负责 Android 文件访问、私有仓库、Compose 界面、生命周期和流式持久化。
 
-模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。纯 Kotlin 内容层不自行联网或运行浏览器；受控脚本由 app 层 QuickJS 宿主执行。
+模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。纯 Kotlin 内容层不自行联网或运行浏览器；作者页面/后台脚本由 app 层隔离 WebView 执行，MVU/EJS 和 Native 适配由相应 QuickJS 宿主执行。
 
 `content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-15` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
 
 当前编译分两次模型请求：先以完整 Program View 选择 MVU 或 Player 状态来源，再用同一份源码和所选分支的契约编译。MVU 分支不提供独立 Player 状态、旧写入器及其类型；Player 分支不提供 MVU 配置与写入接口。接收端校验分支、Schema 引用及绑定来源，跨分支字段即使为空也拒绝。运行时 `NativeSurfaceField` 由实际序列化描述单独列出，与固定 `NativeFormField` 区分。选择阶段使用 LOW、主编译使用 HIGH reasoning；两阶段用量分别记录，额外读取完整源码会增加输入成本。分支语义仍由模型判断，本地只验证引用有效性，不增加 JS 写法识别器。
 
 `app` 在编译与安装时校验真实 QuickJS 模块加载及导出，显示时执行只读投影。用户操作通过显式声明的状态读取、MVU 直接替换、程序私有状态、草稿及辅助生成接口调用宿主。操作检查点独立保存于消息候选，保留原消息结束快照；宿主写入先保存再发布，切换候选恢复所属 head，中断不自动重发请求。结构和加载检查均不证明整卡等价。宿主范围、取消语义和本地验证见 [JS 动态原生 Surface](archive/native-script-surfaces-20260908.md)。
+
+## 网页运行路径
+
+`BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ChatViewModel` 串行协调原生操作、保存与生成。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
+
+可信外壳和作者兼容父页面使用不同来源；消息和后台脚本各自持有候选/脚本身份。初次快照、后续增量、50 ms 合并更新、先保存后确认、失败停止实例及销毁取消均由生产路径实现。`executionMode` 缺省为旧 Native，新建主入口显式 BROWSER，保存程序指纹、候选变量/head 与资源版本。
+
+网页图片命中已有持久资源索引，缺失图片按需补入。`WebResourceRepository` 独立保存 HTTPS 静态资源，URL 在会话内绑定首个内容哈希，重定向模块/CSS 保留最终解析基址。具体协议、容量、接口、恢复和验证命令集中维护在[网页运行契约](web-runtime.md)。
 
 ## Tavern Shelf 接收
 
@@ -47,13 +55,13 @@ app ───────────────> model-gateway
 - 未识别的官方字段、extensions 和资产 URI；
 - 来源格式、规范版本、SHA-256、原始 JSON 与兼容性诊断。
 
-远程 TavernHelper、第三方变量 Macro、脚本和富 HTML 会被识别并告警，但不会执行或抓取。
+导入只识别与保存来源，不执行程序或抓取远程依赖。新建网页会话通过独立 BrowserProgramReader/BrowserProgramPreparer 装载声明范围内的原程序；未知能力继续报告限制。
 
 ## Preset 内容层
 
 `PresetImporter` 只接受不超过 32 MiB 的可识别 ST OpenAI / Chat Completion JSON。它解析 Prompt 定义池、`character_id=100001`（兼容 `100000`）的全局 order、未使用定义、legacy prompt、generation / control settings 和 Preset Regex。缺失定义引用按 ST 行为跳过并告警，不让局部坏数据阻断整份资产。
 
-完整当前对象保存在 `PresetAsset.source`，不可变恢复点由 `PresetAsset.initialState` 保存完整初始 source；恢复设置时保留当前资产名称。未知字段、扩展载荷、Provider / 模型选择、endpoint、自定义 headers/body 和凭据形字段都是惰性内容：可以落盘和重新导出，但不会自动改变 Player 连接、发起网络请求或获得脚本执行权。`PresetExporter` 把编辑后的正式字段合并回完整 current source；内容指纹基于合并后的规范化 JSON。
+完整当前对象保存在 `PresetAsset.source`，不可变恢复点由 `PresetAsset.initialState` 保存完整初始 source；恢复设置时保留当前资产名称。未知字段、Provider / 模型选择、endpoint、自定义 headers/body 和凭据形字段都是惰性内容：可以落盘和重新导出，但不会自动改变 Player 连接、发起网络请求或获得脚本执行权。`PresetExporter` 把编辑后的正式字段合并回完整 current source；内容指纹基于合并后的规范化 JSON。
 
 `BuiltInPresets.default` 是内置恢复基线：ST 默认 Prompt 骨架、中性 main prompt、无额外文风限制、context 不设人为上限、回复上限 1024。仓库可以持久化同 ID 的当前调整版本，但删除和恢复基线仍由代码内置版本约束。
 
@@ -116,7 +124,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
 
-经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。角色详情可显式请求模型准备适配或导入手工产物；普通导入和 Shelf 接收不会自动调用模型。
+经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Native Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。角色详情可显式请求模型准备适配或导入手工产物；普通导入和 Shelf 接收不会自动调用模型。
 
 `PresetRepository` 以一个原子 app-private manifest 保存当前 Preset、初始 source 树和全局 active ID；内置默认的初始版本由代码注入。它提供导入并激活、显式保存、恢复初始版本、从当前草稿另存为并激活、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
@@ -136,12 +144,12 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库可进入单一默认身份编辑器；角色库和 Chat 都可以进入 Preset 中心，Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出；选择列表项会先激活再编辑。详情默认只展示实际 order 中的普通 Prompt 与 Regex 快速开关，Prompt 开关只改 `enabled`，不会改变成员关系或相对顺序；单项内容、兼容字段、结构设置和请求参数使用独立全屏次级页面。全部修改显式保存，带未保存修改返回时提供保存、放弃和继续编辑；不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。聊天气泡直接提供“保存文字”和“从这里重新生成 / 继续”；只有后者会在存在后续消息或其他 swipe 时确认将被丢弃的事实。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
-聊天正文不使用 WebView。渲染前删除 `script` / `style` 块、剥离其他 HTML 标签并解码实体，只把基础 Markdown 交给 Compose 展示。
+网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。
 
 ## EJS 提示词执行
 
-当前编译契约通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
+网页模式从原世界书读取 EJS 入口并绑定原文哈希，无需编译；Native 编译契约通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
 
 ## 当前尚未实现
 
-当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 World Book / Regex 管理、任意第三方脚本与扩展宿主、富 HTML WebView，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的下一步方向见[当前讨论](html-surface-discussion-20260909.md)，本节不是对后续路线的永久排除。
+当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 World Book / Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。

@@ -95,6 +95,7 @@ fun TavernPlayerApp(
                         surface = AppSurface.CHARACTER_LIBRARY
                     },
                     onNewConversation = { characterLibraryViewModel.createConversation(character.id) },
+                    onNewNativeConversation = { characterLibraryViewModel.createConversation(character.id, native = true) },
                     onOpenConversation = characterLibraryViewModel::openConversation,
                     onInstallAdaptation = { characterLibraryViewModel.installNativeAdaptation(character.id, it) },
                     onImportError = characterLibraryViewModel::reportMessage,

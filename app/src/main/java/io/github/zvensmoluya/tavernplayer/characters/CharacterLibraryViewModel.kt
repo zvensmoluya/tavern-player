@@ -317,13 +317,15 @@ class CharacterLibraryViewModel(
         if (!_uiState.value.compilationSaving) compilationJob?.cancel()
     }
 
-    fun createConversation(characterId: String) {
+    fun createConversation(characterId: String, native: Boolean = false) {
         if (_uiState.value.busy) return
         val character = characterRepository.get(characterId) ?: return
         val preset = presetRepository.captureActive()
         viewModelScope.launch {
             val persona = defaultPersonaSource.captureDefault()
-            runCatching { conversationRepository.create(character, persona, preset) }
+            runCatching { conversationRepository.create(character, persona, preset,
+                if (native) io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.LEGACY_NATIVE
+                else io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.BROWSER) }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "无法创建对话") } }
         }

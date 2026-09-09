@@ -340,6 +340,7 @@ fun CharacterDetailScreen(
     onOpenModels: () -> Unit = {},
     onReadWorldBooks: () -> Unit = {},
     onOpenResources: () -> Unit = {},
+    onNewNativeConversation: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -395,6 +396,10 @@ fun CharacterDetailScreen(
                     enabled = !importing,
                     modifier = Modifier.fillMaxWidth().testTag("newConversation"),
                 ) { Text("开始新对话") }
+            }
+            if (character.nativeAdaptation != null) item("new-native") {
+                OutlinedButton(onClick = onNewNativeConversation, enabled = !importing,
+                    modifier = Modifier.fillMaxWidth().testTag("newNativeConversation")) { Text("使用原生适配开始对话") }
             }
             item("world-books") {
                 Card(

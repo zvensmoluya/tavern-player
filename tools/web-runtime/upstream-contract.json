@@ -1,0 +1,18 @@
+{
+  "profile": "player-web-1",
+  "helperRepository": "https://github.com/N0VI028/JS-Slash-Runner",
+  "helperCommit": "3de7ef981f378517779eb32ab5ecb82c033e4db4",
+  "files": [
+    "@types/function/chat_message.d.ts",
+    "@types/function/variables.d.ts",
+    "@types/function/generate.d.ts",
+    "@types/iframe/event.d.ts",
+    "src/function/event.ts",
+    "src/function/variables.ts",
+    "src/function/generate/responseGenerator.ts",
+    "@types/function/worldbook.d.ts"
+  ],
+  "sillyTavernCommit": "8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8",
+  "publicRuntimeLock": "../mvu-probe/upstream-lock.json",
+  "notes": "A declared subset of the referenced observable contracts; not an implementation of all declarations. Synchronous cross-frame eventEmitAndWait is explicitly unsupported."
+}

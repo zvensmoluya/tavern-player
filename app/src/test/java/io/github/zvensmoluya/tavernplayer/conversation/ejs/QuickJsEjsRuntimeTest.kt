@@ -111,7 +111,9 @@ class QuickJsEjsRuntimeTest {
         val input = NormalGenerationInput(snapshot, Persona("p", "Traveler"),
             listOf(ConversationMessage("u", MessageRole.USER, "Continue.", "Traveler")), BuiltInPresets.default,
             runtimeState = ConversationRuntimeState(mvuState = MvuStateSnapshot("a".repeat(64), "b".repeat(64), initial)),
-            modelContextTokens = 65536)
+            // The original constant entries consume more than the 64K context's world-book share.
+            // This test exercises all templates; budget overflow has separate core coverage.
+            modelContextTokens = 131072)
         val runtime = QuickJsEjsRuntime(loadBundle = { bundle() })
         val result = runtime.compile(PromptCompiler(), input, mutableMapOf())
         assertTrue(result.toString(), result is CompilationResult.Success)

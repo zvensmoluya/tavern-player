@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.content.ejsProgramTemplates
+
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
@@ -366,6 +368,11 @@ class PromptCompiler(
             depthPrompt = scanField(input.character.depthPrompt?.content.orEmpty()),
             creatorNotes = scanField(input.character.creatorNotes),
         )
+        val browserTemplatesValid = input.character.browserProgram?.ejsTemplates.orEmpty().all { ref ->
+            input.character.worldBooks.find { it.id == ref.bookId }?.entries?.find { it.id == ref.entryId }
+                ?.let { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.sha256(it.content) == ref.sourceContentSha256 } == true
+        }
+        if (!browserTemplatesValid) return CompilationResult.Failure(diagnostics + error("INVALID_EJS_TEMPLATE", "EJS 模板与保存的原文哈希不匹配"), trace)
         val ejsIssues = input.character.nativeAdaptation?.let {
             io.github.zvensmoluya.tavernplayer.content.NativeEjsValidator.validate(it, input.character.worldBooks)
         }.orEmpty()
@@ -417,7 +424,7 @@ class PromptCompiler(
             inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
             prepareEntry = { bookId, entry, entryTransaction ->
-                if (input.character.nativeAdaptation?.ejsTemplates.orEmpty().any { it.bookId == bookId && it.entryId == entry.id }) {
+                if (input.character.ejsProgramTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
                     val regexed = regexEngine.apply(entry.content, regexRules, RegexPlacement.WORLD_INFO,
                         RegexProjection.PROMPT, entry.depth, baseContext, entryTransaction)
                     diagnostics += regexed.diagnostics

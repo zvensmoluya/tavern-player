@@ -295,6 +295,7 @@ data class CharacterSnapshot(
     val assets: List<CharacterAssetReference> = emptyList(),
     val diagnostics: List<CompatibilityDiagnostic>,
     val nativeAdaptation: NativeAdaptation? = null,
+    val browserProgram: BrowserProgram? = null,
 )
 
 enum class CharacterImportStatus {

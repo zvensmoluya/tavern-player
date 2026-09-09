@@ -34,7 +34,8 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 - 在角色详情的“角色资源”中识别并准备静态图片，持久保存在应用私有目录，支持离线查看、暂停与失败重试；无需配置模型，不参与 Native 编译；
 - 编辑一份全局默认用户身份，包括名字、描述和可选头像；新对话会捕获当时的身份；
 - 导入、切换、调整、恢复、另存为、删除和无损导出 ST OpenAI / Chat Completion Preset；
-- 使用卡片开场和备用开场创建独立 Conversation；
+- 使用卡片开场和备用开场创建独立 Conversation；新对话默认使用原生输入栏与单个 WebView 消息区，旧对话保留原执行模式；
+- 在声明的宿主范围内直接运行作者 HTML/JS，免编译准备 MVU/EJS，按需保存网页依赖并复用角色原图；
 - 在发送时执行卡片 World Book、Character Regex、Macro、Prompt 编排与 context 预算；
 - 将当前全局 Preset 捕获到单次生成，并向五种 OpenAI、Anthropic 或 Gemini 协议安全映射参数；
 - 在模型目录未声明能力时，按 Preset 声明的未验证预算运行，并允许按模型 ID 覆盖 context / output token 上限；
@@ -49,7 +50,7 @@ Native 适配提供实验性的“准备游玩”入口：模型理解相关源�
 
 Preset 列表选择的就是当前正在使用和编辑的 Preset。详情以实际 `prompt_order` 中的普通 Prompt 与 Regex 开关为主；开关只改变启用状态，不插入、删除或移动队列。Prompt 详情、格式结构与模型请求参数使用独立页面；请求参数可逐项关闭，关闭后保留本地值，但不再进入兼容 Provider 请求或 ST 导出。Provider 必填字段仍由播放器提供安全值。
 
-普通导入的第三方脚本、远程资源和富 HTML 不会执行或联网加载。显式安装了对应适配的卡可使用内置 QuickJS 执行 MVU，以及只读的世界书 EJS 提示词模板；已安装的 JS 适配模块也通过受控原生宿主执行。公共程序执行范围见[实现架构](docs/architecture.md#ejs-提示词执行)。Preset 的完整 JSON（包括未知扩展、Provider / 模型、endpoint、自定义 headers/body 和凭据形字段）作为惰性内容保留并可随编辑重新导出；这些字段不会自动改变 Player 连接、发起网络访问或获得执行权。
+导入与 Shelf 接收不执行程序或调用编译模型。进入默认网页对话后，启用的助手脚本和符合渲染规则的作者页面按 `player-web-1` 运行；普通 HTML 禁止脚本，缺失能力明确报告。Native 适配保留独立入口。原程序范围、资源版本及恢复限制见[网页运行契约](docs/web-runtime.md)。Preset 中 Provider、endpoint、自定义 headers/body 和凭据形字段仍是惰性内容，不会改变播放器连接。
 
 Shelf 接收入口位于角色库首页。Android 17 会在首次接收前请求本地网络权限；独立 World Book 当前只识别类型，不执行导入。
 
@@ -62,7 +63,7 @@ SillyTavern 建立了这个生态。
 - [文档导航：当前、参考与归档](docs/README.md)
 - [产品与兼容性边界](docs/product-direction.md)
 - [当前实现架构](docs/architecture.md)
-- [HTML Surface 与免编译游玩方向](docs/html-surface-discussion-20260909.md)
+- [网页消息区、原程序与恢复契约](docs/web-runtime.md)
 
 ## 验证
 

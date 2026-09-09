@@ -1,6 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.mvu
 
 import io.github.zvensmoluya.tavernplayer.conversation.*
+import io.github.zvensmoluya.tavernplayer.content.mvuProgram
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -11,7 +12,7 @@ class MvuConversationRuntime(
 ) {
     /** Load and initialize the original program before offering an installable compilation result. */
     suspend fun validateProgram(character: CharacterSnapshot) {
-        if (character.nativeAdaptation?.mvu == null) return
+        if (character.mvuProgram == null) return
         withRuntime(character) { runtime ->
             fun verify(evaluation: MvuEvaluation) {
                 require(evaluation.diagnostics.none { it.level == "error" }) { "原 MVU 初始化报告错误" }
@@ -23,7 +24,7 @@ class MvuConversationRuntime(
     }
 
     suspend fun initialize(record: ConversationRecord): ConversationRecord {
-        if (record.character.nativeAdaptation?.mvu == null || record.runtimeState.mvuState != null) return record
+        if (record.character.mvuProgram == null || record.runtimeState.mvuState != null) return record
         require(record.turns.size <= 1 && record.turns.all { turn ->
             turn.variants.all { it.openingSourceIndex != null }
         }) { "已有历史缺少 MVU 检查点，请新建对话" }
@@ -50,7 +51,7 @@ class MvuConversationRuntime(
     }
 
     suspend fun validateCheckpoint(character: CharacterSnapshot, state: ConversationRuntimeState) {
-        if (character.nativeAdaptation?.mvu == null) return
+        if (character.mvuProgram == null) return
         val checkpoint = requireNotNull(state.mvuState) { "缺少 MVU 检查点，请新建对话" }
         val bundle = withContext(Dispatchers.IO) { loadBundle() }
         require(checkpoint.bundleSha256 == sha256(bundle) && checkpoint.programSha256 == sha256(program(character).toString())) {
@@ -64,7 +65,7 @@ class MvuConversationRuntime(
         previous: ConversationRuntimeState,
         opening: Boolean = false,
     ): MvuEvaluation? {
-        if (character.nativeAdaptation?.mvu == null) return null
+        if (character.mvuProgram == null) return null
         return withRuntime(character) { runtime ->
             if (opening) runtime.initialize(listOf(sourceText)) else runtime.update(sourceText, previous)
         }
@@ -77,7 +78,7 @@ class MvuConversationRuntime(
     }
 
     private fun program(character: CharacterSnapshot): JsonObject {
-        val schema = checkNotNull(character.nativeAdaptation?.mvu)
+        val schema = checkNotNull(character.mvuProgram)
         return buildJsonObject {
             put("schemaScript", schema.schemaScript)
             putJsonArray("entries") {

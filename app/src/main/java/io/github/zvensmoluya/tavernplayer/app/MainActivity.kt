@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
             graph.presetRepository,
             graph.mvuRuntime,
             graph.ejsRuntime,
+            graph.browserEnvironment,
         )
     }
     private val characterLibraryViewModel by viewModels<CharacterLibraryViewModel> {

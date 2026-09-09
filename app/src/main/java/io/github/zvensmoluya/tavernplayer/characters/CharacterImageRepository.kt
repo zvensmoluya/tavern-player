@@ -36,7 +36,8 @@ data class CharacterImageState(
 }
 
 @Serializable private data class StoredCharacterImage(val id: String, val sha256: String? = null, val bytes: Long = 0,
-    val mediaType: String? = null, val error: String? = null)
+    val mediaType: String? = null, val error: String? = null, val uri: String? = null,
+    val sourcePaths: List<String> = emptyList())
 @Serializable private data class CharacterImageIndex(val sourceSha256: String, val version: Int = 1,
     val images: List<StoredCharacterImage> = emptyList())
 
@@ -109,6 +110,44 @@ class CharacterImageRepository internal constructor(
         return File(directory(characterId), "$sha.image").takeIf { it.isFile }
     }
 
+    /** Runtime-discovered URLs join the same durable collection as pre-discovered images. */
+    suspend fun resolveForWeb(characterId: String, uri: String): CharacterImageEntry = withContext(Dispatchers.IO) {
+        locks.getOrPut(characterId) { Mutex() }.withLock {
+            var state = _states.value[characterId] ?: loadLocked(characterId)
+            val id = hash(uri.toByteArray(Charsets.UTF_8))
+            val old = state.entries.find { it.reference.id == id }
+            if (old?.saved == true) file(characterId, old)?.let { saved ->
+                if (saved.length() == old.bytes && saved.length() in 1..MAX_IMAGE_BYTES.toLong() && hash(saved.readBytes()) == old.sha256)
+                    return@withLock old
+            }
+            require(old != null || state.entries.size < 512) { "图片引用超过 512 项" }
+            val entry = old ?: CharacterImageEntry(CharacterImageReference(id, uri, listOf("runtime")))
+            if (old == null) state = state.copy(entries = state.entries + entry)
+            val next = try {
+                val bytes = obtain(characterId, entry.reference)
+                require(bytes.size in 1..MAX_IMAGE_BYTES) { "图片超过 8 MiB 或内容为空" }
+                val info = inspector.inspect(bytes) ?: error("响应不是可读取的图片")
+                require(info.mediaType in setOf("image/png", "image/jpeg", "image/webp")) { "暂不支持这种图片格式" }
+                require(info.width in 1..8192 && info.height in 1..8192 && info.width.toLong() * info.height <= 32_000_000L) { "图片尺寸超过限制" }
+                val sha = hash(bytes)
+                val folder = directory(characterId)
+                val used = folder.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".image") }.sumOf { it.length() }
+                val existing = File(folder, "$sha.image").takeIf { it.isFile }?.length() ?: 0L
+                require(used - existing + bytes.size <= MAX_CHARACTER_BYTES) { "角色图片已达到 256 MiB 上限" }
+                saveImage(folder, sha, bytes)
+                entry.copy(sha256 = sha, bytes = bytes.size.toLong(), mediaType = info.mediaType, error = null)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                val failed = state.copy(entries = state.entries.map { if (it.reference.id == id) entry.copy(error = error.message?.take(160)) else it })
+                persist(characterId, failed); publish(characterId, failed)
+                throw error
+            }
+            val updated = state.copy(entries = state.entries.map { if (it.reference.id == id) next else it })
+            persist(characterId, updated); publish(characterId, updated)
+            next
+        }
+    }
+
     private fun loadLocked(characterId: String): CharacterImageState {
         val card = requireNotNull(character(characterId)) { "角色不存在" }
         val discovery = CharacterImageDiscovery.discover(card)
@@ -122,7 +161,12 @@ class CharacterImageRepository internal constructor(
         } else emptyMap()
         AtomicFileStore.cleanupTemporaryFiles(directory)
         val verified = mutableMapOf<String, Boolean>()
-        val state = CharacterImageState(discovery.references.map { ref ->
+        val references = discovery.references + index.values.filter { it.uri != null && discovery.references.none { ref -> ref.id == it.id } }.map {
+            require(hash(it.uri!!.toByteArray(Charsets.UTF_8)) == it.id) { "动态图片索引无效" }
+            CharacterImageReference(it.id, it.uri, it.sourcePaths)
+        }
+        require(references.size <= 512) { "图片引用超过 512 项" }
+        val state = CharacterImageState(references.map { ref ->
             val old = index[ref.id]
             val sha = old?.sha256
             val valid = sha != null && SHA.matches(sha) && verified.getOrPut(sha) {
@@ -160,7 +204,7 @@ class CharacterImageRepository internal constructor(
     private fun persist(id: String, state: CharacterImageState) {
         val card = requireNotNull(character(id)) { "角色不存在" }
         val index = CharacterImageIndex(card.sourceSha256, images = state.entries.map {
-            StoredCharacterImage(it.reference.id, it.sha256, it.bytes, it.mediaType, it.error)
+            StoredCharacterImage(it.reference.id, it.sha256, it.bytes, it.mediaType, it.error, it.reference.uri, it.reference.sourcePaths)
         })
         AtomicFileStore.writeUtf8(File(directory(id), "index.json"), json.encodeToString(index))
     }

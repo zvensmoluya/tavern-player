@@ -149,6 +149,8 @@ data class ConversationRuntimeState(
     val mvuState: MvuStateSnapshot? = null,
     val scriptState: kotlinx.serialization.json.JsonObject? = null,
     val nativeCommitId: String? = null,
+    val browserChatVariables: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+    val browserScriptVariables: Map<String, kotlinx.serialization.json.JsonObject> = emptyMap(),
 )
 
 @Serializable
@@ -296,6 +298,9 @@ data class MessageVariant(
     val openingSourceIndex: Int? = null,
     val playerChoiceCommits: List<ConversationPlayerChoiceCommit> = emptyList(),
     val nativeOperations: List<NativeOperationRecord> = emptyList(),
+    val browserVariables: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
+    val browserHidden: Boolean = false,
+    val browserHead: ConversationRuntimeState? = null,
 )
 
 @Serializable
@@ -310,6 +315,9 @@ data class ConversationTurn(
 }
 
 @Serializable
+enum class ConversationExecutionMode { LEGACY_NATIVE, BROWSER }
+
+@Serializable
 data class ConversationRecord(
     val schemaVersion: Int = 3,
     val id: String,
@@ -322,6 +330,8 @@ data class ConversationRecord(
     val draft: String = "",
     val choiceDraft: ConversationChoiceDraft? = null,
     val nativeDraftOrigin: NativeDraftOrigin? = null,
+    // Missing field in an existing record must retain its original execution path.
+    val executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
 )
 
 @Serializable

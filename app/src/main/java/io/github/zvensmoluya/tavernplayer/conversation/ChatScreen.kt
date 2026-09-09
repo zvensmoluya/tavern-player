@@ -69,6 +69,8 @@ fun ChatRoute(
         state = state,
         resolveAssetPath = resolveAssetPath,
         presets = presetState.presets,
+        browserEnvironment = viewModel.browserEnvironment,
+        browserInvoke = viewModel::invokeBrowser,
         actions = ChatScreenActions(
             updateInput = viewModel::updateInput,
             send = { if (state.selectedConnection == null) onOpenModels() else viewModel.send() },
@@ -136,6 +138,8 @@ fun ChatScreen(
     actions: ChatScreenActions,
     presets: List<PresetAsset> = emptyList(),
     resolveAssetPath: (characterId: String, assetId: String) -> String? = { _, _ -> null },
+    browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
+    browserInvoke: suspend (BrowserActor, String, String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject = { _, _, _, _ -> error("网页宿主未连接") },
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
@@ -230,7 +234,18 @@ fun ChatScreen(
             }
         },
     ) { padding ->
-        LazyColumn(
+        if (state.executionMode == ConversationExecutionMode.BROWSER) {
+            io.github.zvensmoluya.tavernplayer.conversation.web.WebMessageView(state, browserEnvironment, browserInvoke,
+                onAction = { action, id -> when (action) {
+                    "edit" -> state.messages.find { it.message.id == id }?.let { message ->
+                        editingMessageId = message.message.id; editingText = message.message.sourceText
+                    }
+                    "retry" -> actions.retry()
+                    "previous" -> actions.previousVariant()
+                    "next" -> actions.nextVariant()
+                    "regenerate" -> actions.regenerate()
+                } }, modifier = Modifier.fillMaxSize().padding(padding))
+        } else LazyColumn(
             state = messageListState,
             modifier = Modifier.fillMaxSize().padding(padding).testTag("chatContent"),
             contentPadding = PaddingValues(16.dp),
@@ -334,6 +349,24 @@ fun ChatScreen(
             item("latest-message-anchor") {
                 Spacer(Modifier.height(1.dp).testTag("latestMessageAnchor"))
             }
+        }
+    }
+    if (state.executionMode == ConversationExecutionMode.BROWSER && editingMessageId != null && pendingMessageEdit == null) {
+        state.messages.firstOrNull { it.message.id == editingMessageId }?.let { target ->
+            AlertDialog(onDismissRequest = { editingMessageId = null }, title = { Text("编辑消息") },
+                text = { OutlinedTextField(value = editingText, onValueChange = { editingText = it },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 420.dp).testTag("webMessageEditor")) },
+                confirmButton = { Column {
+                    TextButton(enabled = !state.busy && editingText.isNotBlank(), onClick = {
+                        actions.editMessage(target.message.id, editingText, MessageEditMode.TEXT_ONLY); editingMessageId = null
+                    }) { Text("保存文字") }
+                    TextButton(enabled = !state.busy && editingText.isNotBlank(), onClick = {
+                        val edit = PendingMessageEdit(target.message.id, editingText, target.message.role == MessageRole.USER,
+                            state.messages.lastIndex - state.messages.indexOf(target), target.variantCount - 1)
+                        if (edit.removedMessageCount > 0 || edit.discardedVariantCount > 0) pendingMessageEdit = edit
+                        else { actions.editMessage(edit.messageId, edit.sourceText, MessageEditMode.RESTART); editingMessageId = null }
+                    }) { Text("从这里重新生成 / 继续") }
+                } }, dismissButton = { TextButton(onClick = { editingMessageId = null }) { Text("取消") } })
         }
     }
     if (nativeDetailsVisible) {
@@ -530,7 +563,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             maxLines = 5,
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            if (state.running) {
+            if (state.running || state.browserGenerating) {
                 OutlinedButton(
                     modifier = Modifier.testTag("cancelGeneration"),
                     onClick = actions.cancel,

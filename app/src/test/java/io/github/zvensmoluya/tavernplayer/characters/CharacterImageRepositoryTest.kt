@@ -19,6 +19,21 @@ class CharacterImageRepositoryTest {
     private fun repository(root: File, card: CharacterAsset, fetcher: CharacterImageFetcher) =
         CharacterImageRepository(root, { if (it == card.id) card else null }, { _, _ -> null }, fetcher, inspector)
 
+    @Test fun webRequestsReusePreparedImagesAndPersistDynamicReferences() = runBlocking {
+        val root = temporary.newFolder()
+        val card = card("https://images.example/a.png")
+        var calls = 0
+        val store = repository(root, card) { _, _ -> calls++; png }
+        store.prepare(card.id)
+        store.resolveForWeb(card.id, "https://images.example/a.png")
+        assertEquals(1, calls)
+        store.resolveForWeb(card.id, "https://images.example/dynamic.png")
+        assertEquals(2, calls)
+        val offline = repository(root, card) { _, _ -> error("Must reuse original bytes") }
+        assertTrue(offline.resolveForWeb(card.id, "https://images.example/dynamic.png").saved)
+        assertEquals(2, offline.load(card.id).savedCount)
+    }
+
     @Test fun retainsDownloadsAcrossRestartAndDeduplicatesBytesWithoutRefreshingUrls() = runBlocking {
         val root = temporary.newFolder()
         val card = card("https://images.example/a.png", "https://images.example/b.png", "data:image/png;base64,${Base64.getEncoder().encodeToString(png)}")
