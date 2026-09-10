@@ -100,7 +100,7 @@ async function render() {
   for (const [position, message] of visible.entries()) {
     let row = rows.get(message.turnId);
     if (!row) {
-      row = { element: document.createElement('article'), frames: [], contentKey: null };
+      row = { element: document.createElement('article'), frames: [], contentKey: null, reasoningOpen: false };
       rows.set(message.turnId, row);
     }
     row.frames.forEach(frame => { frame.messageId = message.message_id; });
@@ -113,7 +113,11 @@ async function render() {
       row.element.append(header);
       if (message.reasoning?.length) {
         const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('div');
-        summary.textContent = '思考过程'; text.textContent = message.reasoning.join('\n\n'); details.append(summary, text); row.element.append(details);
+        summary.textContent = '思考过程'; text.textContent = message.reasoning.join('\n\n');
+        // 流式期间每次刷新都会重建气泡；展开状态记在行上，读者打开后不会被折回去。
+        details.open = row.reasoningOpen;
+        details.addEventListener('toggle', () => { row.reasoningOpen = details.open; });
+        details.append(summary, text); row.element.append(details);
       }
       const source = message.display ?? message.message;
       for (const part of segments(source)) {
