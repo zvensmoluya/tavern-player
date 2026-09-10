@@ -376,7 +376,12 @@ class PromptCompiler(
                 ?.let { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.sha256(it.content) == ref.sourceContentSha256 } == true
         }
         staleTemplates.forEach { ref ->
-            diagnostics += warning("STALE_EJS_TEMPLATE", "世界书条目内容已变化，已跳过它的 EJS 模板注入", ref.entryId)
+            val entry = input.character.worldBooks.find { it.id == ref.bookId }?.entries?.find { it.id == ref.entryId }
+            // 内容仍是模板时既不执行也不注入源码；作者把它改成普通文字后，按普通条目正常参与编排。
+            val message = if (entry?.content?.contains("<%") == true)
+                "世界书条目内容已变化，已跳过它的 EJS 模板注入"
+            else "世界书条目内容已变化，不再作为模板执行，按普通文本参与"
+            diagnostics += warning("STALE_EJS_TEMPLATE", message, ref.entryId)
         }
         val activeTemplates = declaredTemplates - staleTemplates.toSet()
         val ejsIssues = input.character.nativeAdaptation?.let {
@@ -430,8 +435,8 @@ class PromptCompiler(
             inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
             prepareEntry = { bookId, entry, entryTransaction ->
-                if (staleTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
-                    // 模板来源已变：既不执行它，也不把模板源码原样注入提示词。
+                if (staleTemplates.any { it.bookId == bookId && it.entryId == entry.id } && entry.content.contains("<%")) {
+                    // 模板来源已变且仍是模板：既不执行它，也不把模板源码原样注入提示词。
                     WorldBookPreparedText("")
                 } else if (activeTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
                     val regexed = regexEngine.apply(entry.content, regexRules, RegexPlacement.WORLD_INFO,

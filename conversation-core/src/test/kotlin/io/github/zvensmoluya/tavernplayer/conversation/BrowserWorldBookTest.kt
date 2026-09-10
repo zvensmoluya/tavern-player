@@ -284,6 +284,77 @@ class BrowserWorldBookTest {
         assertEquals(setOf(0, 2), entries.mapIndexed { index, entry -> BrowserWorldBook.uid(entry, index) }.toSet())
     }
 
+    @Test fun `a read modify write round trip lets new secondary logic win over the carried extra`() {
+        val entry = WorldBookEntryDefinition(id = "notes:entry:0", sourceId = "0", keys = listOf("a"),
+            secondaryKeys = listOf("b"), selective = true,
+            extensions = buildJsonObject { put("selectiveLogic", 1); put("custom", "kept") })
+        val original = record().let {
+            it.copy(character = it.character.copy(worldBooks = listOf(WorldBookDefinition(id = "notes", entries = listOf(entry)))))
+        }
+        // 助手侧「读取 → 改次要关键字逻辑 → 原样回写」会带上 extra，extra 里仍是被读出的旧 selectiveLogic。
+        val patch = buildJsonObject {
+            put("uid", 0)
+            put("extra", buildJsonObject { put("selectiveLogic", 1); put("custom", "kept") })
+            putJsonObject("strategy") {
+                put("type", "selective")
+                putJsonObject("keys_secondary") {
+                    put("logic", "and_all")
+                    put("keys", JsonArray(listOf(JsonPrimitive("b"))))
+                }
+            }
+        }
+        val updated = BrowserConversation.apply(original, actor, "worldbook.entries.update",
+            args(buildJsonObject {
+                put("book", "notes")
+                put("entries", JsonArray(listOf(patch)))
+            }.toString()))
+        val target = updated.character.worldBooks.single().entries.single()
+        assertEquals(WorldBookSecondaryLogic.AND_ALL, target.secondaryLogic)
+        assertEquals(WorldBookSecondaryLogic.AND_ALL, target.effectiveSecondaryLogic)
+        // 其余扩展字段仍原样保留。
+        assertEquals("kept", target.extensions.getValue("custom").jsonPrimitive.content)
+        assertNull(target.extensions["selectiveLogic"])
+    }
+
+    @Test fun `an explicit null clears a timed effect and absent fields stay untouched`() {
+        val entry = WorldBookEntryDefinition(id = "notes:entry:0", sourceId = "0", constant = true, content = "x",
+            sticky = 5, cooldown = 3, delay = 2)
+        val original = record().let {
+            it.copy(character = it.character.copy(worldBooks = listOf(WorldBookDefinition(id = "notes", entries = listOf(entry)))))
+        }
+        val cleared = BrowserConversation.apply(original, actor, "worldbook.entries.update",
+            args("""{"book":"notes","entries":[{"uid":0,"sticky":null,"effect":{"cooldown":null,"delay":null}}]}"""))
+        val target = cleared.character.worldBooks.single().entries.single()
+        assertEquals(0, target.sticky)
+        assertEquals(0, target.cooldown)
+        assertEquals(0, target.delay)
+        // 回读也必须反映清除结果。
+        val flat = legacy(cleared).single().jsonObject
+        assertEquals(JsonNull, flat["sticky"])
+        assertEquals(JsonNull, flat["cooldown"])
+
+        val untouched = BrowserConversation.apply(original, actor, "worldbook.entries.update",
+            args("""{"book":"notes","entries":[{"uid":0,"content":"y"}]}"""))
+        assertEquals(5, untouched.character.worldBooks.single().entries.single().sticky)
+    }
+
+    @Test fun `a template rewritten as plain text takes effect in the prompt`() {
+        val entry = WorldBookEntryDefinition(id = "notes:entry:0", sourceId = "0", constant = true,
+            content = "before <% if (true) { %>X<% } %>")
+        val asset = CharacterAsset(id = "card", sourceSha256 = hash, name = "Guide", firstMessage = "Go.",
+            worldBooks = listOf(WorldBookDefinition(id = "notes", entries = listOf(entry))))
+        val template = NativeWorldBookReference("notes", entry.id, BrowserProgramReader.sha256(entry.content))
+        val base = record(asset).let {
+            it.copy(character = it.character.copy(browserProgram = BrowserProgram(ejsTemplates = listOf(template))))
+        }
+        val rewritten = base.copy(character = base.character.copy(worldBooks = listOf(WorldBookDefinition(
+            id = "notes", entries = listOf(entry.copy(content = "PLAIN-REWRITE"))))))
+        // renderer 抛错即证明没有把改写后的内容当模板执行。
+        val success = compile(rewritten, "anything", renderer = { error("改写后的普通文本不得触发模板执行") })
+        assertTrue(success.plan.messages.any { "PLAIN-REWRITE" in it.content })
+        assertTrue(success.plan.diagnostics.any { it.code == "STALE_EJS_TEMPLATE" })
+    }
+
     @Test fun `writes survive a save and reload and unsupported fields are rejected`() {
         val original = record()
         val written = BrowserConversation.apply(original, actor, "worldbook.entries.replace", args("""{"book":"notes","entries":[

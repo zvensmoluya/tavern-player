@@ -296,7 +296,10 @@ internal object BrowserWorldBook {
         patch: JsonObject,
     ): WorldBookEntryDefinition {
         require(patch.keys.all { it in nestedKeys || it in legacyKeys }) { "包含未支持的世界书条目字段" }
-        var entry = base
+        // `extra` 先落盘：它整体替换扩展对象，之后的字段写入（例如清除卡内 `selectiveLogic`）必须能覆盖它。
+        var entry = patch["extra"]?.let { raw ->
+            base.copy(extensions = raw as? JsonObject ?: error("extra 必须为对象"))
+        } ?: base
         patch.text("name")?.let { entry = entry.copy(name = it) }
         patch.text("comment")?.let { entry = entry.copy(comment = it) }
         patch.bool("enabled")?.let { entry = entry.copy(enabled = it) }
@@ -308,9 +311,9 @@ internal object BrowserWorldBook {
             val bounded = value.coerceIn(0, 100)
             entry = entry.copy(probability = bounded, useProbability = bounded < 100)
         }
-        patch.int("sticky")?.let { entry = entry.copy(sticky = it.coerceAtLeast(0)) }
-        patch.int("cooldown")?.let { entry = entry.copy(cooldown = it.coerceAtLeast(0)) }
-        patch.int("delay")?.let { entry = entry.copy(delay = it.coerceAtLeast(0)) }
+        patch.timedEffect("sticky")?.let { entry = entry.copy(sticky = it) }
+        patch.timedEffect("cooldown")?.let { entry = entry.copy(cooldown = it) }
+        patch.timedEffect("delay")?.let { entry = entry.copy(delay = it) }
         patch.bool("exclude_recursion")?.let { entry = entry.copy(excludeRecursion = it) }
         patch.bool("prevent_recursion")?.let { entry = entry.copy(preventRecursion = it) }
         patch.bool("delay_until_recursion")?.let { entry = entry.copy(delayUntilRecursion = it) }
@@ -379,12 +382,9 @@ internal object BrowserWorldBook {
         patch["effect"]?.let { raw ->
             val effect = raw as? JsonObject ?: error("effect 必须为对象")
             effect.only("sticky", "cooldown", "delay")
-            effect.int("sticky")?.let { entry = entry.copy(sticky = it.coerceAtLeast(0)) }
-            effect.int("cooldown")?.let { entry = entry.copy(cooldown = it.coerceAtLeast(0)) }
-            effect.int("delay")?.let { entry = entry.copy(delay = it.coerceAtLeast(0)) }
-        }
-        patch["extra"]?.let { raw ->
-            entry = entry.copy(extensions = raw as? JsonObject ?: error("extra 必须为对象"))
+            effect.timedEffect("sticky")?.let { entry = entry.copy(sticky = it) }
+            effect.timedEffect("cooldown")?.let { entry = entry.copy(cooldown = it) }
+            effect.timedEffect("delay")?.let { entry = entry.copy(delay = it) }
         }
         return entry
     }
@@ -499,6 +499,16 @@ internal object BrowserWorldBook {
     private fun JsonObject.bool(key: String): Boolean? = (get(key) as? JsonPrimitive)?.booleanOrNull
 
     private fun JsonObject.int(key: String): Int? = (get(key) as? JsonPrimitive)?.intOrNull
+
+    /**
+     * `sticky` / `cooldown` / `delay` 的上游类型是 `number | null`：显式 null 表示清除，不是「未提供」。
+     */
+    private fun JsonObject.timedEffect(key: String): Int? {
+        if (!containsKey(key)) return null
+        val value = get(key)
+        if (value is JsonNull) return 0
+        return ((value as? JsonPrimitive)?.intOrNull ?: error("$key 必须为整数或 null")).coerceAtLeast(0)
+    }
 
     /** 旧版三态字段：`"same_as_global"` 表示沿用全局设置，等价于不改动。 */
     private fun JsonObject.triState(key: String): Boolean? =
