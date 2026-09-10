@@ -238,13 +238,8 @@ class NativeGameplayLiveAndroidTest {
         val importedPreset = runBlocking {
             graph.presetRepository.importPreset(assets.open("community-preset.json").use { it.readBytes() }, "夏瑾 天琴座 Beta 3.4.json")
         } as PresetLibraryImportResult.Saved
-        val preset = runBlocking {
-            graph.presetRepository.save(importedPreset.preset.copy(
-                generationSettings = importedPreset.preset.generationSettings.copy(maxOutputTokens = 32768,
-                    reasoningEffort = PresetReasoningEffort.LOW,
-                    disabledParameters = importedPreset.preset.generationSettings.disabledParameters - setOf(PresetGenerationParameter.OUTPUT_LIMIT, PresetGenerationParameter.REASONING_EFFORT)),
-            )).also { graph.presetRepository.activate(it.id) }
-        }
+        val preset = importedPreset.preset
+        runBlocking { graph.presetRepository.activate(preset.id) }
         if (scenario == "memory-experiment") {
             memoryExperiment(graph, ModelGatewayConversationGenerator(ModelGateway(graph.credentialStore, observedClient),
                 graph.connectionRepository), connection, preset, output, ::progress)
