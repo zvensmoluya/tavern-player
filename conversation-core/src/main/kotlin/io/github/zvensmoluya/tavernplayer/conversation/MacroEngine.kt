@@ -267,8 +267,10 @@ class MacroEngine {
         val rawArgs = parsed.arguments
         val args = rawArgs.map { resolveDocument(it, context, transaction, diagnostics, depth + 1) }
 
-        if (name in setOf("get_message_variable", "format_message_variable") && args == listOf("stat_data") && context.legacyStateJson != null) {
-            return MessageVariableFormatter.format(context.legacyStateJson, yaml = name == "format_message_variable")
+        if (name in setOf("get_message_variable", "format_message_variable") && args.size == 1 &&
+            (args[0] == "stat_data" || args[0].startsWith("stat_data.") || args[0].startsWith("stat_data[")) && context.legacyStateJson != null) {
+            val path = args[0].removePrefix("stat_data").removePrefix(".")
+            return MessageVariableFormatter.format(context.legacyStateJson, yaml = name == "format_message_variable", path = path)
         }
         if (name in BLOCKED_MACROS || name.contains("globalvar")) {
             diagnostics += warning("UNSUPPORTED_MACRO", "Macro {{$name}} 属于已排除能力，保持原文", name)

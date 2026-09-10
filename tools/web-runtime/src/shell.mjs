@@ -5,10 +5,24 @@ import { tavernEvents, mvuEvents, iframeEvents } from './host.mjs';
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
 let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, programKey = '', following = true;
-let renderQueue = Promise.resolve(), coordinator = null;
+let renderQueue = Promise.resolve(), coordinator = null, factSnapshot = null;
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
 function lifecycle(name, args) { broadcast(name, args).catch(error => notice(error.message)); }
+// Both native notifications and command replies can carry the same saved state.
+// Observe facts once independently of which transport delivers that state first.
+function publishMessageFacts(next) {
+  const previous = factSnapshot; factSnapshot = next;
+  if (!previous) return;
+  for (const message of next.messages) {
+    const before = previous.messages.find(item => item.turnId === message.turnId);
+    if (!before && message.status === 'COMPLETE') lifecycle(message.role === 'user' ? tavernEvents.MESSAGE_SENT : tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    if (before && before.swipe_id !== message.swipe_id) lifecycle(tavernEvents.MESSAGE_SWIPED, [message.message_id]);
+    if (message.status === 'COMPLETE' && before?.status === 'STREAMING') lifecycle(tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    if (before && before.message !== message.message && message.status === 'COMPLETE') lifecycle(tavernEvents.MESSAGE_UPDATED, [message.message_id]);
+  }
+  if (JSON.stringify(previous.mvu) !== JSON.stringify(next.mvu) && next.mvu) lifecycle(mvuEvents.VARIABLE_UPDATE_ENDED, [next.mvu, previous.mvu]);
+}
 function rpc(method, args = {}, extra = {}) {
   const id = String(++sequence);
   return new Promise((resolve, reject) => {
@@ -43,7 +57,7 @@ export function segments(text) {
   const result = [], tokens = marked.lexer(text); let normal = [];
   const flush = () => { if (normal.length) { result.push({ kind: 'normal', text: marked.parser(normal) }); normal = []; } };
   for (const token of tokens) {
-    if (token.type === 'code' && /<body(?:\s[^>]*)?>/i.test(token.text) && /<\/body\s*>/i.test(token.text)) {
+    if (token.type === 'code' && /<body(?:\s[^>]*)?>/i.test(token.text) && (/<\/body\s*>/i.test(token.text) || token.lang?.toLowerCase() === 'html')) {
       flush(); result.push({ kind: 'page', text: token.text });
     } else normal.push(token);
   }
@@ -89,6 +103,7 @@ async function render() {
       row = { element: document.createElement('article'), frames: [], contentKey: null };
       rows.set(message.turnId, row);
     }
+    row.frames.forEach(frame => { frame.messageId = message.message_id; });
     row.element.dataset.role = message.role;
     const key = JSON.stringify([message.variantId, message.display, message.reasoning, message.status === 'COMPLETE']);
     if (row.contentKey !== key) {
@@ -202,6 +217,7 @@ window.addEventListener('message', async event => {
         // Do not replace render metadata with the smaller authoritative host state.
         snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({ ...snapshot.messages.find(old => old.id === m.id), ...m })) };
         if (coordinator) post(coordinator, { type: 'snapshot', snapshot });
+        publishMessageFacts(snapshot);
       }
       if (result.refresh && result.refresh.mode !== 'none') {
         const refresh = result.refresh;
@@ -238,6 +254,7 @@ async function apply(packet) {
   post(coordinator, { type: 'snapshot', snapshot });
   notice(flags.notice);
   await render();
+  publishMessageFacts(snapshot);
   if (!previous) { lifecycle(tavernEvents.CHAT_CHANGED, [snapshot.conversationId]); return; }
   const generation = snapshot.generation, prior = previous.generation;
   if (generation?.id && generation.id !== prior?.id) lifecycle(iframeEvents.GENERATION_STARTED, [generation.id]);
@@ -248,13 +265,7 @@ async function apply(packet) {
   if (generation?.status === 'complete' && (prior?.status !== 'complete' || prior?.id !== generation.id)) lifecycle(iframeEvents.GENERATION_ENDED, [generation.text, generation.id]);
   if (!oldFlags.running && flags.running) lifecycle(tavernEvents.GENERATION_STARTED, ['normal']);
   if (oldFlags.running && !flags.running) lifecycle(tavernEvents.GENERATION_ENDED, [snapshot.messages.length - 1]);
-  for (const m of snapshot.messages) {
-    const before = previous.messages.find(item => item.turnId === m.turnId);
-    if (before && before.swipe_id !== m.swipe_id) lifecycle(tavernEvents.MESSAGE_SWIPED, [m.message_id]);
-    if (m.status === 'COMPLETE' && before?.status === 'STREAMING') lifecycle(tavernEvents.MESSAGE_RECEIVED, [m.message_id]);
-    if (before && before.message !== m.message && m.status === 'COMPLETE') lifecycle(tavernEvents.MESSAGE_UPDATED, [m.message_id]);
-  }
-  if (JSON.stringify(previous.mvu) !== JSON.stringify(snapshot.mvu) && snapshot.mvu) lifecycle(mvuEvents.VARIABLE_UPDATE_ENDED, [snapshot.mvu, previous.mvu]);
+
 }
 globalThis.Player = {
   receive(packet) {

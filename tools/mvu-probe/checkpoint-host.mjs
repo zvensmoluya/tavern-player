@@ -2,7 +2,7 @@
 // This entry is only loaded with an explicitly supplied, audited local program.
 import { prepareSchemaScript } from './schema-script.mjs';
 
-export async function installCheckpointHost(mvu, program) {
+export async function installCheckpointHost(mvu, program, macroValues = {}) {
     const copy = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
     const chat = [];
     const handlers = new Map();
@@ -44,7 +44,7 @@ export async function installCheckpointHost(mvu, program) {
             for (const fn of handlers.get(name) ?? []) await fn(...args);
         },
         registerVariableSchema() {},
-        substitudeMacros: text => text,
+        substitudeMacros: text => text.replace(/\{\{(user|char)\}\}/gi, (token, name) => macroValues[name.toLowerCase()] ?? token),
         getLastMessageId: () => chat.length - 1,
         getChatMessages: id => {
             if (!Number.isInteger(id) || id < 0) throw new Error('Unsupported MVU message selector');

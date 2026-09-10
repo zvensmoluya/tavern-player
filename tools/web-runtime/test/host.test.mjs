@@ -125,7 +125,8 @@ test('message queries retain candidate shape, ranges and filters', () => {
   assert.equal(host.api.getChatMessages(-1)[0].message, 'Opening');
   assert.equal(host.api.getChatMessages('0-{{lastMessageId}}').length, 1);
   assert.deepEqual(host.api.getChatMessages(0, { include_swipes: true })[0].swipes, ['Opening', 'Alternative']);
-  assert.deepEqual(host.api.getChatMessages(5), []);
+  assert.equal(host.api.getChatMessages(5)[0].message, 'Opening');
+  assert.deepEqual(host.api.getChatMessages('invalid'), []);
   assert.deepEqual(host.api.getChatMessages(0, { role: 'user' }), []);
   assert.throws(() => host.api.getChatMessages(0, { unknown: true }), /Unsupported/);
 });
@@ -135,7 +136,6 @@ test('scope errors are explicit rather than silently becoming chat variables', (
   assert.throws(() => host.api.getVariables({ type: 'global' }), /Unsupported/);
   assert.throws(() => host.api.replaceVariables({}, { type: 'script' }), /Unavailable/);
   assert.throws(() => host.api.getVariables({ type: 'chat', message_id: 0 }), /Invalid/);
-  assert.throws(() => host.api.createChatMessages([]), /Unsupported/);
 });
 
 test('once and removal apply before reentrant delivery', async () => {
@@ -196,4 +196,57 @@ test('variable updater preserves synchronous and asynchronous return types', asy
   const asyncResult = host.api.updateVariablesWith(async v => ({ ...v, score: 5 }));
   assert.equal(typeof asyncResult.then, 'function');
   assert.equal((await asyncResult).score, 5); await host.flush();
+});
+
+
+test('message structure operations share the durable queue and preserve helper option aliases', async () => {
+  const calls = [];
+  const host = createHost({ initial: snapshot(), actor: {}, request: async (method, args) => { calls.push({ method, args }); return {}; } });
+  host.api.replaceVariables({ pending: true });
+  await host.api.createChatMessages([{ role: 'user', message: 'choice' }], { insert_at: -1 });
+  await host.api.deleteChatMessages([-1, 0]);
+  await host.api.rotateChatMessages(0, 1, 2, { refresh: 'all' });
+  assert.deepEqual(calls.map(x => x.method), ['variables.replace', 'messages.create', 'messages.delete', 'messages.rotate']);
+  assert.equal(calls[1].args.insert_before, -1);
+  assert.equal(calls[3].args.refresh, 'all');
+});
+
+test('message range clamps and sorts both ends before filtering', () => {
+  const initial = snapshot();
+  initial.messages.push({ ...initial.messages[0], message_id: 1, role: 'user', message: 'second' });
+  const host = createHost({ initial, actor: {}, request: async () => ({}) });
+  assert.deepEqual(host.api.getChatMessages('99--99').map(x => x.message), ['Opening', 'second']);
+  assert.equal(host.api.getChatMessages('-9-9', { role: 'user' })[0].message, 'second');
+  assert.equal(host.api.getChatMessages(-999)[0].message, 'Opening');
+});
+
+
+test('regex updater preserves async callbacks and saves the actual replacement list', async () => {
+  const initial = snapshot(), calls = [];
+  initial.characterRegexes = [{ id: 'r', enabled: false, replace_string: 'old' }];
+  const host = createHost({ initial, actor: {}, request: async (method, args) => {
+    calls.push(method); return { snapshot: { characterRegexes: args.regexes } };
+  } });
+  const updated = await host.api.updateTavernRegexesWith(async rules => {
+    assert.equal(rules[0].scope, 'character');
+    rules[0].enabled = true; rules[0].replace_string = 'new'; return rules;
+  }, { scope: 'character' });
+  assert.equal(updated[0].replace_string, 'new');
+  assert.equal(host.api.getTavernRegexes({ type: 'character', enable_state: 'enabled' }).length, 1);
+  assert.deepEqual(calls, ['regex.replace']);
+  assert.throws(() => host.api.getTavernRegexes({ type: 'preset' }), /Unsupported/);
+});
+
+
+test('character variables keep their scope and update aggregation before durable acknowledgement', async () => {
+  const initial = snapshot(); initial.program = { variables: { seed: 1 } };
+  const host = createHost({ initial, actor: {}, request: async (_, args) => ({ snapshot: { characterVariables: args.data } }) });
+  assert.deepEqual(host.api.getVariables({ type: 'character' }), { seed: 1 });
+  host.api.replaceVariables({ seed: 2 }, { type: 'character' });
+  assert.equal(host.api.getAllVariables().seed, 2);
+  assert.deepEqual(host.api.getVariables(), {});
+  await host.flush();
+  host.api.replaceVariables({}, { type: 'character' });
+  await host.flush();
+  assert.deepEqual(host.api.getVariables({ type: 'character' }), {});
 });

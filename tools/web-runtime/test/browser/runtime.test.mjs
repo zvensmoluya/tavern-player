@@ -36,6 +36,15 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
       } else if (req.method === 'host.draft.replace') {
         snapshot = { ...snapshot, revision: 'r2', draft: req.args.text }; result = { snapshot };
       } else if (req.method === 'host.chat.send') { sent++; result = { snapshot }; }
+      else if (req.method === 'host.messages.create') {
+        const incoming = req.args.messages.map((value, i) => ({ ...snapshot.messages[0], ...value, id: 'created-' + i, turnId: 'created-' + i,
+          variantId: 'created-' + i, display: value.message, swipes: [value.message], swipes_data: [{}], data: {}, extra: {} }));
+        snapshot = { ...snapshot, revision: 'structure-' + (++number), messages: [...incoming, ...snapshot.messages].map((value, message_id) => ({ ...value, message_id })) };
+        result = { snapshot, refresh: { mode: 'affected', messageIds: [] } };
+      } else if (req.method === 'host.messages.delete') {
+        snapshot = { ...snapshot, revision: 'structure-' + (++number), messages: snapshot.messages.filter(m => !req.args.message_ids.includes(m.message_id)).map((m, message_id) => ({ ...m, message_id })) };
+        result = { snapshot, refresh: { mode: 'affected', messageIds: [] } };
+      }
       else throw new Error('Unexpected request ' + req.method);
       await page.evaluate(data => Player.receive(data), { type: 'result', id: req.id, result });
     });
@@ -148,6 +157,17 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     await frame.waitForFunction(() => PresetLibrary?.version === 2);
     assert.equal(await frame.evaluate(() => { eventEmitAndWait('preset-event'); return Shared.count; }), 13);
     assert.equal(await page.locator('iframe[name="player_author_session"]').count(), 1);
+
+    // Structural writes preserve surviving author frames and their changed floor identity.
+    await frame.evaluate(() => { window.sentEvents = 0; eventOn(tavern_events.MESSAGE_SENT, () => sentEvents++); });
+    await frame.evaluate(() => createChatMessages([{ role: 'user', message: 'Inserted' }], { insert_before: 0 }));
+    await frame.waitForFunction(() => getCurrentMessageId() === 1 && sentEvents === 1);
+    assert.equal(await frame.evaluate(() => window.boots), 1);
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    assert.equal(await frame.evaluate(() => sentEvents), 1);
+    await frame.evaluate(() => deleteChatMessages([0]));
+    await frame.waitForFunction(() => getCurrentMessageId() === 0);
+    assert.equal(await frame.evaluate(() => window.boots), 1);
 
   } finally { await browser.close(); }
 });

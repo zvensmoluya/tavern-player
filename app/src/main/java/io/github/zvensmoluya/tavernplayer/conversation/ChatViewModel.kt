@@ -695,6 +695,7 @@ class ChatViewModel(
                                 nativeOperations = emptyList(),
                                 browserHead = null,
                                 browserVariables = JsonObject(emptyMap()),
+                                browserOwnVariables = false,
                             )
                         }
                     }
@@ -757,6 +758,7 @@ class ChatViewModel(
                                 nativeOperations = emptyList(),
                                 browserHead = null,
                                 browserVariables = JsonObject(emptyMap()),
+                                browserOwnVariables = false,
                             )
                         }
                     }
@@ -839,6 +841,21 @@ class ChatViewModel(
         generationJob?.cancel()
     }
 
+    private var browserRegexRefreshJob: Job? = null
+
+    private fun scheduleBrowserRegexRefresh() {
+        browserRegexRefreshJob?.cancel()
+        browserRegexRefreshJob = viewModelScope.launch {
+            // Match the helper's trailing refresh: the saved write returns first so
+            // author callbacks may finish (for example select an opening) before reload.
+            delay(1000)
+            browserHostMutex.withLock {
+                refreshDisplayCache()
+                syncRecord(input = record.draft)
+            }
+        }
+    }
+
     suspend fun invokeBrowser(actor: BrowserActor, revision: String, method: String, args: JsonObject): JsonObject {
         if (method == "generation.stop") {
             BrowserConversation.authorize(record, actor, BrowserConversation.revision(record))
@@ -859,6 +876,7 @@ class ChatViewModel(
             }
             _uiState.update { it.copy(browserOperationRunning = true) }
             var result: JsonElement = JsonNull
+            var regexChanged = false
             try {
                 try { persistNow() } catch (error: Exception) {
                     if (error is CancellationException) throw error
@@ -880,10 +898,12 @@ class ChatViewModel(
                     }
                     else -> {
                         val proposed = BrowserConversation.apply(record, actor, method, args)
+                        regexChanged = method == "regex.replace" && proposed.character.regexScripts != record.character.regexScripts
                         withContext(NonCancellable) {
                             record = try { conversationRepository?.save(proposed) ?: proposed }
                             catch (error: Exception) { throw BrowserPersistenceException(error) }
-                            if (method != "messages.set" || args["refresh"]?.jsonPrimitive?.content != "none") refreshDisplayCache()
+                            if (method != "regex.replace" && (!method.startsWith("messages.") || args["refresh"]?.jsonPrimitive?.content != "none")) refreshDisplayCache()
+                            if (regexChanged) scheduleBrowserRegexRefresh()
                             syncRecord(input = record.draft)
                         }
                     }
@@ -904,9 +924,12 @@ class ChatViewModel(
                         "reasoning" to JsonArray(projected?.displayReasoning.orEmpty().map(::JsonPrimitive))))
                 }))))
                 put("value", result)
-                if (method == "messages.set") putJsonObject("refresh") {
+                if (method.startsWith("messages.")) putJsonObject("refresh") {
                     put("mode", args["refresh"] ?: JsonPrimitive("affected"))
-                    put("messageIds", JsonArray(args.getValue("messages").jsonArray.map { it.jsonObject.getValue("message_id") }))
+                    put("messageIds", if (method == "messages.set") JsonArray(args.getValue("messages").jsonArray.map {
+                        val index = it.jsonObject.getValue("message_id").jsonPrimitive.int
+                        JsonPrimitive(if (index < 0) record.turns.size + index else index)
+                    }) else JsonArray(emptyList()))
                 }
             }
         }
@@ -1426,7 +1449,7 @@ class ChatViewModel(
     private suspend fun applyMvuUpdate(
         source: String, previous: ConversationRuntimeState, opening: Boolean = false,
     ): ConversationRuntimeState {
-        val result = mvuRuntime.update(record.character, source, previous, opening) ?: return previous
+        val result = mvuRuntime.update(record.character, source, previous, opening, record.persona) ?: return previous
         val diagnostics = result.diagnostics.filter { it.level in setOf("error", "warn", "warning") }
             .map { "MVU: ${it.text}" }
         if (diagnostics.isNotEmpty()) updateTrace {

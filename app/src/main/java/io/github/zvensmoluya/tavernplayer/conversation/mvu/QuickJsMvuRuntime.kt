@@ -115,6 +115,7 @@ class QuickJsMvuRuntime private constructor(
             bundle: String,
             program: JsonObject,
             evaluationTimeoutMillis: Long = 2_000,
+            macroValues: JsonObject = JsonObject(emptyMap()),
         ): QuickJsMvuRuntime {
             require(evaluationTimeoutMillis in 1..10_000)
             require(bundle.length <= 8 * 1024 * 1024) { "MVU bundle exceeds limit" }
@@ -133,7 +134,7 @@ class QuickJsMvuRuntime private constructor(
                     js.evaluate<Any?>(bundle, filename = "mvu-runtime.js")
                     js.evaluationTimeoutMillis = evaluationTimeoutMillis
                     withTimeout(evaluationTimeoutMillis) {
-                        js.evaluate<Any?>("globalThis.session = await PlayerMvu.createSession(JSON.parse(${JsonPrimitive(programText)})); void 0;",
+                        js.evaluate<Any?>("globalThis.session = await PlayerMvu.createSession(JSON.parse(${JsonPrimitive(programText)}), JSON.parse(${JsonPrimitive(macroValues.toString())})); void 0;",
                             filename = "mvu-program.js")
                     }
                     QuickJsMvuRuntime(sha256(bundle), sha256(programText), dispatcher, js, evaluationTimeoutMillis)

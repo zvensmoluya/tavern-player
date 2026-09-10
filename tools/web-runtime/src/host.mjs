@@ -10,7 +10,7 @@ const object = value => {
 const only = (value, keys) => { object(value); if (Object.keys(value).some(key => !keys.includes(key))) throw new Error('Unsupported argument'); };
 
 export const tavernEvents = Object.freeze({
-  CHAT_CHANGED: 'chat_id_changed', MESSAGE_RECEIVED: 'message_received', MESSAGE_UPDATED: 'message_updated',
+  CHAT_CHANGED: 'chat_id_changed', MESSAGE_SENT: 'message_sent', MESSAGE_RECEIVED: 'message_received', MESSAGE_UPDATED: 'message_updated',
   MESSAGE_SWIPED: 'message_swiped', USER_MESSAGE_RENDERED: 'user_message_rendered',
   CHARACTER_MESSAGE_RENDERED: 'character_message_rendered', GENERATION_STARTED: 'generation_started',
   GENERATION_ENDED: 'generation_ended', GENERATION_STOPPED: 'generation_stopped',
@@ -44,7 +44,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
   function variableTarget(options = {}) {
     only(options, ['type', 'message_id', 'script_id']);
     const type = options.type ?? 'chat';
-    if (!['chat', 'message', 'script'].includes(type)) throw new Error('Unsupported variable scope: ' + type);
+    if (!['chat', 'message', 'script', 'character'].includes(type)) throw new Error('Unsupported variable scope: ' + type);
     if (type === 'script') {
       if (!actor.scriptId || (options.script_id !== undefined && options.script_id !== scriptId)) throw new Error('Unavailable script scope');
       return { type, key: actor.scriptId };
@@ -58,6 +58,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     return { type };
   }
   function readVariables(target, source = session.state) {
+    if (target.type === 'character') return source.characterVariables ?? source.program?.variables ?? {};
     if (target.type === 'chat') return source.chatVariables;
     if (target.type === 'script') return source.scriptVariables[target.key] ?? scriptSource?.data ?? {};
     return source.messages[target.message_id].data;
@@ -65,7 +66,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
   function getAllVariables() {
     // This profile has no application-wide variable store. Character defaults remain
     // part of the captured program; message data is the selected candidate's view.
-    const layers = [session.state.globalVariables ?? {}, session.state.program?.variables ?? {}];
+    const layers = [session.state.globalVariables ?? {}, session.state.characterVariables ?? session.state.program?.variables ?? {}];
     if (!actor.turnId && actor.scriptId) layers.push(readVariables({ type: 'script', key: actor.scriptId }));
     layers.push(session.state.chatVariables);
     if (actor.turnId) {
@@ -77,7 +78,8 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     return clone(Object.fromEntries(layers.flatMap(layer => Object.entries(layer ?? {}))));
   }
   function writeVariables(source, target, data) {
-    if (target.type === 'chat') source.chatVariables = clone(data);
+    if (target.type === 'character') source.characterVariables = clone(data);
+    else if (target.type === 'chat') source.chatVariables = clone(data);
     else if (target.type === 'script') source.scriptVariables[target.key] = clone(data);
     else {
       const message = source.messages[target.message_id];
@@ -90,7 +92,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     if (target.type === 'message' && (options?.message_id === undefined || options.message_id === 'latest')) {
       let latest = session.state.messages.length - 1;
       while (latest >= 0 && session.state.messages[latest].is_hidden) latest--;
-      if (latest < 0) throw new Error('No visible message exists');
+      if (latest < 0) return {};
       target.message_id = latest;
     }
     return clone(readVariables(target));
@@ -130,14 +132,17 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     if (options.include_swipes !== undefined && typeof options.include_swipes !== 'boolean') throw new Error('Invalid include_swipes');
     let start, end;
     const expanded = String(range).replaceAll('{{lastMessageId}}', String(session.state.messages.length - 1));
+    if (!session.state.messages.length) return [];
+    const clamp = value => Math.max(0, Math.min(session.state.messages.length - 1, index(value)));
     const pair = expanded.match(/^(-?\d+)-(-?\d+)$/);
-    if (pair) { start = index(pair[1]); end = index(pair[2]); }
-    else { start = end = index(expanded); }
+    if (pair) [start, end] = [clamp(pair[1]), clamp(pair[2])].sort((a, b) => a - b);
+    else if (/^-?\d+$/.test(expanded)) start = end = clamp(expanded);
+    else return [];
     return session.state.messages.filter(m => m.message_id >= start && m.message_id <= end &&
       (role === 'all' || m.role === role) && (hidden === 'all' || m.is_hidden === (hidden === 'hidden'))).map(m => {
       const common = { message_id: m.message_id, name: m.name, role: m.role, is_hidden: m.is_hidden };
       return clone(options.include_swipes ? { ...common, swipe_id: m.swipe_id, swipes: m.swipes, swipes_data: m.swipes_data, swipes_info: m.swipes_info }
-        : { ...common, message: m.message, data: m.data, extra: m.extra });
+        : { ...common, message: m.message, data: m.data, extra: m.extra, swipe_id: m.swipe_id, swipes: m.swipes, swipes_data: m.swipes_data });
     });
   }
   async function setChatMessages(messages, options = {}) {
@@ -154,6 +159,31 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     const value = session.state.worldbooks.find(book => book.name === name);
     if (!value) throw new Error('World book does not exist');
     return value;
+  }
+  function regexScope(options = {}) {
+    only(options, ['type', 'name', 'scope', 'enable_state']);
+    const scope = options.type ?? options.scope ?? 'all';
+    if (!['character', 'all'].includes(scope)) throw new Error('Unsupported regex scope: ' + scope);
+    if (options.name !== undefined && options.name !== 'current') throw new Error('Unavailable character regex asset');
+    if (!['all', 'enabled', 'disabled'].includes(options.enable_state ?? 'all')) throw new Error('Invalid regex enabled filter');
+    return options.type === undefined;
+  }
+  function getTavernRegexes(options) {
+    const legacy = regexScope(options);
+    return clone(session.state.characterRegexes ?? []).filter(rule => !options?.enable_state || options.enable_state === 'all' || rule.enabled === (options.enable_state === 'enabled'))
+      .map(rule => legacy ? { ...rule, scope: 'character' } : rule);
+  }
+  async function replaceTavernRegexes(regexes, options) {
+    regexScope(options);
+    if (!Array.isArray(regexes)) throw new Error('Regexes must be an array');
+    if (regexes.some(rule => rule.scope && rule.scope !== 'character')) throw new Error('Unsupported regex scope');
+    await enqueue('regex.replace', { regexes });
+  }
+  async function updateTavernRegexesWith(updater, options) {
+    if (typeof updater !== 'function') throw new Error('Updater must be a function');
+    const regexes = await updater(getTavernRegexes(options));
+    await replaceTavernRegexes(regexes, options);
+    return regexes;
   }
   const unsupported = name => () => { throw new Error('Unsupported host capability: ' + name); };
   function stopGeneration(id) {
@@ -179,7 +209,21 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     },
     getVariables, getAllVariables, replaceVariables, updateVariablesWith,
     insertOrAssignVariables, insertVariables, deleteVariable,
+    getTavernRegexes, replaceTavernRegexes, updateTavernRegexesWith,
+    isCharacterTavernRegexesEnabled: () => true,
     getChatMessages, setChatMessages,
+    createChatMessages: async (messages, options = {}) => {
+      only(options, ['insert_at', 'insert_before', 'refresh']);
+      return enqueue('messages.create', { messages, insert_before: options.insert_at ?? options.insert_before ?? 'end', refresh: options.refresh ?? 'affected' });
+    },
+    deleteChatMessages: async (message_ids, options = {}) => {
+      only(options, ['refresh']);
+      return enqueue('messages.delete', { message_ids, refresh: options.refresh ?? 'affected' });
+    },
+    rotateChatMessages: async (begin, middle, end, options = {}) => {
+      only(options, ['refresh']);
+      return enqueue('messages.rotate', { begin, middle, end, refresh: options.refresh ?? 'affected' });
+    },
     getCurrentMessageId: () => { if (!actor.turnId) throw new Error('Not a message context'); return index(); }, getLastMessageId: () => session.state.messages.length - 1,
     getScriptId: () => { if (!actor.scriptId) throw new Error('Not a script context'); return scriptId; },
     getButtonEvent: name => 'player_button:' + actor.scriptId + ':' + name,
@@ -226,7 +270,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     },
     isValidMvuData: data => !!data && typeof data.stat_data === 'object' && 'schema' in data,
   };
-  for (const name of ['createChatMessages', 'deleteChatMessages', 'rotateChatMessages', 'triggerSlash', 'executeSlashCommands',
+  for (const name of ['triggerSlash', 'executeSlashCommands',
     'registerMvuSchema', 'setWorldbook', 'replaceWorldbook', 'setLorebookEntries', 'injectPrompts', 'replaceAllVariables']) api[name] = unsupported(name);
   // Retained function references must not operate after their owner is destroyed.
   for (const [name, fn] of Object.entries(api)) if (typeof fn === 'function')

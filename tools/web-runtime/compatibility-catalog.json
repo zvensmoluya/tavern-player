@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "helperCommit": "dd8327d437eb0cdbd1eddc23b5491812870aa7d8",
   "meaning": "Binding presence is not compatibility. Domains, namespace members, aliases and source dependencies are inventoried separately. No conformance percentage is computed.",
-  "hostSourceSha256": "048dd624d14e52031979a52f51a5a68d1152225f712fa25a1ea81c1cfacef6b1",
+  "hostSourceSha256": "eb78d1f8ae7c9d35329ae2810d6ed8713b1606a0fca013e17bce6a8679d18d78",
   "playerSources": {
-    "src/host.mjs": "048dd624d14e52031979a52f51a5a68d1152225f712fa25a1ea81c1cfacef6b1",
+    "src/host.mjs": "eb78d1f8ae7c9d35329ae2810d6ed8713b1606a0fca013e17bce6a8679d18d78",
     "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
     "src/parent.mjs": "a223125055f2da315996c45a20033749ccde68438d6fdd63957ff20b35b12553",
-    "src/shell.mjs": "f277869d9be6351382fcc7270b2738d1fa5463b0f9a4212f684eb3bcd8c9390f"
+    "src/shell.mjs": "64c8e7f8e730494479e77768de69b7393caaac8a22a3ec51ac94cd8666af2754"
   },
   "sources": {
     "@types/function/audio.d.ts": "02c7ace1acbb1949037aca6f2156e4f109212dd6b9642a63d06934316b24c908",
@@ -586,7 +586,7 @@
           "name": "tavern_events.MESSAGE_SENT",
           "kind": "object-member",
           "declaration": "@types/iframe/event.d.ts",
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "tavern_events.MESSAGE_SWIPE_DELETED",
@@ -949,7 +949,7 @@
           "declaration": "@types/function/chat_message.d.ts",
           "line": 188,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "deleteChatMessages",
@@ -957,7 +957,7 @@
           "declaration": "@types/function/chat_message.d.ts",
           "line": 208,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "formatAsDisplayedMessage",
@@ -997,7 +997,7 @@
           "declaration": "@types/function/chat_message.d.ts",
           "line": 229,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "setChatMessages",
@@ -1313,7 +1313,7 @@
         "src/function/macro_like.ts"
       ],
       "owner": "native-projection-with-browser-callbacks",
-      "status": "unimplemented-bridge",
+      "status": "partial",
       "batch": "C",
       "dependencies": [
         "@/function/displayed_message",
@@ -1344,7 +1344,7 @@
           "declaration": "@types/function/tavern_regex.d.ts",
           "line": 87,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "isCharacterTavernRegexesEnabled",
@@ -1352,7 +1352,7 @@
           "declaration": "@types/function/tavern_regex.d.ts",
           "line": 62,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "registerMacroLike",
@@ -1368,7 +1368,7 @@
           "declaration": "@types/function/tavern_regex.d.ts",
           "line": 103,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "unregisterMacroLike",
@@ -1384,7 +1384,7 @@
           "declaration": "@types/function/tavern_regex.d.ts",
           "line": 131,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         }
       ]
     },
@@ -3348,17 +3348,17 @@
     {
       "name": "createChatMessages",
       "declarationTarget": "createChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteChatMessages",
       "declarationTarget": "deleteChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "rotateChatMessages",
       "declarationTarget": "rotateChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "formatAsDisplayedMessage",
@@ -3748,22 +3748,22 @@
     {
       "name": "isCharacterTavernRegexesEnabled",
       "declarationTarget": "isCharacterTavernRegexesEnabled",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getTavernRegexes",
       "declarationTarget": "getTavernRegexes",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "replaceTavernRegexes",
       "declarationTarget": "replaceTavernRegexes",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updateTavernRegexesWith",
       "declarationTarget": "updateTavernRegexesWith",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "substitudeMacros",
@@ -4050,17 +4050,17 @@
     {
       "name": "createChatMessages",
       "target": "createChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteChatMessages",
       "target": "deleteChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "rotateChatMessages",
       "target": "rotateChatMessages",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "formatAsDisplayedMessage",
@@ -4510,22 +4510,22 @@
     {
       "name": "isCharacterTavernRegexesEnabled",
       "target": "isCharacterTavernRegexesEnabled",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getTavernRegexes",
       "target": "getTavernRegexes",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "replaceTavernRegexes",
       "target": "replaceTavernRegexes",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updateTavernRegexesWith",
       "target": "updateTavernRegexesWith",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "substitudeMacros",

@@ -6,7 +6,7 @@
 
 Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。一个 WebView 显示消息列表、Markdown、富 HTML 和消息操作。展示使用现有 DISPLAY 投影；原始正文、Prompt 投影和展示内容分开保存，DOM 不自动回写正文。
 
-普通 Markdown/HTML 经 DOMPurify 清理，禁止作者脚本和事件属性。包含完整 `<body>…</body>` 的围栏代码块在消息 COMPLETE 后作为作者页面装载；其他代码块保留为代码。流式更新每 50 ms 至多一次，完成立即发布。原生首次发送完整快照，后续发送变更消息、顺序与变更状态。首次显示最近 50 条，点击每次向前加载 50 条。已挂载页面保留至消息内容/候选改变、历史被截断、切换对话或退出页面；滚动和追加新消息不重新执行旧页面。
+普通 Markdown/HTML 经 DOMPurify 清理，禁止作者脚本和事件属性。包含完整 `<body>…</body>` 的围栏代码块（标记为 html 时也接受省略 `</body>` 的合法 HTML）在消息 COMPLETE 后作为作者页面装载；其他代码块保留为代码。流式更新每 50 ms 至多一次，完成立即发布。原生首次发送完整快照，后续发送变更消息、顺序与变更状态。首次显示最近 50 条，点击每次向前加载 50 条。已挂载页面保留至消息内容/候选改变、历史被截断、切换对话或退出页面；滚动和追加新消息不重新执行旧页面。
 
 `BrowserProgramReader` 直接读取角色与当前预设的 `extensions.tavern_helper` 对象或键值对数组，遍历 `scripts` 目录，保留原文、来源 JSON pointer、启用状态和 SHA-256。它不经过 Native 编译器、模型筛选或裁剪。程序语法由 Acorn 解析，解析不执行源码。
 
@@ -23,13 +23,14 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 | 能力 | 当前支持 | 明确限制 |
 | --- | --- | --- |
 | 消息读取 | `getChatMessages` 的楼层、范围、角色、隐藏过滤及候选读取；当前/最后消息身份 | 只读取当前对话，不提供其他会话访问 |
-| 消息修改 | `setChatMessages` 改写已有正文、候选内容、选中候选、变量和隐藏状态；`refresh` 为 none/affected/all | 不新增、删除或移动楼层，不增减候选数量；正文按字面量保存，不调用用户编辑的 Macro/截断流程 |
-| 变量 | `getVariables`、`replaceVariables`、`updateVariablesWith`、`insertOrAssignVariables`、`insertVariables`、`deleteVariable`；chat、message、当前 script 作用域；`getAllVariables` 聚合读取 | 独立 global、角色/预设资产、其他脚本作用域读写尚未接入；单份变量最多 1 MiB |
+| 消息修改 | `setChatMessages` 修改正文、身份、候选数组、变量、附加数据和隐藏状态；新增 `createChatMessages` / `deleteChatMessages` / `rotateChatMessages` | 结构变化需要 affected/all 刷新；正文按字面量保存，不调用用户编辑的 Macro/截断流程 |
+| 变量 | `getVariables`、`replaceVariables`、`updateVariablesWith`、`insertOrAssignVariables`、`insertVariables`、`deleteVariable`；chat、message、character、当前 script 作用域；`getAllVariables` 聚合读取 | character 修改当前对话角色快照；独立 global、预设资产、其他脚本作用域读写尚未接入；单份变量最多 1 MiB |
 | 事件 | 注册、注销、一次性监听、顺序调整、自定义异步事件；消息、候选、渲染、生成和 MVU 更新事件 | 不提供完整扩展事件集合；同一作者会话内支持跨页面同步 `eventEmitAndWait`，不访问其他对话 |
 | 生成 | `generate` 使用当前连接和预设；`generateRaw` 接受显式 role/content 数组；生成 ID、流式事件与停止 | 不接受 custom_api、凭据、任意 Provider、工具、图片或注入/覆盖参数；raw 不接受内置 marker 名称 |
 | MVU | 初始化、完整回复更新、候选检查点读取和直接替换 | 替换保留原 schema；不提供完整扩展编辑器/设置、跨引擎共享闭包 |
 | EJS | 已登记原世界书模板的只读求值 | 页面私有状态须先通过宿主保存；未完成初始化导致缺少变量时明确失败 |
 | 世界书 | `getWorldbook` 读取当前角色世界书；显式 `setWorldbookEnabled` / `setWorldbookEntryEnabled` | 旧版 `getLorebookEntries` 明确拒绝；不提供通用资产编辑，不改变其他角色资产 |
+| Regex | `getTavernRegexes` / `replaceTavernRegexes` / `updateTavernRegexesWith` 管理当前角色规则；旧 scope=character/all 可用 | 全局/预设规则、任意角色资产、同步格式化及 Macro 回调未接入 |
 | 页面辅助 | 共享对象初始化/等待、脚本身份、按钮、toastr 诊断、有限父页面 | 父页面仅提供 `#send_textarea` 与 `#send_but`；不提供 ST 内部模块/播放器工具栏 |
 
 消息与后台脚本共用一个持久的作者会话协调 iframe；它和作者内容同源、和可信消息外壳不同源，不持有原生桥。同步读取来自统一的 JS 会话视图。同步写入立即更新待提交视图并排队保存，生成与异步消息修改排在此前写入之后。`updateVariablesWith` 保留同步/异步回调对应的返回类型。每次提交携带运行实例、候选身份、状态版本和请求 ID；Kotlin 验证后计算原子提案，保存成功才发布或确认。重复请求不会重复执行；旧候选、已销毁页面、过期状态或忙碌会话拒绝提交。一次存储失败停止整个网页运行实例，恢复已保存视图并提供重试入口。
@@ -73,6 +74,25 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 这批完成生产协调器、共享对象、初始化、事件、共享队列和清理；不等于设计中 A 的全部内容已完成。完整 SillyTavern Context、脚本管理接口、完整事件集合和更广 MVU/EJS provider 归属仍未交付。
 
 本轮 JS 契约测试 26 项和 Edge 测试 3 项通过。生产网页集成覆盖双页面同步回调、原生事件不重复、销毁清理、预设生成中保留/结束后替换和原表单回归；独立架构证明仍保留。新增 Android 测试 `authorPagesShareObjectsAndSynchronousEventsThroughProductionSession` 通过编译但未执行：当前无连接设备，SDK 未安装 emulator。应用单测、Debug APK 和 Android 测试 APK 构建通过；设备上的同源 sibling 访问、生命周期及原卡完整生成流程仍需验收。
+
+## 消息与角色规则操作（2026-09-10）
+
+- 消息读取按参照实现截断越界端点、排序反向范围，非法范围返回空列表；默认结果保留旧版候选字段。消息修改合并指向同一楼层的更新，接受负索引、名称/角色和候选附加数据；候选数组按最长输入补齐，选中编号截断到有效范围。无效楼层按参照实现忽略，其余非法参数整批拒绝。空候选数组明确拒绝，避免无法选中任何消息。
+- 新增消息支持 `insert_before` 和旧别名 `insert_at`、负位置、默认身份及初始变量/extra；删除支持负索引、去重和忽略越界项；rotate 按半开区间交换两段。结构变化保留消息身份和仍有效的网页实例，重新编号但不重跑无关作者页面。结构操作 `refresh:none` 按参照 managed surface 路径明确拒绝。
+- 结构操作保存后才确认，不调用模型，不重放 MVU，不回退当前会话状态。新建普通消息的显式变量独立于沿用的会话 MVU 检查点，空对象也是真实值。新增、移动、删除和候选附加数据均覆盖序列化恢复。
+- character 变量写入当前对话的角色快照；与 chat 检查点独立，切候选不撤回角色配置。没有修改资产库里的原件，也没有建立应用级 global 存储。
+- 角色 Regex 经助手字段映射写入实际 `RegexDefinition`，由原有 Prompt/Display 引擎执行。保存先完成，显示刷新按上游延迟 1 秒合并，允许作者继续执行消息操作；相同规则回写不重复安排刷新。原始正文不因此改写。全局与预设规则仍未支持；scope=all 在当前仅有角色规则的配置下读取该集合，不能写入标记为 global 的规则。
+- 原生快照与操作回复共用一份消息事件事实视图，避免同一次保存重复发送消息事件；新增 user 消息提供 `MESSAGE_SENT`。完整上游事件集合及所有载荷时机仍不在此次覆盖范围。
+
+`test/browser/complex.test.mjs` 按原件哈希读取四个复杂 PNG 样本的原始页面，验证开局候选选择、五次点击后改 Regex 并选择另一个开局、状态面板、标签切换及省略 body 结束标签的 HTML。测试使用生产网页外壳及接口；桥接保存模拟，初始变量由原件 initvar YAML 构造，装饰媒体/字体不加载；不把它宣称为完整 Android 或真实模型验收。另有 Kotlin 核心测试验证实际存储模型与 Display/Prompt 分离，应用测试验证真实保存、延迟刷新与后续消息操作。
+
+`get_message_variable` / `format_message_variable` 现在也读取 `stat_data` 下的点路径和数字数组下标；精确对象键优先，缺失值输出 null，继续过滤私有字段。MVU QuickJS 宿主的 `substitudeMacros` 在解析初始化 YAML 和回复更新前替换当前 `user` / `char`，避免未展开占位符被 YAML 当作复杂映射键。其他 ST 宏并未因此全部接入。
+
+原生测试 `localComplexOriginalsPrepareCompileAndAcceptACompletedReply` 按哈希读取四份原件，执行真实导入与程序准备、MVU 初始化、显示投影和 Prompt/EJS 编排，再用确定性 JSONPatch 回复修改一个数值字段，保存恢复检查点并编排下一轮。它不请求真实模型，也不执行 Android WebView；浏览器测试和原生测试是两侧互补证据，不等于已在手机上完成所有剧情分支。
+
+本轮验证：`tools/web-runtime` 的 `npm test` 30 项、`npm run test:browser` 7 项通过；`tools/mvu-probe` 的 `npm test` 12 项通过。`gradlew.bat :conversation-core:test :app:testDebugUnitTest :app:assembleDebug` 成功：核心 149 项无跳过，应用 202 项中 17 项沿用可选条件跳过，其余通过。新增四原件测试实际执行，没有跳过；旧 C-04 专用 EJS 夹具测试仍因其独立生成夹具缺失而跳过。APK 内 Web/MVU 资产与当前生成 bundle 一致。没有执行本轮 Android 设备或真实模型请求验收。
+
+后续仍缺世界书写入、提示词注入及完整生成钩子、预设/global 变量、完整 ST Context/脚本管理和 MVU/EJS provider 覆盖。这些未完成项保留在能力目录中，不以单张卡的测试结果替代契约验收。
 
 ## 资源与恢复
 

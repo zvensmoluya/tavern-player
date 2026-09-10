@@ -56,4 +56,13 @@ class MessageVariableFormatterTest {
             assertEquals("[]", MessageVariableFormatter.format("[]", yaml))
         }
     }
+
+    @Test fun nestedPathsReadObjectsArraysAndScalarsWithoutLeakingPrivateFields() {
+        val state = """{"world":{"time":"Day 2","${'$'}secret":9},"items":[{"name":"key"}],"world.time":"literal"}"""
+        assertEquals("literal", expand("{{get_message_variable::stat_data.world.time}}", state).text)
+        assertEquals("key", expand("{{format_message_variable::stat_data.items[0].name}}", state).text)
+        assertEquals("time: Day 2", expand("{{format_message_variable::stat_data.world}}", state).text)
+        assertEquals("null", expand("{{get_message_variable::stat_data.world.${'$'}secret}}", state).text)
+        assertEquals("null", expand("{{format_message_variable::stat_data.missing}}", state).text)
+    }
 }

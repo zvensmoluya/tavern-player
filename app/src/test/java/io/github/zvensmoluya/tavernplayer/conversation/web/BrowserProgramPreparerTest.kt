@@ -17,6 +17,60 @@ class BrowserProgramPreparerTest {
     @get:Rule val folder = TemporaryFolder()
     private val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))
     private val preparer = BrowserProgramPreparer { File(System.getProperty("webRuntimeAssets"), "programs.js").readText() }
+    @Test fun localComplexOriginalsPrepareCompileAndAcceptACompletedReply() = runBlocking {
+        val hashes = setOf(
+            "7df0b58b2a46ac9ae2169c45f715a58760ebdad63017c5a860222d808beabe32",
+            "fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe",
+            "8f24972a97e9cb357e105e5d7d101a7ec3b7ff5c6cc0f98a4024ac94a895583f",
+            "0166ea69a6bdfa0e7559cc98e877d3d5b6b106bc12e1c712a45ba96585f359f0",
+        )
+        val source = assets.toPath().resolve("../../../..").normalize().resolve("source").toFile()
+        val originals = source.listFiles().orEmpty().filter { it.isFile && it.extension == "png" }
+            .associateBy { file -> java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) } }
+        assumeTrue("Optional complex originals are unavailable", hashes.all(originals::containsKey))
+        val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
+        val ejs = QuickJsEjsRuntime(loadBundle = { File(assets.parentFile, "app-assets/ejs/runtime.js").readText() })
+        for (hash in hashes) {
+            val card = (CharacterCardImporter().import(originals.getValue(hash).readBytes(), "sample.png") as CharacterImportResult.Ready).character
+            val repository = ConversationRepository(folder.newFolder(), PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
+            val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+            val program = requireNotNull(record.character.browserProgram)
+            assertTrue("$hash: ${program.diagnostics}", program.blockedSourceIds.isEmpty())
+            assertNotNull("$hash: missing MVU provider", program.mvu)
+            assertNotNull("$hash: missing initial state", record.runtimeState.mvuState)
+            val visible = PromptCompiler().projectDisplayText(record.turns.first().selected.message.content, MessageRole.ASSISTANT,
+                record.character, record.persona, BuiltInPresets.default, record.runtimeState, record.turns.map { it.selected.message },
+                record.id, "display", "sample") as TextExpansionResult.Success
+            assertFalse("$hash: message variable macros must resolve", "format_message_variable::" in visible.text)
+            assertFalse("$hash: user macro must resolve before initvar YAML parsing", "{{user}}" in record.runtimeState.mvuState!!.data.toString())
+            val input = NormalGenerationInput(record.character, record.persona,
+                record.turns.map { it.selected.message } + ConversationMessage("u", MessageRole.USER, "Continue.", "User"),
+                BuiltInPresets.default, runtimeState = record.runtimeState, modelContextTokens = 131072)
+            val compiled = ejs.compile(PromptCompiler(), input, mutableMapOf())
+            assertTrue("$hash: prompt compilation failed: $compiled", compiled is CompilationResult.Success)
+            fun numericPath(value: JsonElement, path: String = ""): String? = when (value) {
+                is JsonObject -> value.entries.firstNotNullOfOrNull { (key, child) -> numericPath(child, path + "/" + key.replace("~", "~0").replace("/", "~1")) }
+                is JsonArray -> value.withIndex().firstNotNullOfOrNull { (index, child) -> numericPath(child, "$path/$index") }
+                is JsonPrimitive -> path.takeIf { !value.isString && value.doubleOrNull != null }
+            }
+            val path = requireNotNull(numericPath(record.runtimeState.mvuState!!.data.getValue("stat_data"))) { "$hash: no numeric gameplay field" }
+            val patch = buildJsonArray { add(buildJsonObject { put("op", "delta"); put("path", path); put("value", 1) }) }
+            var evaluation = requireNotNull(runtime.update(record.character,
+                "Reply.\n<UpdateVariable><JSONPatch>$patch</JSONPatch></UpdateVariable>", record.runtimeState, persona = record.persona))
+            if (evaluation.messages.single().state.data == record.runtimeState.mvuState!!.data) {
+                val decrement = buildJsonArray { add(buildJsonObject { put("op", "delta"); put("path", path); put("value", -1) }) }
+                evaluation = requireNotNull(runtime.update(record.character, "Reply.\n<UpdateVariable><JSONPatch>$decrement</JSONPatch></UpdateVariable>", record.runtimeState, persona = record.persona))
+            }
+            assertTrue("$hash: reply update failed", evaluation.diagnostics.none { it.level == "error" })
+            val nextState = evaluation.messages.single().applyTo(record.runtimeState)
+            assertNotEquals("$hash: reply must change a gameplay variable", record.runtimeState.mvuState!!.data, nextState.mvuState!!.data)
+            val restored = Json.decodeFromString<ConversationRecord>(Json.encodeToString(ConversationRecord.serializer(), repository.save(BrowserConversation.withRuntime(record, nextState))))
+            runtime.validateCheckpoint(restored.character, restored.runtimeState)
+            assertEquals(nextState.mvuState, restored.runtimeState.mvuState)
+            val following = ejs.compile(PromptCompiler(), input.copy(runtimeState = restored.runtimeState), mutableMapOf())
+            assertTrue("$hash: following turn must compile", following is CompilationResult.Success)
+        }
+    }
     @Test fun originalProgramsInitializeMvuAndRenderEjsWithoutAnAdaptationCompiler() = runBlocking {
         val file = File(assets, "ejs/c04-card.png")
         assumeTrue("Optional C-04 original is unavailable", file.isFile)

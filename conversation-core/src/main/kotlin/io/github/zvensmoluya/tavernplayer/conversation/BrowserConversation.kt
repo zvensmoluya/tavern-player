@@ -13,12 +13,12 @@ object BrowserConversation {
     private val json = Json { encodeDefaults = true }
 
     fun revision(record: ConversationRecord): String = BrowserProgramReader.sha256(buildString {
-        append(record.id); append(JsonPrimitive(record.draft)); append(json.encodeToString(record.runtimeState))
+        append(record.id); append(record.character.browserProgram?.variables); append(json.encodeToString(record.character.regexScripts)); append(JsonPrimitive(record.draft)); append(json.encodeToString(record.runtimeState))
         record.turns.forEach { turn ->
             append(turn.id); append(turn.selectedVariantIndex)
             turn.variants.forEach { variant ->
                 append(variant.id); append(json.encodeToString(variant.message)); append(variant.status.name)
-                append(variant.browserVariables); append(variant.browserHidden)
+                append(variant.browserVariables); append(variant.browserHidden); append(variant.browserExtra); append(variant.browserOwnVariables)
                 append(json.encodeToString(variant.browserHead))
             }
         }
@@ -36,6 +36,8 @@ object BrowserConversation {
     fun snapshot(record: ConversationRecord): JsonObject = buildJsonObject {
         put("conversationId", record.id); put("revision", revision(record)); put("draft", record.draft)
         put("characterName", record.character.promptName); put("userName", record.persona.name)
+        put("characterVariables", record.character.browserProgram?.variables ?: buildJsonObject {})
+        put("characterRegexes", JsonArray(record.character.regexScripts.map(BrowserRegex::encode)))
         put("chatVariables", record.runtimeState.browserChatVariables)
         put("scriptVariables", JsonObject(record.runtimeState.browserScriptVariables))
         put("mvu", record.runtimeState.mvuState?.data ?: JsonNull)
@@ -47,10 +49,10 @@ object BrowserConversation {
                 put("name", selected.message.authorName)
                 put("message", selected.message.content); put("sourceText", selected.message.sourceText)
                 put("is_hidden", selected.browserHidden); put("swipe_id", turn.selectedVariantIndex)
-                put("data", variables(selected)); put("extra", buildJsonObject {})
+                put("data", variables(selected)); put("extra", selected.browserExtra)
                 putJsonArray("swipes") { turn.variants.forEach { add(it.message.content) } }
                 putJsonArray("swipes_data") { turn.variants.forEach { add(variables(it)) } }
-                putJsonArray("swipes_info") { turn.variants.forEach { add(buildJsonObject {}) } }
+                putJsonArray("swipes_info") { turn.variants.forEach { add(it.browserExtra) } }
                 put("status", selected.status.name)
             }) }
         }
@@ -95,7 +97,8 @@ object BrowserConversation {
         }
     }
 
-    fun variables(variant: MessageVariant): JsonObject = variant.nativeHead()?.mvuState?.data ?: variant.browserVariables
+    fun variables(variant: MessageVariant): JsonObject = if (variant.browserOwnVariables) variant.browserVariables
+        else variant.nativeHead()?.mvuState?.data ?: variant.browserVariables
 
     /** Computes an atomic proposal. Caller saves before publishing or acknowledging success. */
     fun apply(record: ConversationRecord, actor: BrowserActor, method: String, args: JsonObject): ConversationRecord = when (method) {
@@ -104,6 +107,8 @@ object BrowserConversation {
             val data = args.obj("data").also { require(it.toString().length <= 1024 * 1024) { "变量超过 1 MiB" } }
             when (args.string("type")) {
                 "chat" -> withRuntime(record, record.runtimeState.copy(browserChatVariables = data))
+                "character" -> record.copy(character = record.character.copy(browserProgram =
+                    (record.character.browserProgram ?: io.github.zvensmoluya.tavernplayer.content.BrowserProgram()).copy(variables = data)))
                 "script" -> {
                     val id = requireNotNull(actor.scriptId) { "当前页面没有脚本私有作用域" }
                     withRuntime(record, record.runtimeState.copy(browserScriptVariables = record.runtimeState.browserScriptVariables + (id to data)))
@@ -115,7 +120,9 @@ object BrowserConversation {
                 else -> error("未支持的变量作用域")
             }
         }
+        "regex.replace" -> BrowserRegex.replace(record, args)
         "messages.set" -> setMessages(record, args)
+        "messages.create", "messages.delete", "messages.rotate" -> restructureMessages(record, method, args)
         "mvu.replace" -> {
             args.only("data", "message_id")
             val index = messageIndex(record, args["message_id"], actor)
@@ -146,39 +153,121 @@ object BrowserConversation {
         else -> error("未支持的宿主写入：$method")
     }
 
+    private fun restructureMessages(record: ConversationRecord, method: String, args: JsonObject): ConversationRecord {
+        require((args["refresh"]?.jsonPrimitive?.content ?: "affected") in setOf("none", "affected", "all")) { "无效刷新方式" }
+        require(record.turns.none { turn -> turn.variants.any { it.status == PersistedMessageStatus.STREAMING } }) { "不能移动正在生成的消息" }
+        require(args["refresh"] != JsonPrimitive("none")) { "消息结构变化需要刷新显示" }
+        val size = record.turns.size
+        fun integer(key: String): Int = (args[key] as? JsonPrimitive)?.intOrNull ?: error("消息位置必须为整数")
+        fun normalized(value: Int): Int = if (value < 0) size + value else value
+        val turns = record.turns.toMutableList()
+        when (method) {
+            "messages.create" -> {
+                args.only("messages", "insert_before", "refresh")
+                val items = args["messages"] as? JsonArray ?: error("消息必须为数组")
+                require(items.size <= 256) { "消息数量超过限制" }
+                val position = if (args["insert_before"] == null || args["insert_before"] == JsonPrimitive("end")) size
+                    else normalized(integer("insert_before").coerceIn(-size, size))
+                val created = items.map { raw ->
+                    val item = raw as? JsonObject ?: error("消息必须为对象")
+                    item.only("name", "role", "is_hidden", "message", "data", "extra")
+                    val role = when (item.string("role")) {
+                        "system" -> MessageRole.SYSTEM; "user" -> MessageRole.USER; "assistant" -> MessageRole.ASSISTANT
+                        else -> error("无效消息角色")
+                    }
+                    val name = if (item.containsKey("name")) item.string("name") else when (role) {
+                        MessageRole.SYSTEM -> "system"; MessageRole.USER -> record.persona.name; MessageRole.ASSISTANT -> record.character.promptName
+                    }
+                    val content = item.string("message").also { require(it.length <= 2 * 1024 * 1024) { "正文超过限制" } }
+                    val data = if (item.containsKey("data")) item.obj("data") else buildJsonObject {}
+                    val extra = if (item.containsKey("extra")) item.obj("extra") else buildJsonObject {}
+                    require(data.toString().length <= 1024 * 1024 && extra.toString().length <= 1024 * 1024) { "消息数据超过限制" }
+                    val hidden = if (item.containsKey("is_hidden")) item["is_hidden"]?.jsonPrimitive?.booleanOrNull ?: error("隐藏状态必须为布尔值") else false
+                    val id = java.util.UUID.randomUUID().toString()
+                    ConversationTurn(id, role, listOf(MessageVariant(id, ConversationMessage(id, role, content, name),
+                        browserVariables = data, browserOwnVariables = true, browserExtra = extra, browserHidden = hidden)))
+                }
+                turns.addAll(position, created)
+            }
+            "messages.delete" -> {
+                args.only("message_ids", "refresh")
+                val ids = args["message_ids"] as? JsonArray ?: error("消息楼层必须为数组")
+                val removed = ids.map { (it as? JsonPrimitive)?.intOrNull ?: error("消息楼层必须为整数") }
+                    .filter { it >= -size && it < size }.map(::normalized).toSet()
+                val removedIds = removed.map { record.turns[it].id }.toSet()
+                turns.removeAll { it.id in removedIds }
+            }
+            "messages.rotate" -> {
+                args.only("begin", "middle", "end", "refresh")
+                val begin = normalized(integer("begin")).coerceIn(0, size)
+                val end = normalized(integer("end")).coerceIn(0, size)
+                require(begin <= end) { "移动范围起点超过终点" }
+                val middle = normalized(integer("middle")).coerceIn(begin, end)
+                val rotated = turns.subList(middle, end).toList() + turns.subList(begin, middle).toList()
+                rotated.forEachIndexed { index, turn -> turns[begin + index] = turn }
+            }
+        }
+        // History edits preserve live state and never re-run MVU.
+        return withRuntime(record.copy(turns = turns), record.runtimeState)
+    }
+
     private fun setMessages(original: ConversationRecord, args: JsonObject): ConversationRecord {
         args.only("messages", "refresh")
         require((args["refresh"]?.jsonPrimitive?.content ?: "affected") in setOf("none", "affected", "all")) { "无效刷新方式" }
         val updates = args["messages"] as? JsonArray ?: error("消息修改必须为数组")
         require(updates.size <= 256) { "消息修改数量超过限制" }
         var record = original
+        val merged = linkedMapOf<Int, JsonObject>()
         updates.forEach { item ->
             val change = item as? JsonObject ?: error("消息修改必须为对象")
-            change.only("message_id", "message", "swipe_id", "swipes", "data", "swipes_data", "is_hidden")
-            val index = change["message_id"]?.jsonPrimitive?.intOrNull ?: error("缺少消息楼层")
-            require(index in record.turns.indices) { "消息楼层不存在" }
+            change.only("message_id", "name", "role", "message", "swipe_id", "swipes", "data", "extra", "swipes_data", "swipes_info", "is_hidden")
+            val requested = change["message_id"]?.jsonPrimitive?.intOrNull ?: error("缺少消息楼层")
+            val index = if (requested < 0) original.turns.size + requested else requested
+            if (index in original.turns.indices) merged[index] = JsonObject(merged[index].orEmpty() + change)
+        }
+        merged.toSortedMap().forEach { (index, change) ->
             var turn = record.turns[index]
             require(turn.variants.none { it.status == PersistedMessageStatus.STREAMING }) { "不能改写正在生成的楼层" }
-            val selected = change["swipe_id"]?.jsonPrimitive?.intOrNull ?: turn.selectedVariantIndex
-            require(selected in turn.variants.indices) { "候选不存在" }
-            change["swipes"]?.let { value ->
-                val swipes = value as? JsonArray ?: error("候选必须为数组")
-                require(swipes.size == turn.variants.size) { "首版仅替换已有候选，不增删候选" }
-                turn = turn.copy(variants = turn.variants.mapIndexed { i, variant -> text(variant, swipes[i]) })
+            val role = change["role"]?.let { when ((it as? JsonPrimitive)?.content) {
+                "user" -> MessageRole.USER; "assistant" -> MessageRole.ASSISTANT; "system" -> MessageRole.SYSTEM
+                else -> error("无效消息角色")
+            } } ?: turn.role
+            val name = if (change.containsKey("name")) change.string("name") else turn.selected.message.authorName
+            val hidden = if (change.containsKey("is_hidden")) change["is_hidden"]?.jsonPrimitive?.booleanOrNull ?: error("隐藏状态必须为布尔值") else turn.selected.browserHidden
+            turn = turn.copy(role = role, variants = turn.variants.map { it.copy(
+                message = it.message.copy(role = role, authorName = name), browserHidden = hidden) })
+            if (change.containsKey("message") || change.containsKey("data")) {
+                val selected = turn.selectedVariantIndex
+                turn = turn.copy(variants = turn.variants.mapIndexed { i, old ->
+                    if (i != selected) old else {
+                        var next = change["message"]?.let { text(old, it) } ?: old
+                        change["extra"]?.let { next = next.copy(browserExtra = it as? JsonObject ?: error("extra 必须为对象")) }
+                        next
+                    }
+                })
+            } else if (listOf("swipe_id", "swipes", "swipes_data", "swipes_info").any(change::containsKey)) {
+                fun array(key: String): JsonArray? = if (change.containsKey(key)) change[key] as? JsonArray ?: error("候选字段必须为数组") else null
+                val texts = array("swipes"); val data = array("swipes_data"); val info = array("swipes_info")
+                val count = listOfNotNull(texts?.size, data?.size, info?.size).maxOrNull() ?: turn.variants.size
+                require(count in 1..256) { "候选数量必须在 1 至 256 之间" }
+                val selected = (if (change.containsKey("swipe_id")) change["swipe_id"]?.jsonPrimitive?.intOrNull ?: error("候选编号必须为整数")
+                    else turn.selectedVariantIndex).coerceIn(0, count - 1)
+                val oldTurn = turn
+                turn = turn.copy(selectedVariantIndex = selected, variants = List(count) { i ->
+                    val existing = oldTurn.variants.getOrNull(i)
+                    val id = java.util.UUID.randomUUID().toString()
+                    val base = existing ?: MessageVariant(id, ConversationMessage(id, role, "", name), browserHidden = hidden, browserOwnVariables = true)
+                    val content = texts?.getOrNull(i) ?: if (texts == null && existing != null) JsonPrimitive(existing.message.content) else JsonPrimitive("")
+                    val extra = (if (info == null) existing?.browserExtra else info.getOrNull(i)) ?: buildJsonObject {}
+                    val variables = (if (data == null) existing?.let(::variables) else data.getOrNull(i)) ?: buildJsonObject {}
+                    require(extra is JsonObject && variables is JsonObject) { "候选数据必须为对象" }
+                    val head = base.nativeHead()?.let { old -> old.mvuState?.let { old.copy(mvuState = it.withDirectReplacement(variables)) } }
+                    text(base, content).copy(browserVariables = variables, browserExtra = extra, browserHead = head ?: base.browserHead)
+                })
             }
-            turn = turn.copy(selectedVariantIndex = selected)
-            change["message"]?.let { value -> turn = turn.copy(variants = turn.variants.mapIndexed { i, v -> if (i == selected) text(v, value) else v }) }
-            change["is_hidden"]?.let { value ->
-                val hidden = value.jsonPrimitive.booleanOrNull ?: error("隐藏状态必须为布尔值")
-                turn = turn.copy(variants = turn.variants.mapIndexed { i, v -> if (i == selected) v.copy(browserHidden = hidden) else v })
-            }
-            record = record.copy(turns = record.turns.mapIndexed { i, v -> if (i == index) turn else v },
+            turn.variants.forEach { require(it.browserExtra.toString().length <= 1024 * 1024 && variables(it).toString().length <= 1024 * 1024) { "消息数据超过限制" } }
+            record = record.copy(turns = record.turns.mapIndexed { i, value -> if (i == index) turn else value },
                 runtimeState = if (index == record.turns.lastIndex) turn.selected.nativeHead() ?: record.runtimeState else record.runtimeState)
-            change["swipes_data"]?.let { value ->
-                val list = value as? JsonArray ?: error("候选变量必须为数组")
-                require(list.size == turn.variants.size) { "候选变量数量不匹配" }
-                list.forEachIndexed { i, data -> record = replaceMessageVariables(record, index, data as? JsonObject ?: error("变量必须为对象"), i) }
-            }
             change["data"]?.let { record = replaceMessageVariables(record, index, it as? JsonObject ?: error("变量必须为对象")) }
         }
         return record

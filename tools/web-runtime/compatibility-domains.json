@@ -79,7 +79,7 @@
         "src/function/macro_like.ts"
       ],
       "owner": "native-projection-with-browser-callbacks",
-      "status": "unimplemented-bridge",
+      "status": "partial",
       "batch": "C"
     },
     {

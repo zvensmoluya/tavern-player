@@ -79,6 +79,35 @@ class ChatViewModelTest {
         }
     }
 
+    @Test fun `browser regex writes save before refresh and permit a following message operation`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("browser-regex-refresh").toFile()
+        val conversations = ConversationRepository(directory, PromptCompiler())
+        val character = DemoConversationContent.character.copy(firstMessage = "Opening", regexScripts = listOf(
+            RegexDefinition("r", "sample", "Opening", "After", disabled = true,
+                placements = setOf(RegexPlacement.AI_OUTPUT), markdownOnly = true)))
+        val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset, ConversationExecutionMode.BROWSER)
+        val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> error("No generation expected") }, conversations, FixedPresetSource())
+        try {
+            vm.loadConversation(saved.id)
+            awaitMvuIdle(vm)
+            val actor = BrowserActor("script", scriptId = "sample")
+            fun revision() = vm.uiState.value.browserSnapshot.getValue("revision").jsonPrimitive.content
+            val wire = vm.uiState.value.browserSnapshot.getValue("characterRegexes").let { it as kotlinx.serialization.json.JsonArray }.first().jsonObject
+            val rules = kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.JsonObject(wire + ("enabled" to JsonPrimitive(true)))))
+            val result = vm.invokeBrowser(actor, revision(), "regex.replace", kotlinx.serialization.json.JsonObject(mapOf("regexes" to rules)))
+            assertFalse(conversations.get(saved.id)!!.character.regexScripts.single().disabled)
+            assertEquals("Opening", (result.getValue("snapshot").jsonObject.getValue("messages") as kotlinx.serialization.json.JsonArray).first().jsonObject.getValue("display").jsonPrimitive.content)
+            vm.invokeBrowser(actor, revision(), "messages.create", kotlinx.serialization.json.Json.parseToJsonElement("""{"messages":[{"role":"user","message":"choice"}]}""").jsonObject)
+            assertEquals("choice", conversations.get(saved.id)!!.turns.last().selected.message.content)
+            kotlinx.coroutines.delay(1200)
+            assertEquals("After", vm.uiState.value.messages.first().displayContent)
+            assertEquals("Opening", conversations.get(saved.id)!!.turns.first().selected.message.content)
+        } finally {
+            androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() }
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun `native surfaces return after chat completion failure and cancellation`() = kotlinx.coroutines.runBlocking {
         for (ending in listOf("complete", "failure", "cancel")) {
             val directory = Files.createTempDirectory("native-chat-refresh").toFile()

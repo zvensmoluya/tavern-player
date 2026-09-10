@@ -28,7 +28,7 @@ class MvuConversationRuntime(
         require(record.turns.size <= 1 && record.turns.all { turn ->
             turn.variants.all { it.openingSourceIndex != null }
         }) { "已有历史缺少 MVU 检查点，请新建对话" }
-        return withRuntime(record.character) { runtime ->
+        return withRuntime(record.character, record.persona) { runtime ->
             val base = runtime.initialize(listOf("Opening.")).messages.single()
             val opening = record.turns.singleOrNull()
             val variants = opening?.variants.orEmpty()
@@ -64,16 +64,19 @@ class MvuConversationRuntime(
         sourceText: String,
         previous: ConversationRuntimeState,
         opening: Boolean = false,
+        persona: Persona? = null,
     ): MvuEvaluation? {
         if (character.mvuProgram == null) return null
-        return withRuntime(character) { runtime ->
+        return withRuntime(character, persona) { runtime ->
             if (opening) runtime.initialize(listOf(sourceText)) else runtime.update(sourceText, previous)
         }
     }
 
-    private suspend fun <T> withRuntime(character: CharacterSnapshot, block: suspend (QuickJsMvuRuntime) -> T): T {
+    private suspend fun <T> withRuntime(character: CharacterSnapshot, persona: Persona? = null, block: suspend (QuickJsMvuRuntime) -> T): T {
         val bundle = withContext(Dispatchers.IO) { loadBundle() }
-        val runtime = QuickJsMvuRuntime.create(bundle, program(character))
+        val runtime = QuickJsMvuRuntime.create(bundle, program(character), macroValues = buildJsonObject {
+            put("char", character.promptName); persona?.let { put("user", it.name) }
+        })
         try { return block(runtime) } finally { runtime.close() }
     }
 

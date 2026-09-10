@@ -300,6 +300,8 @@ data class MessageVariant(
     val nativeOperations: List<NativeOperationRecord> = emptyList(),
     val browserVariables: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
     val browserHidden: Boolean = false,
+    val browserOwnVariables: Boolean = false,
+    val browserExtra: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
     val browserHead: ConversationRuntimeState? = null,
 )
 

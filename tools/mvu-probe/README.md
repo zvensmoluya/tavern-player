@@ -44,7 +44,7 @@ npm --prefix tools/mvu-probe run probe -- $env:COMMUNITY_CARD
 - `host.mjs` 的 Node VM 用于分离测试上下文，不能当作执行不可信脚本的安全沙箱。仅用于仓库内的受控夹具和已审计哈希的样本。
 - MVU 的操作解析、初始化、schema 处理与 Zod 的命令事件处理来自上游；宿主负责提供消息与存储接口。
 - Node 参照宿主用内存数组模拟酒馆消息结构；它的 JSON 序列化测试不代表 Player 磁盘仓库验证。QuickJS 共用检查另外调用实际 `ConversationRepository`，Android 生命周期仍需真机验证。
-- 宏接口在实验中原样返回文本；世界书设置写入只记录在实验宿主内；`registerVariableSchema` 仅记录注册，不实现酒馆助手的变量编辑器。
+- Node 参照实验的宏接口仍原样返回文本；生产 QuickJS checkpoint 宿主接受当前身份上下文，在上游初始化/更新调用 `substitudeMacros` 时替换 `user` / `char`。其他宏仍未接入。世界书设置写入只记录在实验宿主内；`registerVariableSchema` 仅记录注册，不实现酒馆助手的变量编辑器。
 - 实验加载的入口不含 MVU 设置面板、额外模型请求、全局事件调度等全部功能。不能据此声称整个 MVU 插件已运行。
 - MVU 仓库提供 MIT 许可；此固定版本的 Zod 辅助库所在仓库根许可证是 AFPL 文本。二者不能合称 MIT。当前只本地下载、构建和测试，正式随应用分发前需要明确该辅助库的授权，实验不作许可证兼容结论。
 
