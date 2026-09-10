@@ -1696,7 +1696,9 @@ class ChatViewModel(
     }
 
     private fun syncRecord(
-        input: String = _uiState.value.input,
+        // 草稿归属会话：刷新只把它读回界面，只有 updateInput 才会用输入框内容改写它，
+        // 否则网页刚写入的草稿会被尚未同步的旧输入框文本覆盖。
+        input: String = record.draft,
         running: Boolean = _uiState.value.running,
         retryAvailable: Boolean = _uiState.value.retryAvailable,
         message: String? = _uiState.value.message,
