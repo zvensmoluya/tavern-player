@@ -2060,7 +2060,8 @@ private fun Throwable.userMessage(): String = when (this) {
     is GatewayException.Network -> "无法连接到模型服务"
     is GatewayException.Security -> "API 地址未获授权"
     is GatewayException.Configuration -> message ?: "当前模型无法表达这次请求"
-    is GatewayException.HttpFailure -> "模型服务暂时不可用（HTTP $status）"
+    is GatewayException.HttpFailure ->
+        io.github.zvensmoluya.tavernplayer.connections.providerHttpFailureText(status, diagnostic)
     is GatewayException.Protocol -> diagnostic
     else -> "生成失败"
 }

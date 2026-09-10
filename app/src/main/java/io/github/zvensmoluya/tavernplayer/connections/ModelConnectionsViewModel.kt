@@ -358,7 +358,7 @@ private fun Throwable.userMessage(): String = when (this) {
     is GatewayException.RateLimited -> "请求过于频繁，请稍后再试"
     is GatewayException.HttpFailure -> when (status) {
         404 -> "API 地址或协议不匹配"
-        else -> "模型服务暂时不可用（HTTP $status）"
+        else -> providerHttpFailureText(status, diagnostic)
     }
     is GatewayException.Network -> "无法连接到模型服务"
     is GatewayException.Security -> "API 地址未获授权"
