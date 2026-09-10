@@ -11,7 +11,7 @@
 
 - Before making a product-flow, compatibility, or architecture change, read the relevant current documents under `docs/` and the README when useful.
 - Prefer small, reversible decisions. Avoid abstractions for unconfirmed future features.
-- When a compatibility assumption matters, record the relevant format or behavior and add a fixture or test when practical.
+- When a compatibility assumption matters, record the relevant format or behavior.
 - Treat background documents as context rather than binding specifications. Follow the user's current request and explicit product decisions when they are more specific.
 - If the current implementation and a project document disagree, preserve the current explicit decision and update the document when the direction is settled.
 
@@ -26,7 +26,6 @@
 ## Verification
 
 - 默认运行与改动直接相关、范围最小的验证；只有改动影响共享行为、构建或发布时才扩大范围。
-- Android 工程建立后，按需使用 `gradlew.bat testDebugUnitTest`、`gradlew.bat lint` 或 `gradlew.bat assembleDebug`。
 - 涉及设备、系统权限或生命周期的行为，应说明所需的真机验证。
 - 无法运行某项检查时，明确说明原因和未覆盖的风险。
 
