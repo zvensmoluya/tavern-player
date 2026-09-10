@@ -54,7 +54,8 @@ class BrowserSession(
             error("系统 WebView 版本过旧，请更新 Android System WebView")
         with(webView.settings) {
             javaScriptEnabled = true
-            domStorageEnabled = false
+            // 作者页面用 localStorage 保存主题、字号等页面本地偏好；每个会话的独立来源让这些存储互不可见。
+            domStorageEnabled = true
             allowFileAccess = false; allowContentAccess = false
             @Suppress("DEPRECATION")
             setAllowFileAccessFromFileURLs(false)

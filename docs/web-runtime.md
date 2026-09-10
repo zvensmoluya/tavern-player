@@ -59,7 +59,7 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 
 本次另执行 `:app:testDebugUnitTest :app:assembleDebug`，应用单测与 Debug APK 构建成功。核心及应用共报告 425 项、失败/错误 0、跳过 20 项（沿用各可选测试条件）；不把跳过项计为通过。当前 `adb devices` 无连接设备，未执行 Android instrumentation 或真机原卡发送/生成验收。
 
-有限父页面与作者内容同属不可信区域，使用不同于可信消息外壳的来源。只有可信主框架能调用 WebMessageListener。作者内容可以修改自己的兼容父页面，但不能读取原生桥、播放器 DOM、文件路径或模型凭据。WebView 禁止文件/content URI、弹窗、设备权限、Worker 和 Service Worker；CSP 配合取得层限制资源协议与请求方法。
+有限父页面与作者内容同属不可信区域，使用不同于可信消息外壳的来源。只有可信主框架能调用 WebMessageListener。作者内容可以修改自己的兼容父页面，但不能读取原生桥、播放器 DOM、文件路径或模型凭据。WebView 禁止文件/content URI、弹窗、设备权限、Worker 和 Service Worker；CSP 配合取得层限制资源协议与请求方法。作者页面可以使用 `localStorage` / `sessionStorage`：每个会话用不同来源装载，存储因此按会话隔离，同一会话重新打开仍能读回；这些内容不属于会话记录，导出与迁移不携带，容量由 WebView 配额限制。
 
 ## 会话级作者运行环境（2026-09-10）
 
