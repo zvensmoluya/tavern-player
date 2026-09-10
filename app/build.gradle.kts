@@ -139,6 +139,7 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.mockwebserver)
+    testImplementation(libs.okhttp.tls)
     testImplementation(composeBom)
     testImplementation(libs.compose.ui.test.junit4)
 

@@ -57,33 +57,37 @@ class ProbeService(
     fun stream(connection: StoredConnection, input: ProbeInput): Flow<ProbeEvent> = flow {
         repository.ensureReady(connection)
         if (input.user.isBlank()) throw IllegalArgumentException("User text cannot be blank")
-        val target = connection.target()
         val model = connection.selectedModel
-        when (connection.protocol) {
-            ModelProtocol.OPENAI_RESPONSES -> gateway.responses.stream(
-                target,
-                ProbeRequestMapper.responses(model, input),
-            ).collect { event -> emit(event.toProbeEvent()) }
+        repository.withRoute(
+            connection = connection,
+            onRouteChanged = { summary -> emit(ProbeEvent.Diagnostic(summary)) },
+        ) { target ->
+            when (connection.protocol) {
+                ModelProtocol.OPENAI_RESPONSES -> gateway.responses.stream(
+                    target,
+                    ProbeRequestMapper.responses(model, input),
+                ).collect { event -> emit(event.toProbeEvent()) }
 
-            ModelProtocol.OPENAI_CHAT_COMPLETIONS -> gateway.chatCompletions.stream(
-                target,
-                ProbeRequestMapper.chat(model, input),
-            ).collect { event -> emit(event.toProbeEvent()) }
+                ModelProtocol.OPENAI_CHAT_COMPLETIONS -> gateway.chatCompletions.stream(
+                    target,
+                    ProbeRequestMapper.chat(model, input),
+                ).collect { event -> emit(event.toProbeEvent()) }
 
-            ModelProtocol.ANTHROPIC_MESSAGES -> gateway.anthropicMessages.stream(
-                target,
-                ProbeRequestMapper.anthropic(model, input),
-            ).collect { event -> emit(event.toProbeEvent()) }
+                ModelProtocol.ANTHROPIC_MESSAGES -> gateway.anthropicMessages.stream(
+                    target,
+                    ProbeRequestMapper.anthropic(model, input),
+                ).collect { event -> emit(event.toProbeEvent()) }
 
-            ModelProtocol.GEMINI_INTERACTIONS -> gateway.geminiInteractions.stream(
-                target,
-                ProbeRequestMapper.interactions(model, input),
-            ).collect { event -> emit(event.toProbeEvent()) }
+                ModelProtocol.GEMINI_INTERACTIONS -> gateway.geminiInteractions.stream(
+                    target,
+                    ProbeRequestMapper.interactions(model, input),
+                ).collect { event -> emit(event.toProbeEvent()) }
 
-            ModelProtocol.GEMINI_GENERATE_CONTENT -> gateway.geminiGenerateContent.stream(
-                target,
-                ProbeRequestMapper.generateContent(model, input),
-            ).collect { event -> emit(event.toProbeEvent()) }
+                ModelProtocol.GEMINI_GENERATE_CONTENT -> gateway.geminiGenerateContent.stream(
+                    target,
+                    ProbeRequestMapper.generateContent(model, input),
+                ).collect { event -> emit(event.toProbeEvent()) }
+            }
         }
     }
 

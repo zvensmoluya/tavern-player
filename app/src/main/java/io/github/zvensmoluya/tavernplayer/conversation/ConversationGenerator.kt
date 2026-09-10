@@ -1,5 +1,6 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelGateway
 import io.github.zvensmoluya.modelgateway.ModelProtocol
@@ -114,12 +115,16 @@ class ModelGatewayConversationGenerator(
             .getOrDefault("")
         return when {
             prepared is PreparedGenerationRequest.Anthropic && host.equals("api.anthropic.com", ignoreCase = true) -> {
-                val count = gateway.anthropicMessages.countTokens(connection.target(), prepared.request)
+                val count = repository.withRoute(connection) { target ->
+                    gateway.anthropicMessages.countTokens(target, prepared.request)
+                }
                 ProviderTokenValidation(count.inputTokens.toIntSafeCount(), TokenCountQuality.EXACT, "anthropic-count-tokens")
             }
             prepared is PreparedGenerationRequest.GenerateContent &&
                 host.equals("generativelanguage.googleapis.com", ignoreCase = true) -> {
-                val count = gateway.geminiGenerateContent.countTokens(connection.target(), prepared.request)
+                val count = repository.withRoute(connection) { target ->
+                    gateway.geminiGenerateContent.countTokens(target, prepared.request)
+                }
                 ProviderTokenValidation(count.totalTokens.toIntSafeCount(), TokenCountQuality.EXACT, "gemini-countTokens")
             }
             (prepared is PreparedGenerationRequest.Responses || prepared is PreparedGenerationRequest.Chat) &&
@@ -141,7 +146,19 @@ class ModelGatewayConversationGenerator(
         prepared.preview.omittedPresetControls.forEach { omission ->
             emit(GenerationEvent.Diagnostic("Preset ${omission.control} 已省略：${omission.reason}"))
         }
-        val target = connection.target()
+        repository.withRoute(
+            connection = connection,
+            onRouteChanged = { summary -> emit(GenerationEvent.Diagnostic(summary)) },
+        ) { target ->
+            dispatch(prepared, target) { event -> emit(event) }
+        }
+    }
+
+    private suspend fun dispatch(
+        prepared: PreparedGenerationRequest,
+        target: ConnectionTarget,
+        emit: suspend (GenerationEvent) -> Unit,
+    ) {
         when (prepared) {
             is PreparedGenerationRequest.Responses -> gateway.responses.stream(target, prepared.request).collect { event ->
                 when (event) {

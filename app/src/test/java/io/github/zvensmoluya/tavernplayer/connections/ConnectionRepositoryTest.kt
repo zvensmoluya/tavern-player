@@ -295,6 +295,47 @@ class ConnectionRepositoryTest {
         )
     }
 
+    @Test
+    fun `saving without an address change keeps the endpoints a fallback learned`() = runBlocking {
+        val learned = StoredConnection(
+            id = "learned",
+            name = "Learned",
+            templateId = ConnectionTemplates.openAiResponses.id,
+            protocol = ModelProtocol.OPENAI_RESPONSES,
+            apiAddress = "https://gateway.example.test",
+            streamEndpoint = "https://gateway.example.test/v1/responses",
+            catalogEndpoint = "https://gateway.example.test/v1/models",
+            authScheme = AuthScheme.NONE,
+            credentialRef = null,
+            credentialMask = null,
+            approvedOrigins = emptySet(),
+            selectedModel = "model-a",
+            modelCache = ModelCache(models = listOf(StoredModel("model-a", "Model A"))),
+        )
+        val stateStore = FakeConnectionStateStore(GatewayAppState(connections = listOf(learned)))
+        val repository = repository(stateStore, FakeCredentialStore())
+
+        val renamed = repository.save(
+            draft = learned.toDraft().copy(name = "Renamed", selectedModel = "model-b"),
+            newCredential = "",
+            confirmCredentialReuse = false,
+        )
+
+        assertEquals("https://gateway.example.test/v1/responses", renamed.streamEndpoint)
+        assertEquals("https://gateway.example.test/v1/models", renamed.catalogEndpoint)
+        assertEquals(learned.modelCache, renamed.modelCache)
+        assertEquals(renamed, stateStore.value.connections.single())
+
+        val moved = repository.save(
+            draft = renamed.toDraft().copy(apiAddress = "https://other.example.test"),
+            newCredential = "",
+            confirmCredentialReuse = false,
+        )
+
+        assertEquals("https://other.example.test/responses", moved.streamEndpoint)
+        assertEquals("https://other.example.test/models", moved.catalogEndpoint)
+    }
+
     private fun repository(
         stateStore: FakeConnectionStateStore,
         credentials: FakeCredentialStore,
