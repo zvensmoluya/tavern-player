@@ -69,16 +69,16 @@ class NativeSetupController(private val forms: NativeAdaptationRuntime = NativeA
                 } else WorldBookActivationIntent.SetEntryEnabled(override.bookId, entryId, override.enabled)
             }
         }
-        val activation = WorldBookActivationController().apply(record.character.worldBooks, targetState, intents)
+        val activation = WorldBookActivationController().apply(record.character.worldBooks, record.worldBookState, intents)
         if (activation is WorldBookActivationMutationResult.Rejected) return reject("开局引用的世界书或条目不存在")
-        val overrides = (activation as WorldBookActivationMutationResult.Applied).runtimeState.worldBookActivationOverrides
+        val worldBookState = (activation as WorldBookActivationMutationResult.Applied).state
         fun ConversationRuntimeState.initialized() = copy(
             conversationState = NativeStateRules.apply(adaptation, conversationState.applying(ConversationStatePatch(stateValues))),
-            worldBookActivationOverrides = overrides,
             setupCommit = ConversationSetupCommit(form.id),
         )
         return NativeSetupResult.Committed(record.copy(
             draft = draft,
+            worldBookState = worldBookState,
             runtimeState = targetState.initialized(),
             turns = record.turns.map { turn ->
                 turn.copy(selectedVariantIndex = targetIndex, variants = turn.variants.map { variant ->

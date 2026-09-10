@@ -400,11 +400,35 @@ class WorldBookEngineTest {
         assertTrue(limited.activatedEntryIds.isEmpty())
     }
 
+    @Test
+    fun `forced books activate enabled entries without keys and skip probability`() {
+        val book = WorldBookDefinition(
+            id = "book",
+            entries = listOf(
+                entry("unmatched", keys = listOf("never-present"), content = "FORCED-TEXT"),
+                entry("random", keys = listOf("dragon"), content = "PROBABILISTIC-TEXT").copy(probability = 0),
+                entry("disabled", constant = true, content = "DISABLED-TEXT").copy(enabled = false),
+            ),
+        )
+
+        val normal = activate(book, listOf(message("A dragon waits.")))
+
+        assertTrue(normal.activatedEntryIds.isEmpty())
+
+        val forced = activate(book, listOf(message("A dragon waits.")), forced = setOf("book"))
+
+        // 关键字不命中也被激活；概率判定被跳过；被停用的条目仍然不激活。
+        assertEquals(listOf("unmatched", "random"), forced.activatedEntryIds)
+        assertTrue(forced.injections.single().content.contains("FORCED-TEXT"))
+        assertTrue(forced.injections.single().content.contains("PROBABILISTIC-TEXT"))
+    }
+
     private fun activate(
         book: WorldBookDefinition,
         history: List<ConversationMessage>,
         state: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
         overrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
+        forced: Set<String> = emptySet(),
         turn: Int = 0,
         budget: Int? = 10_000,
         characterScan: WorldBookCharacterScan = WorldBookCharacterScan(),
@@ -422,6 +446,7 @@ class WorldBookEngineTest {
         transaction = MacroTransaction(seed = "attempt-$turn"),
         previousState = state,
         activationOverrides = overrides,
+        forcedBooks = forced,
         turnIndex = turn,
         inputBudgetTokens = budget,
     )

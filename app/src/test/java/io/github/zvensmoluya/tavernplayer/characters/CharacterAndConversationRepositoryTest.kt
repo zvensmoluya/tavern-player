@@ -23,6 +23,7 @@ import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRuntimeState
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationStateSnapshot
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationTurn
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationWorldBookState
 import io.github.zvensmoluya.tavernplayer.conversation.InjectionPosition
 import io.github.zvensmoluya.tavernplayer.conversation.MacroValue
 import io.github.zvensmoluya.tavernplayer.conversation.MessageRole
@@ -235,11 +236,15 @@ class CharacterAndConversationRepositoryTest {
                 turns = record.turns + ConversationTurn("turn", MessageRole.ASSISTANT, listOf(streaming)),
                 runtimeState = ConversationRuntimeState(
                     localVariables = mapOf("mood" to MacroValue("warm")),
-                    worldBookActivationOverrides = WorldBookActivationOverrides(
+                    conversationState = ConversationStateSnapshot(mapOf("affection" to JsonPrimitive(30))),
+                ),
+                worldBookState = ConversationWorldBookState(
+                    activation = WorldBookActivationOverrides(
                         books = mapOf("book" to false),
                         entries = mapOf("book" to mapOf("entry" to true)),
                     ),
-                    conversationState = ConversationStateSnapshot(mapOf("affection" to JsonPrimitive(30))),
+                    forcedBooks = setOf("book"),
+                    editedContent = mapOf("entry" to "original lore"),
                 ),
             ),
         )
@@ -255,8 +260,10 @@ class CharacterAndConversationRepositoryTest {
         assertEquals(2, loaded.turns.size)
         assertEquals(PersistedMessageStatus.INTERRUPTED, loaded.turns.last().selected.status)
         assertEquals("warm", loaded.runtimeState.localVariables["mood"]?.text)
-        assertEquals(false, loaded.runtimeState.worldBookActivationOverrides.books["book"])
-        assertEquals(true, loaded.runtimeState.worldBookActivationOverrides.entries["book"]?.get("entry"))
+        assertEquals(false, loaded.worldBookState.activation.books["book"])
+        assertEquals(true, loaded.worldBookState.activation.entries["book"]?.get("entry"))
+        assertEquals(setOf("book"), loaded.worldBookState.forcedBooks)
+        assertEquals(mapOf("entry" to "original lore"), loaded.worldBookState.editedContent)
         assertEquals(JsonPrimitive(30), loaded.runtimeState.conversationState.values["affection"])
         assertEquals("lore", loaded.character.worldBooks.single().entries.single().content)
         assertEquals("regex", loaded.character.regexScripts.single().id)

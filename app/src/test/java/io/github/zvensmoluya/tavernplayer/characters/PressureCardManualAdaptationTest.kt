@@ -313,7 +313,7 @@ class PressureCardManualAdaptationTest {
         val saved = (controller.commit(record, preview) as io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoiceResult.Committed).record
         assertEquals(record.runtimeState.conversationState.values + ("protagonist-battle" to JsonPrimitive("战败")), saved.runtimeState.conversationState.values)
         assertEquals(record.turns.single().selected.message, saved.turns.single().selected.message)
-        assertEquals(record.runtimeState.worldBookActivationOverrides, saved.runtimeState.worldBookActivationOverrides)
+        assertEquals(record.worldBookState, saved.worldBookState)
         val untransformed = record.copy(runtimeState = NativeAdaptationRuntime().ingestAssistantMessage(native,
             patch("/主角/变身", "\"未变身\""), record.runtimeState).runtimeState)
         assertTrue(controller.prepare(untransformed, choice.id) is io.github.zvensmoluya.tavernplayer.conversation.NativePlayerChoicePreparation.Rejected)

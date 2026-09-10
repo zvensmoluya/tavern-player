@@ -116,6 +116,36 @@ data class WorldBookActivationOverrides(
         isBookEnabled(bookId) && (entries[bookId]?.get(entryId) ?: definitionEnabled)
 }
 
+/**
+ * 玩家与作者程序在这场对话内对世界书的意图。
+ *
+ * 属于会话而不是消息候选：切候选或回溯不应回退"我选了哪个变体"。由剧情派生的运行状态
+ * （sticky / cooldown / delay）仍然跟随候选检查点，留在 [ConversationRuntimeState] 里。
+ */
+@Serializable
+data class ConversationWorldBookState(
+    val activation: WorldBookActivationOverrides = WorldBookActivationOverrides(),
+    /** 「必定生效」的书：其中已启用的条目按常开处理，并跳过概率。启停、分组、预算、顺序与位置照常。 */
+    val forcedBooks: Set<String> = emptySet(),
+    /** 被改写过正文的条目 id → 改写前的原文，用于标明"已改过"并提供恢复。 */
+    val editedContent: Map<String, String> = emptyMap(),
+) {
+    /** 书级三态由 `books` 与 `forcedBooks` 组合表达，这里给出统一读法。 */
+    fun modeOf(bookId: String): WorldBookBookMode = when {
+        bookId in forcedBooks -> WorldBookBookMode.FORCED
+        !activation.isBookEnabled(bookId) -> WorldBookBookMode.DISABLED
+        else -> WorldBookBookMode.AUTO
+    }
+
+    fun isEdited(entryId: String): Boolean = entryId in editedContent
+
+    fun hasChanges(): Boolean = forcedBooks.isNotEmpty() || activation.books.isNotEmpty() ||
+        activation.entries.values.any { it.isNotEmpty() } || editedContent.isNotEmpty()
+}
+
+/** 一条世界书在会话内的参与方式。 */
+enum class WorldBookBookMode { DISABLED, AUTO, FORCED }
+
 @Serializable
 data class ConversationStateSnapshot(
     val values: Map<String, JsonElement> = emptyMap(),
@@ -140,7 +170,6 @@ data class MvuStateSnapshot(
 data class ConversationRuntimeState(
     val localVariables: Map<String, MacroValue> = emptyMap(),
     val worldBookEntries: Map<String, WorldBookEntryRuntimeState> = emptyMap(),
-    val worldBookActivationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
     val conversationState: ConversationStateSnapshot = ConversationStateSnapshot(),
     val setupCommit: ConversationSetupCommit? = null,
     val memories: Map<String, ConversationMemory> = emptyMap(),
@@ -172,6 +201,8 @@ data class NormalGenerationInput(
     val history: List<ConversationMessage>,
     val preset: Preset,
     val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
+    /** 会话级的世界书意图（启停、必定生效、已改写正文）；与 runtimeState 分开归属。 */
+    val worldBookState: ConversationWorldBookState = ConversationWorldBookState(),
     val conversationId: String = "preview",
     val generationId: String = "preview-0",
     val inputText: String = history.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty(),
@@ -332,6 +363,8 @@ data class ConversationRecord(
     val draft: String = "",
     val choiceDraft: ConversationChoiceDraft? = null,
     val nativeDraftOrigin: NativeDraftOrigin? = null,
+    /** 玩家与作者程序在这场对话内对世界书的意图；不随消息候选回退。 */
+    val worldBookState: ConversationWorldBookState = ConversationWorldBookState(),
     // Missing field in an existing record must retain its original execution path.
     val executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
 )

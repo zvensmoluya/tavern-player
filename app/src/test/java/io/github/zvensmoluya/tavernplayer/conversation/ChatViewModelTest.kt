@@ -998,7 +998,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `world book overrides replay from the assistant checkpoint and follow the selected swipe`() = runTest {
+    fun `world book mode is session level and is not reverted by candidate switching`() = runTest {
         val directory = Files.createTempDirectory("tavern-chat-world-book-swipe").toFile()
         try {
             val compiler = PromptCompiler()
@@ -1022,12 +1022,10 @@ class ChatViewModelTest {
                 ),
             )
             val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            val enabled = created.runtimeState.copy(
-                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to true)),
-            )
-            val disabled = enabled.copy(
-                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
-            )
+            // 候选各自携带自己的剧情派生运行状态；世界书意图不放在候选里。
+            fun branch(name: String) = created.runtimeState.copy(localVariables = mapOf(name to MacroValue("visited")))
+            val firstBranch = branch("first")
+            val secondBranch = branch("second")
             val userTurn = ConversationTurn(
                 id = "seed-user-turn",
                 role = MessageRole.USER,
@@ -1035,9 +1033,9 @@ class ChatViewModelTest {
                     MessageVariant(
                         id = "seed-user-variant",
                         message = ConversationMessage("seed-user", MessageRole.USER, "choose", "Traveler"),
-                        runtimeStateBefore = enabled,
-                        projectionRuntimeStateBefore = enabled,
-                        runtimeStateAfter = enabled,
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = firstBranch,
                     ),
                 ),
             )
@@ -1046,25 +1044,25 @@ class ChatViewModelTest {
                 role = MessageRole.ASSISTANT,
                 variants = listOf(
                     MessageVariant(
-                        id = "disabled-variant",
-                        message = ConversationMessage("disabled-message", MessageRole.ASSISTANT, "disabled", character.promptName),
-                        runtimeStateBefore = enabled,
-                        projectionRuntimeStateBefore = enabled,
-                        runtimeStateAfter = disabled,
+                        id = "first-variant",
+                        message = ConversationMessage("first-message", MessageRole.ASSISTANT, "first", character.promptName),
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = firstBranch,
                     ),
                     MessageVariant(
-                        id = "enabled-variant",
-                        message = ConversationMessage("enabled-message", MessageRole.ASSISTANT, "enabled", character.promptName),
-                        runtimeStateBefore = enabled,
-                        projectionRuntimeStateBefore = enabled,
-                        runtimeStateAfter = enabled,
+                        id = "second-variant",
+                        message = ConversationMessage("second-message", MessageRole.ASSISTANT, "second", character.promptName),
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = secondBranch,
                     ),
                 ),
             )
             val seeded = conversations.save(
                 created.copy(
                     turns = created.turns + userTurn + assistantTurn,
-                    runtimeState = disabled,
+                    runtimeState = firstBranch,
                 ),
             )
             val plans = mutableListOf<GenerationPlan>()
@@ -1088,19 +1086,21 @@ class ChatViewModelTest {
             )
             viewModel.loadConversation(seeded.id)
 
+            // 玩家在会话级把这本书设为停用：意图不属于任何候选检查点。
+            viewModel.setWorldBookMode("book", WorldBookBookMode.DISABLED)
+            assertEquals(false, conversations.get(seeded.id)?.worldBookState?.activation?.books?.get("book"))
+
             viewModel.regenerate()
-
-            assertEquals(listOf("entry"), plans.single().activatedWorldBookEntries)
-
             viewModel.previousVariant()
             viewModel.previousVariant()
-            viewModel.updateInput("continue from disabled candidate")
+            viewModel.updateInput("continue from the other candidate")
             viewModel.send()
 
-            assertTrue(plans.last().activatedWorldBookEntries.isEmpty())
+            // 切候选与再次生成都不回退会话级意图。
+            assertEquals(2, plans.size)
             assertEquals(
                 false,
-                conversations.get(seeded.id)?.runtimeState?.worldBookActivationOverrides?.books?.get("book"),
+                conversations.get(seeded.id)?.worldBookState?.activation?.books?.get("book"),
             )
         } finally {
             directory.deleteRecursively()
@@ -1108,7 +1108,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `history restart discards future world book overrides and restores its checkpoint`() = runTest {
+    fun `history restart keeps the session level world book mode and restores its own checkpoint`() = runTest {
         val directory = Files.createTempDirectory("tavern-chat-world-book-history").toFile()
         try {
             val compiler = PromptCompiler()
@@ -1132,12 +1132,9 @@ class ChatViewModelTest {
                 ),
             )
             val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            val disabled = created.runtimeState.copy(
-                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to false)),
-            )
-            val enabled = disabled.copy(
-                worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to true)),
-            )
+            fun branch(name: String) = created.runtimeState.copy(localVariables = mapOf(name to MacroValue("visited")))
+            val firstBranch = branch("first")
+            val laterBranch = branch("later")
             val firstUser = ConversationTurn(
                 id = "first-user-turn",
                 role = MessageRole.USER,
@@ -1145,9 +1142,9 @@ class ChatViewModelTest {
                     MessageVariant(
                         id = "first-user-variant",
                         message = ConversationMessage("first-user", MessageRole.USER, "first", "Traveler"),
-                        runtimeStateBefore = disabled,
-                        projectionRuntimeStateBefore = disabled,
-                        runtimeStateAfter = disabled,
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = firstBranch,
                     ),
                 ),
             )
@@ -1158,9 +1155,9 @@ class ChatViewModelTest {
                     MessageVariant(
                         id = "first-assistant-variant",
                         message = ConversationMessage("first-assistant", MessageRole.ASSISTANT, "first reply", character.promptName),
-                        runtimeStateBefore = disabled,
-                        projectionRuntimeStateBefore = disabled,
-                        runtimeStateAfter = disabled,
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = firstBranch,
                     ),
                 ),
             )
@@ -1171,9 +1168,9 @@ class ChatViewModelTest {
                     MessageVariant(
                         id = "later-user-variant",
                         message = ConversationMessage("later-user", MessageRole.USER, "later", "Traveler"),
-                        runtimeStateBefore = disabled,
-                        projectionRuntimeStateBefore = disabled,
-                        runtimeStateAfter = enabled,
+                        runtimeStateBefore = firstBranch,
+                        projectionRuntimeStateBefore = firstBranch,
+                        runtimeStateAfter = laterBranch,
                     ),
                 ),
             )
@@ -1184,16 +1181,16 @@ class ChatViewModelTest {
                     MessageVariant(
                         id = "later-assistant-variant",
                         message = ConversationMessage("later-assistant", MessageRole.ASSISTANT, "later reply", character.promptName),
-                        runtimeStateBefore = enabled,
-                        projectionRuntimeStateBefore = enabled,
-                        runtimeStateAfter = enabled,
+                        runtimeStateBefore = laterBranch,
+                        projectionRuntimeStateBefore = laterBranch,
+                        runtimeStateAfter = laterBranch,
                     ),
                 ),
             )
             val seeded = conversations.save(
                 created.copy(
                     turns = created.turns + firstUser + firstAssistant + laterUser + laterAssistant,
-                    runtimeState = enabled,
+                    runtimeState = laterBranch,
                 ),
             )
             val plans = mutableListOf<GenerationPlan>()
@@ -1217,14 +1214,17 @@ class ChatViewModelTest {
             )
             viewModel.loadConversation(seeded.id)
 
+            // 玩家在会话级把这本书设为「必定生效」：历史重启属于候选历史，不得丢掉会话级意图。
+            viewModel.setWorldBookMode("book", WorldBookBookMode.FORCED)
+            assertEquals(setOf("book"), conversations.get(seeded.id)?.worldBookState?.forcedBooks)
+
             viewModel.editMessage("first-user", "changed first", MessageEditMode.RESTART)
 
             assertEquals(3, viewModel.uiState.value.messages.size)
-            assertTrue(plans.single().activatedWorldBookEntries.isEmpty())
-            assertEquals(
-                false,
-                conversations.get(seeded.id)?.runtimeState?.worldBookActivationOverrides?.books?.get("book"),
-            )
+            assertEquals(listOf("entry"), plans.single().activatedWorldBookEntries)
+            val restarted = conversations.get(seeded.id)
+            assertEquals(true, restarted?.worldBookState?.activation?.books?.get("book"))
+            assertEquals(setOf("book"), restarted?.worldBookState?.forcedBooks)
         } finally {
             directory.deleteRecursively()
         }

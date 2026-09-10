@@ -40,9 +40,10 @@ class NativeSetupControllerTest {
         val restored = Json.decodeFromString<ConversationRecord>(Json.encodeToString(committed))
         assertEquals(committed, restored)
         val checkpoints = restored.turns.single().variants.flatMap { listOf(it.runtimeStateBefore, it.projectionRuntimeStateBefore, it.runtimeStateAfter) }
+        // 世界书启停属于会话级意图，不再随候选检查点回放。
+        assertEquals(true, restored.worldBookState.activation.entries["book"]?.get("entry"))
         (checkpoints + restored.runtimeState).forEach { state ->
             assertEquals(JsonPrimitive("海边"), state!!.conversationState.values["location"])
-            assertEquals(true, state.worldBookActivationOverrides.entries["book"]?.get("entry"))
             assertEquals("setup", state.setupCommit?.formId)
         }
         assertTrue(controller.commit(restored, submission) is NativeSetupResult.Rejected)

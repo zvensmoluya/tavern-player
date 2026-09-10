@@ -39,6 +39,7 @@ class BrowserWorldBookTest {
         return PromptCompiler().compile(NormalGenerationInput(
             character = record.character, persona = record.persona, history = history,
             preset = BuiltInPresets.default, runtimeState = record.runtimeState,
+            worldBookState = record.worldBookState,
             modelContextTokens = 32768, generationId = "world-book-test", ejsRenderer = renderer,
         )) as CompilationResult.Success
     }
@@ -110,13 +111,18 @@ class BrowserWorldBookTest {
         assertEquals(3, entries.map { it.id }.distinct().size)
 
         val target = entries.last()
-        val tracked = created.copy(runtimeState = created.runtimeState.copy(
-            worldBookActivationOverrides = WorldBookActivationOverrides(entries = mapOf("notes" to mapOf(target.id to false))),
-            worldBookEntries = mapOf("notes:${target.id}" to WorldBookEntryRuntimeState(stickyRemaining = 3)),
-        ))
+        val tracked = created.copy(
+            // 玩家/脚本的启停意图属于会话级状态，剧情派生的跨轮计时留在 runtimeState。
+            worldBookState = created.worldBookState.copy(
+                activation = WorldBookActivationOverrides(entries = mapOf("notes" to mapOf(target.id to false))),
+            ),
+            runtimeState = created.runtimeState.copy(
+                worldBookEntries = mapOf("notes:${target.id}" to WorldBookEntryRuntimeState(stickyRemaining = 3)),
+            ),
+        )
         val removed = BrowserConversation.apply(tracked, actor, "worldbook.entries.delete", args("""{"book":"notes","uids":[2]}"""))
         assertEquals(2, removed.character.worldBooks.single().entries.size)
-        assertTrue(removed.runtimeState.worldBookActivationOverrides.entries.isEmpty())
+        assertTrue(removed.worldBookState.activation.entries.isEmpty())
         assertTrue(removed.runtimeState.worldBookEntries.isEmpty())
         assertEquals(listOf(0, 1), legacy(removed).jsonArray.map { it.jsonObject.getValue("uid").jsonPrimitive.int })
     }
@@ -125,20 +131,20 @@ class BrowserWorldBookTest {
         val created = BrowserConversation.apply(record(), actor, "worldbook.books.create",
             args("""{"name":"Scratch","entries":[{"content":"SCRATCH-FACT","strategy":{"type":"constant"}}]}"""))
         assertEquals(2, created.character.worldBooks.size)
-        assertFalse(created.runtimeState.worldBookActivationOverrides.isBookEnabled("Scratch"))
+        assertFalse(created.worldBookState.activation.isBookEnabled("Scratch"))
         assertFalse(compile(created, "anything").plan.messages.any { "SCRATCH-FACT" in it.content })
 
         val rebound = BrowserConversation.apply(created, actor, "worldbook.books.rebind", args("""{"primary":"Scratch","additional":[]}"""))
-        assertTrue(rebound.runtimeState.worldBookActivationOverrides.isBookEnabled("Scratch"))
-        assertFalse(rebound.runtimeState.worldBookActivationOverrides.isBookEnabled("notes"))
+        assertTrue(rebound.worldBookState.activation.isBookEnabled("Scratch"))
+        assertFalse(rebound.worldBookState.activation.isBookEnabled("notes"))
         assertEquals("Scratch", rebound.character.worldBooks.first().id)
         assertTrue(compile(rebound, "anything").plan.messages.any { "SCRATCH-FACT" in it.content })
 
         val deleted = BrowserConversation.apply(rebound, actor, "worldbook.books.delete", args("""{"name":"Scratch"}"""))
         assertEquals(listOf("notes"), deleted.character.worldBooks.map { it.id })
         // 删除只回收这本书自己的覆盖；被 rebind 关掉的另一本书保持关闭。
-        assertEquals(setOf("notes"), deleted.runtimeState.worldBookActivationOverrides.books.keys)
-        assertFalse(deleted.runtimeState.worldBookActivationOverrides.isBookEnabled("notes"))
+        assertEquals(setOf("notes"), deleted.worldBookState.activation.books.keys)
+        assertFalse(deleted.worldBookState.activation.isBookEnabled("notes"))
         assertThrows(IllegalArgumentException::class.java) {
             BrowserConversation.apply(deleted, actor, "worldbook.books.rebind", args("""{"primary":"Missing","additional":[]}"""))
         }
@@ -175,19 +181,23 @@ class BrowserWorldBookTest {
     @Test fun `a write leaves state owned by other world book controllers alone`() {
         val original = record()
         val memory = "player:conversation-memory:summary"
-        val tracked = original.copy(runtimeState = original.runtimeState.copy(
-            worldBookActivationOverrides = WorldBookActivationOverrides(
-                books = mapOf("player:conversation-memory" to true),
-                entries = mapOf("player:conversation-memory" to mapOf(memory to false)),
+        val tracked = original.copy(
+            worldBookState = original.worldBookState.copy(
+                activation = WorldBookActivationOverrides(
+                    books = mapOf("player:conversation-memory" to true),
+                    entries = mapOf("player:conversation-memory" to mapOf(memory to false)),
+                ),
             ),
-            worldBookEntries = mapOf("player:conversation-memory:$memory" to WorldBookEntryRuntimeState(stickyRemaining = 2)),
-        ))
+            runtimeState = original.runtimeState.copy(
+                worldBookEntries = mapOf("player:conversation-memory:$memory" to WorldBookEntryRuntimeState(stickyRemaining = 2)),
+            ),
+        )
         val written = BrowserConversation.apply(tracked, actor, "worldbook.entries.create",
             args("""{"book":"notes","entries":[{"name":"Harbor","content":"HARBOR"}]}"""))
         assertEquals(2, written.character.worldBooks.single().entries.size)
         // 对话记忆是编译期合成的世界书，不属于角色书集合，它的启停与跨轮状态必须原样保留。
-        assertEquals(mapOf("player:conversation-memory" to true), written.runtimeState.worldBookActivationOverrides.books)
-        assertEquals(mapOf("player:conversation-memory" to mapOf(memory to false)), written.runtimeState.worldBookActivationOverrides.entries)
+        assertEquals(mapOf("player:conversation-memory" to true), written.worldBookState.activation.books)
+        assertEquals(mapOf("player:conversation-memory" to mapOf(memory to false)), written.worldBookState.activation.entries)
         assertEquals(WorldBookEntryRuntimeState(stickyRemaining = 2),
             written.runtimeState.worldBookEntries["player:conversation-memory:$memory"])
     }
@@ -201,8 +211,8 @@ class BrowserWorldBookTest {
         assertEquals(1, BrowserWorldBook.uid(remaining, 0))
         val disabled = BrowserConversation.apply(removed, actor, "worldbook.activation",
             args("""{"book":"notes","entry":"1","enabled":false}"""))
-        assertEquals(false, disabled.runtimeState.worldBookActivationOverrides.entries.getValue("notes").getValue(remaining.id))
-        assertFalse(disabled.runtimeState.worldBookActivationOverrides.isEntryEnabled("notes", remaining.id, true))
+        assertEquals(false, disabled.worldBookState.activation.entries.getValue("notes").getValue(remaining.id))
+        assertFalse(disabled.worldBookState.activation.isEntryEnabled("notes", remaining.id, true))
         assertThrows(IllegalStateException::class.java) {
             BrowserConversation.apply(removed, actor, "worldbook.activation", args("""{"book":"notes","entry":"9","enabled":false}"""))
         }
@@ -380,5 +390,141 @@ class BrowserWorldBookTest {
         assertThrows(IllegalArgumentException::class.java) {
             BrowserConversation.apply(original, actor, "worldbook.entries.update", args("""{"book":"missing","entries":[{"uid":0}]}"""))
         }
+    }
+
+    // ---------------------------------------------------------------- 会话级世界书意图
+
+    private fun snapshotBook(record: ConversationRecord): JsonObject =
+        BrowserConversation.snapshot(record).getValue("worldbooks").jsonArray.single().jsonObject
+
+    private fun snapshotEntry(record: ConversationRecord, index: Int = 0): JsonObject =
+        snapshotBook(record).getValue("entries").jsonArray[index].jsonObject
+
+    /** 带两个候选的记录：每个候选各自携带不同的跨轮计时，用来对比两类状态。 */
+    private fun swipeable(entry: WorldBookEntryDefinition, asset: CharacterAsset = asset()): ConversationRecord {
+        val base = record(asset)
+        val turn = base.turns.single()
+        return base.copy(
+            turns = listOf(turn.copy(variants = listOf(
+                MessageVariant("first", turn.selected.message, browserHead = head(entry, 1)),
+                MessageVariant("second", turn.selected.message.copy(id = "m1"), browserHead = head(entry, 9)),
+            ), selectedVariantIndex = 0)),
+            runtimeState = head(entry, 1),
+        )
+    }
+
+    /** 候选级的剧情派生状态：与 sticky 计时一起随候选回退。 */
+    private fun head(entry: WorldBookEntryDefinition, sticky: Int) = ConversationRuntimeState(
+        worldBookEntries = mapOf("notes:${entry.id}" to WorldBookEntryRuntimeState(stickyRemaining = sticky)),
+    )
+
+    @Test fun `switching candidates keeps the player's world book intent while runtime state follows the swipe`() {
+        val asset = asset()
+        val entry = asset.worldBooks.single().entries.single()
+        val seeded = swipeable(entry, asset)
+        val disabled = BrowserConversation.apply(seeded, actor, "worldbook.activation",
+            args("""{"book":"notes","entry":"0","enabled":false}"""))
+
+        assertEquals(false, disabled.worldBookState.activation.entries["notes"]?.get(entry.id))
+        // 启停意图不再随消息楼层写入，最后楼层的候选头保持原样。
+        assertEquals(seeded.turns.single().variants.map { it.browserHead }, disabled.turns.single().variants.map { it.browserHead })
+
+        val switched = BrowserConversation.apply(disabled, actor, "messages.set",
+            args("""{"messages":[{"message_id":0,"swipe_id":1}]}"""))
+
+        assertEquals(1, switched.turns.single().selectedVariantIndex)
+        // 玩家开关是会话级的：切候选不回退。
+        assertFalse(switched.worldBookState.activation.isEntryEnabled("notes", entry.id, true))
+        assertEquals(false, switched.worldBookState.activation.entries["notes"]?.get(entry.id))
+        // 剧情派生的跨轮状态跟随候选回退。
+        assertEquals(head(entry, 9), switched.runtimeState)
+        assertNotEquals(head(entry, 9), disabled.runtimeState)
+
+        val back = BrowserConversation.apply(switched, actor, "messages.set",
+            args("""{"messages":[{"message_id":0,"swipe_id":0}]}"""))
+
+        assertFalse(back.worldBookState.activation.isEntryEnabled("notes", entry.id, true))
+        assertEquals(head(entry, 1), back.runtimeState)
+    }
+
+    @Test fun `a forced book injects its enabled entries without keys and skips probability`() {
+        val original = record()
+        val configured = BrowserConversation.apply(original, actor, "worldbook.entries.create", args("""{"book":"notes","entries":[
+            {"name":"Guaranteed","keys":["ember"],"content":"PROBABILITY-NEEDLE","probability":0},
+            {"name":"AlmostNever","keys":["ember"],"content":"COINFLIP-NEEDLE","probability":1},
+            {"name":"OffByAuthor","keys":["ember"],"content":"DISABLED-NEEDLE","enabled":false}]}"""))
+        // 强制前：关键字不命中的条目、概率失败的条目、被停用的条目都不进入。
+        val before = compile(configured, "I wait by the ember.").plan.messages.joinToString("\n") { it.content }
+        assertFalse(before.contains("The lighthouse is dark."))
+        assertFalse(before.contains("PROBABILITY-NEEDLE"))
+        assertFalse(before.contains("COINFLIP-NEEDLE"))
+        assertFalse(before.contains("DISABLED-NEEDLE"))
+        assertFalse(snapshotBook(configured).getValue("forced").jsonPrimitive.boolean)
+
+        val forced = BrowserConversation.apply(configured, actor, "worldbook.books.force",
+            args("""{"book":"notes","forced":true}"""))
+
+        assertEquals(setOf("notes"), forced.worldBookState.forcedBooks)
+        assertTrue(snapshotBook(forced).getValue("forced").jsonPrimitive.boolean)
+        val after = compile(forced, "I wait by the ember.").plan.messages.joinToString("\n") { it.content }
+        // 关键字不命中也被激活；概率被跳过。
+        assertTrue(after.contains("The lighthouse is dark."))
+        assertTrue(after.contains("PROBABILITY-NEEDLE"))
+        assertTrue(after.contains("COINFLIP-NEEDLE"))
+        // 强制不覆盖条目级停用。
+        assertFalse(after.contains("DISABLED-NEEDLE"))
+
+        // 书级停用与必定生效是同一个三态的两端。
+        val disabled = BrowserConversation.apply(forced, actor, "worldbook.activation",
+            args("""{"book":"notes","enabled":false}"""))
+        assertTrue(disabled.worldBookState.forcedBooks.isEmpty())
+        assertFalse(disabled.worldBookState.activation.isBookEnabled("notes"))
+        assertFalse(compile(disabled, "I wait by the ember.").plan.messages.any { "PROBABILITY-NEEDLE" in it.content })
+
+        val reforced = BrowserConversation.apply(disabled, actor, "worldbook.books.force",
+            args("""{"book":"notes","forced":true}"""))
+        assertTrue(reforced.worldBookState.activation.isBookEnabled("notes"))
+        assertEquals(setOf("notes"), reforced.worldBookState.forcedBooks)
+        assertTrue(compile(reforced, "I wait by the ember.").plan.messages.any { "PROBABILITY-NEEDLE" in it.content })
+    }
+
+    @Test fun `rewritten content keeps its original for restore and marks the entry as edited`() {
+        val asset = asset()
+        val entry = asset.worldBooks.single().entries.single()
+        val original = record(asset)
+        val rewritten = BrowserConversation.apply(original, actor, "worldbook.entries.update",
+            args("""{"book":"notes","entries":[{"uid":0,"content":"REWRITTEN-ONE"}]}"""))
+
+        assertEquals("REWRITTEN-ONE", rewritten.character.worldBooks.single().entries.single().content)
+        // 留痕记录的是改写前的原文，而不是改写后的内容。
+        assertEquals("The lighthouse is dark.", rewritten.worldBookState.editedContent[entry.id])
+        assertTrue(snapshotEntry(rewritten).getValue("edited").jsonPrimitive.boolean)
+        assertEquals("The lighthouse is dark.", original.character.worldBooks.single().entries.single().content)
+
+        val rewrittenAgain = BrowserConversation.apply(rewritten, actor, "worldbook.entries.update",
+            args("""{"book":"notes","entries":[{"uid":0,"content":"REWRITTEN-TWO"}]}"""))
+
+        assertEquals("The lighthouse is dark.", rewrittenAgain.worldBookState.editedContent[entry.id])
+
+        val configured = BrowserConversation.apply(rewrittenAgain, actor, "worldbook.activation",
+            args("""{"book":"notes","entry":"0","enabled":false}"""))
+        val armed = BrowserConversation.apply(configured, actor, "worldbook.books.force",
+            args("""{"book":"notes","forced":true}"""))
+        val restored = BrowserConversation.apply(armed, actor, "worldbook.entries.restore", args("""{"book":"notes"}"""))
+
+        assertEquals("The lighthouse is dark.", restored.character.worldBooks.single().entries.single().content)
+        assertFalse(restored.worldBookState.editedContent.containsKey(entry.id))
+        assertFalse(snapshotEntry(restored).getValue("edited").jsonPrimitive.boolean)
+        // 恢复正文不动启停与必定生效。
+        assertEquals(false, restored.worldBookState.activation.entries["notes"]?.get(entry.id))
+        assertEquals(setOf("notes"), restored.worldBookState.forcedBooks)
+
+        // 手工改回原文同样让留痕消失。
+        val revertedByHand = BrowserConversation.apply(rewrittenAgain, actor, "worldbook.entries.update",
+            args("""{"book":"notes","entries":[{"uid":0,"content":"The lighthouse is dark."}]}"""))
+
+        assertEquals("The lighthouse is dark.", revertedByHand.character.worldBooks.single().entries.single().content)
+        assertFalse(revertedByHand.worldBookState.editedContent.containsKey(entry.id))
+        assertFalse(snapshotEntry(revertedByHand).getValue("edited").jsonPrimitive.boolean)
     }
 }

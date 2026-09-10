@@ -65,11 +65,18 @@ internal object BrowserWorldBook {
     /** 对外 uid：作者新建的条目用自己的 uid，卡内条目沿用原 uid，两者都没有时退回列表位置。 */
     fun uid(entry: WorldBookEntryDefinition, index: Int): Int = entry.uid ?: entry.sourceId?.toIntOrNull() ?: index
 
-    /** 新版嵌套结构。 */
-    fun encodeEntry(bookId: String, entry: WorldBookEntryDefinition, index: Int, enabled: Boolean): JsonObject = buildJsonObject {
+    /** 新版嵌套结构。`edited` 表示该条目正文在这场对话里被改写过。 */
+    fun encodeEntry(
+        bookId: String,
+        entry: WorldBookEntryDefinition,
+        index: Int,
+        enabled: Boolean,
+        edited: Boolean = false,
+    ): JsonObject = buildJsonObject {
         put("uid", uid(entry, index)); put("player_entry_id", entry.id)
         put("name", entry.name.ifBlank { entry.comment }); put("comment", entry.comment)
         put("enabled", enabled)
+        put("edited", edited)
         putJsonObject("strategy") {
             put("type", entry.strategyName()); put("keys", JsonArray(entry.keys.map(::JsonPrimitive)))
             putJsonObject("keys_secondary") {
@@ -122,7 +129,7 @@ internal object BrowserWorldBook {
     /** 旧接口的读取：只读，不改会话。 */
     fun readEntries(record: ConversationRecord, bookName: String): JsonArray {
         val book = book(record, bookName)
-        val overrides = record.runtimeState.worldBookActivationOverrides
+        val overrides = record.worldBookState.activation
         return JsonArray(book.entries.mapIndexed { index, entry ->
             encodeLegacyEntry(entry, index, overrides.isEntryEnabled(book.id, entry.id, entry.enabled))
         })
@@ -217,11 +224,10 @@ internal object BrowserWorldBook {
         val books = if (created) record.character.worldBooks + WorldBookDefinition(id = name, name = name, entries = entries)
             else record.character.worldBooks.map { if (it.id == name) it.copy(entries = entries) else it }
         // 新建的书先不参与编排；作者用 rebindCharWorldbooks 或 setWorldbookEnabled 显式启用。
-        val overrides = record.runtimeState.worldBookActivationOverrides
-        val runtime = if (created) record.runtimeState.copy(
-            worldBookActivationOverrides = overrides.copy(books = overrides.books + (name to false)),
-        ) else record.runtimeState
-        return prune(record.copy(runtimeState = runtime), books)
+        val overrides = record.worldBookState.activation
+        val state = if (created) record.worldBookState.copy(activation = overrides.copy(books = overrides.books + (name to false)))
+            else record.worldBookState
+        return prune(record.copy(worldBookState = state), books)
     }
 
     /** `deleteWorldbook`：删除整本书及其激活覆盖和跨轮状态。 */
@@ -229,6 +235,42 @@ internal object BrowserWorldBook {
         args.only("name")
         val name = args.string("name")
         return prune(record, record.character.worldBooks.filterNot { it.id == name })
+    }
+
+    /**
+     * 把被改写的条目正文恢复为改写前的原文。
+     *
+     * 只动正文，不动启停与必定生效；恢复后该条目不再出现在"已改过"里。
+     */
+    fun restoreContent(record: ConversationRecord, args: JsonObject): ConversationRecord {
+        args.only("book", "entry")
+        val book = book(record, args.string("book"))
+        val requested = args["entry"]?.jsonPrimitive?.contentOrNull
+        if (requested != null) {
+            require(book.entries.any { it.id == requested }) { "世界书条目不存在：$requested" }
+        }
+        val edited = record.worldBookState.editedContent
+        val books = record.character.worldBooks.map { target ->
+            if (target.id != book.id) target else target.copy(entries = target.entries.map { entry ->
+                val original = edited[entry.id] ?: return@map entry
+                if (requested != null && entry.id != requested) entry else entry.copy(content = original)
+            })
+        }
+        return prune(record, books)
+    }
+
+    /**
+     * 按内部条目 id 改写正文。原生 UI 与作者程序共用同一条实现路径，留痕由 [prune] 统一处理。
+     */
+    fun setEntryContent(record: ConversationRecord, bookId: String, entryId: String, content: String): ConversationRecord {
+        val target = book(record, bookId)
+        require(target.entries.any { it.id == entryId }) { "世界书条目不存在：$entryId" }
+        require(content.length <= MAX_CONTENT_LENGTH) { "世界书条目内容超过限制" }
+        return prune(record, record.character.worldBooks.map { book ->
+            if (book.id != bookId) book else book.copy(entries = book.entries.map { entry ->
+                if (entry.id == entryId) entry.copy(content = content) else entry
+            })
+        })
     }
 
     /** `rebindCharWorldbooks`：在这本书集合内确定参与编排的世界书及其顺序。 */
@@ -246,12 +288,13 @@ internal object BrowserWorldBook {
         require(requested.distinct().size == requested.size) { "世界书名称不能重复" }
         val ordered = requested.mapNotNull { name -> record.character.worldBooks.find { it.id == name } } +
             record.character.worldBooks.filterNot { it.id in requested }
-        val overrides = record.runtimeState.worldBookActivationOverrides
+        val overrides = record.worldBookState.activation
         val books = overrides.books.toMutableMap()
         known.forEach { books[it] = it in requested }
         return record.copy(
             character = record.character.copy(worldBooks = ordered),
-            runtimeState = record.runtimeState.copy(worldBookActivationOverrides = overrides.copy(books = books.toMap())),
+            worldBookState = record.worldBookState.copy(activation = overrides.copy(books = books.toMap())),
+            runtimeState = record.runtimeState,
         )
     }
 
@@ -465,9 +508,19 @@ internal object BrowserWorldBook {
             source.flatMap { book -> book.entries.map { "${book.id}:${it.id}" } }.toSet()
         val liveKeys = keys(books)
         val previousKeys = keys(previous)
-        val overrides = record.runtimeState.worldBookActivationOverrides
-        val runtime = record.runtimeState.copy(
-            worldBookActivationOverrides = WorldBookActivationOverrides(
+        val overrides = record.worldBookState.activation
+        // 正文改写留痕：记录改写前的原文，恢复与"已改过"标记都基于它。只在内容真正变化时留下记录。
+        val previousContents = previous.flatMap { book -> book.entries.map { it.id to it.content } }.toMap()
+        val nextContents = books.flatMap { book -> book.entries.map { it.id to it.content } }.toMap()
+        val editedContent = record.worldBookState.editedContent.toMutableMap()
+        nextContents.forEach { (id, content) ->
+            val original = editedContent[id] ?: previousContents[id] ?: return@forEach
+            if (content == original) editedContent.remove(id) else editedContent[id] = original
+        }
+        editedContent.keys.retainAll(nextContents.keys)
+        // 会话级意图：启停、必定生效、已改写正文都属于玩家/作者意图，随书本与条目一起回收。
+        val state = record.worldBookState.copy(
+            activation = WorldBookActivationOverrides(
                 books = overrides.books.filterKeys { it !in managed || it in liveBooks },
                 entries = overrides.entries.entries
                     .filter { (bookId, _) -> bookId !in managed || bookId in liveEntries }
@@ -476,9 +529,14 @@ internal object BrowserWorldBook {
                     }
                     .filterValues { it.isNotEmpty() },
             ),
+            forcedBooks = record.worldBookState.forcedBooks.filter { it !in managed || it in liveBooks }.toSet(),
+            editedContent = editedContent.toMap(),
+        )
+        // 剧情派生状态：只回收这场对话自己管理的书的跨轮计时。
+        val runtime = record.runtimeState.copy(
             worldBookEntries = record.runtimeState.worldBookEntries.filterKeys { it !in previousKeys || it in liveKeys },
         )
-        return record.copy(character = record.character.copy(worldBooks = books), runtimeState = runtime)
+        return record.copy(character = record.character.copy(worldBooks = books), worldBookState = state, runtimeState = runtime)
     }
 
     private fun WorldBookEntryDefinition.strategyName(): String = when {

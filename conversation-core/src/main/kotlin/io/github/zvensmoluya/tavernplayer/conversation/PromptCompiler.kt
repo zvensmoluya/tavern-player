@@ -1,4 +1,4 @@
-package io.github.zvensmoluya.tavernplayer.conversation
+﻿package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.ejsProgramTemplates
 
@@ -429,7 +429,8 @@ class PromptCompiler(
             macroContext = baseContext,
             transaction = transaction,
             previousState = input.runtimeState.worldBookEntries,
-            activationOverrides = input.runtimeState.worldBookActivationOverrides,
+            activationOverrides = input.worldBookState.activation,
+            forcedBooks = input.worldBookState.forcedBooks,
             turnIndex = input.runtimeState.generationIndex,
             messageCount = input.history.size,
             inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },

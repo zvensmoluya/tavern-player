@@ -47,7 +47,7 @@ class EjsPromptIntegrationTest {
         val base = input()
         val book = base.character.worldBooks.single()
         val inactive = listOf(
-            base.copy(runtimeState = base.runtimeState.copy(worldBookActivationOverrides = WorldBookActivationOverrides(books = mapOf("book" to false)))),
+            base.copy(worldBookState = ConversationWorldBookState(activation = WorldBookActivationOverrides(books = mapOf("book" to false)))),
             base.copy(character = base.character.copy(worldBooks = listOf(book.copy(entries = book.entries.map { it.copy(enabled = false) })))) ,
             base.copy(character = base.character.copy(worldBooks = listOf(book.copy(entries = book.entries.map { it.copy(constant = false, keys = listOf("never-match")) })))),
         )

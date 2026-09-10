@@ -1,4 +1,4 @@
-package io.github.zvensmoluya.tavernplayer.conversation
+﻿package io.github.zvensmoluya.tavernplayer.conversation
 
 import io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader
 import kotlinx.serialization.Serializable
@@ -13,7 +13,7 @@ object BrowserConversation {
     private val json = Json { encodeDefaults = true }
 
     fun revision(record: ConversationRecord): String = BrowserProgramReader.sha256(buildString {
-        append(record.id); append(record.character.browserProgram?.variables); append(json.encodeToString(record.character.regexScripts)); append(JsonPrimitive(record.draft)); append(json.encodeToString(record.runtimeState))
+        append(record.id); append(record.character.browserProgram?.variables); append(json.encodeToString(record.character.regexScripts)); append(JsonPrimitive(record.draft)); append(json.encodeToString(record.runtimeState)); append(json.encodeToString(record.worldBookState))
         record.turns.forEach { turn ->
             append(turn.id); append(turn.selectedVariantIndex)
             turn.variants.forEach { variant ->
@@ -58,13 +58,15 @@ object BrowserConversation {
         }
         putJsonArray("worldbooks") {
             record.character.worldBooks.forEach { book ->
-                val overrides = record.runtimeState.worldBookActivationOverrides
+                val overrides = record.worldBookState.activation
                 add(buildJsonObject {
                     put("id", book.id); put("name", book.id)
                     put("enabled", overrides.isBookEnabled(book.id))
+                    put("forced", book.id in record.worldBookState.forcedBooks)
                     putJsonArray("entries") { book.entries.forEachIndexed { index, entry ->
                         add(BrowserWorldBook.encodeEntry(book.id, entry, index,
-                            overrides.isEntryEnabled(book.id, entry.id, entry.enabled)))
+                            overrides.isEntryEnabled(book.id, entry.id, entry.enabled),
+                            edited = entry.id in record.worldBookState.editedContent))
                     } }
                 })
             }
@@ -115,9 +117,20 @@ object BrowserConversation {
             }
             val intent = if (entry == null) WorldBookActivationIntent.SetBookEnabled(book, enabled)
                 else WorldBookActivationIntent.SetEntryEnabled(book, entry, enabled)
-            when (val result = WorldBookActivationController().apply(record.character.worldBooks, record.runtimeState, listOf(intent))) {
-                is WorldBookActivationMutationResult.Applied -> withRuntime(record, result.runtimeState)
+            when (val result = WorldBookActivationController().apply(record.character.worldBooks, record.worldBookState, listOf(intent))) {
+                // 提交落在会话级的 worldBookState 上：切候选或回溯不回退玩家与脚本的启用意图。
+                is WorldBookActivationMutationResult.Applied -> record.copy(worldBookState = result.state)
                 is WorldBookActivationMutationResult.Rejected -> error("世界书或条目不存在")
+            }
+        }
+        "worldbook.books.force" -> {
+            args.only("book", "forced")
+            val book = args.string("book")
+            val forced = args["forced"]?.jsonPrimitive?.booleanOrNull ?: error("缺少必定生效值")
+            val intent = WorldBookActivationIntent.SetBookForceEnabled(book, forced)
+            when (val result = WorldBookActivationController().apply(record.character.worldBooks, record.worldBookState, listOf(intent))) {
+                is WorldBookActivationMutationResult.Applied -> record.copy(worldBookState = result.state)
+                is WorldBookActivationMutationResult.Rejected -> error("世界书不存在")
             }
         }
         // 世界书内容写入：只改当前对话自己那份快照，角色资产保持不变。
@@ -125,6 +138,7 @@ object BrowserConversation {
         "worldbook.entries.update" -> BrowserWorldBook.updateEntries(record, args)
         "worldbook.entries.create" -> BrowserWorldBook.createEntries(record, args)
         "worldbook.entries.delete" -> BrowserWorldBook.deleteEntries(record, args)
+        "worldbook.entries.restore" -> BrowserWorldBook.restoreContent(record, args)
         "worldbook.books.create" -> BrowserWorldBook.createBook(record, args)
         "worldbook.books.delete" -> BrowserWorldBook.deleteBook(record, args)
         "worldbook.books.rebind" -> BrowserWorldBook.rebind(record, args)

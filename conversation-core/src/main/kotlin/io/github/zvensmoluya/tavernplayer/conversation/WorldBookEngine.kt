@@ -74,6 +74,7 @@ class WorldBookEngine(
         transaction: MacroTransaction,
         previousState: Map<String, WorldBookEntryRuntimeState>,
         activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
+        forcedBooks: Set<String> = emptySet(),
         turnIndex: Int,
         inputBudgetTokens: Int?,
         messageCount: Int = projectedHistory.size,
@@ -118,6 +119,7 @@ class WorldBookEngine(
                 diagnostics,
                 trace,
                 activationOverrides,
+                forcedBooks,
                 hasBudgetOverflowed = { budgetOverflowed },
             ) { originalEntry ->
                 val preparationTransaction = transaction.fork()
@@ -218,6 +220,7 @@ class WorldBookEngine(
         diagnostics: MutableList<CompilationDiagnostic>,
         trace: MutableList<CompilationTraceEntry>,
         activationOverrides: WorldBookActivationOverrides,
+        forcedBooks: Set<String>,
         hasBudgetOverflowed: () -> Boolean,
         acceptEntry: (WorldBookEntryDefinition) -> String?,
     ) {
@@ -269,7 +272,9 @@ class WorldBookEngine(
                     listOf(historyText, additionalScanText, recursiveScan))
                     .filter(String::isNotBlank)
                     .joinToString("\n")
-                val matched = entry.constant || matches(entry, scan, diagnostics)
+                // 「必定生效」：该书已启用条目按常开处理。除关键字与概率外的规则照常应用。
+                val forced = book.id in forcedBooks
+                val matched = entry.constant || forced || matches(entry, scan, diagnostics)
                 if (!matched) return@filter false
                 scores[entry.id] = matchScore(entry, scan, diagnostics)
                 true
@@ -285,7 +290,8 @@ class WorldBookEngine(
                     trace += trace(entry, "dropped after world-book budget overflow")
                     return@forEach
                 }
-                if (entry.id !in stickyIds && entry.useProbability && entry.probability < 100 &&
+                // 「必定生效」跳过概率；其余条目照常判定。
+                if (entry.id !in stickyIds && book.id !in forcedBooks && entry.useProbability && entry.probability < 100 &&
                     transaction.nextInt(100) >= entry.probability) {
                     failedProbability += entry.id
                     trace += trace(entry, "failed probability=${entry.probability}; not rerolled in this generation")

@@ -98,6 +98,7 @@ data class ChatUiState(
     val memorySaving: Boolean = false,
     val conversationId: String? = null,
     val character: CharacterSnapshot = EMPTY_CHARACTER,
+    val worldBookState: ConversationWorldBookState = ConversationWorldBookState(),
     val persona: Persona = Persona("traveler", "旅人"),
     val messages: List<ChatMessageState> = emptyList(),
     val input: String = "",
@@ -280,6 +281,52 @@ class ChatViewModel(
         if (record.executionMode == ConversationExecutionMode.BROWSER) syncRecord(input = value)
         refreshNativeSurfaces()
         schedulePersist()
+    }
+
+    /**
+     * 会话内世界书操作：书级三态、条目启停、正文改写与恢复。
+     *
+     * 结果落在会话级的 `worldBookState` 上——不改角色资产，也不随消息候选回退。
+     * 一次保存成功后才发布，失败保留原状态并给出提示。
+     */
+    fun setWorldBookMode(bookId: String, mode: WorldBookBookMode) = commitWorldBook {
+        ConversationWorldBookEditor.setBookMode(it, bookId, mode)
+    }
+
+    fun setWorldBookEntryEnabled(bookId: String, entryId: String, enabled: Boolean) = commitWorldBook {
+        ConversationWorldBookEditor.setEntryEnabled(it, bookId, entryId, enabled)
+    }
+
+    fun setWorldBookEntryContent(bookId: String, entryId: String, content: String) = commitWorldBook {
+        ConversationWorldBookEditor.setEntryContent(it, bookId, entryId, content)
+    }
+
+    fun restoreWorldBookContent(bookId: String, entryId: String? = null) = commitWorldBook {
+        ConversationWorldBookEditor.restoreContent(it, bookId, entryId)
+    }
+
+    /** 清除这场对话的全部世界书调整，回到原卡默认。 */
+    fun resetWorldBookState() = commitWorldBook { ConversationWorldBookEditor.reset(it) }
+
+    private fun commitWorldBook(edit: (ConversationRecord) -> ConversationRecord) {
+        if (_uiState.value.busy) return
+        val proposed = try {
+            edit(record)
+        } catch (error: Exception) {
+            _uiState.update { it.copy(message = "世界书设置失败：${error.userMessage()}") }
+            return
+        }
+        if (proposed == record) return
+        viewModelScope.launch {
+            try {
+                record = conversationRepository?.save(proposed) ?: proposed
+                _uiState.update { it.copy(message = null) }
+                syncRecord()
+                refreshNativeSurfaces()
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "世界书设置未能保存：${error.userMessage()}") }
+            }
+        }
     }
 
     private fun refreshNativeSurfaces() {
@@ -1905,6 +1952,7 @@ private fun ConversationRecord.toUiState(
     } else JsonObject(emptyMap()),
     conversationId = id,
     character = character,
+    worldBookState = worldBookState,
     persona = persona,
     messages = turns.map { turn ->
         val variant = turn.selected

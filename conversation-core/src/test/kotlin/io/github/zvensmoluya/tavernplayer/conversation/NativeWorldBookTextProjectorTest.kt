@@ -52,7 +52,8 @@ class NativeWorldBookTextProjectorTest {
         overrides: WorldBookActivationOverrides = WorldBookActivationOverrides(), contextTokens: Int = 32768): CompilationResult = PromptCompiler().compile(
         NormalGenerationInput(character = character.snapshot(), persona = Persona("p", "旅人"),
             history = listOf(ConversationMessage("u", MessageRole.USER, "继续", "旅人")), preset = BuiltInPresets.default,
-            runtimeState = state(value).copy(worldBookActivationOverrides = overrides),
+            runtimeState = state(value),
+            worldBookState = ConversationWorldBookState(activation = overrides),
             conversationId = "test", generationId = "generation", modelId = "test", modelContextTokens = contextTokens))
 
     @Test fun `selects only current source before recursion and leaves original snapshot unchanged`() {

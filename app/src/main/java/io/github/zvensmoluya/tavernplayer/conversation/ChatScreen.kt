@@ -94,6 +94,11 @@ fun ChatRoute(
             confirmPlayerChoice = viewModel::confirmPlayerChoice,
             cancelPlayerChoice = viewModel::cancelPlayerChoice,
             refreshMemories = viewModel::refreshMemories,
+            onWorldBookMode = viewModel::setWorldBookMode,
+            onWorldBookEntryEnabled = viewModel::setWorldBookEntryEnabled,
+            onWorldBookEntryContent = viewModel::setWorldBookEntryContent,
+            onWorldBookRestore = viewModel::restoreWorldBookContent,
+            onWorldBookReset = viewModel::resetWorldBookState,
         ),
     )
 }
@@ -121,6 +126,11 @@ data class ChatScreenActions(
     val confirmPlayerChoice: () -> Unit = {},
     val cancelPlayerChoice: () -> Unit = {},
     val refreshMemories: () -> Unit = {},
+    val onWorldBookMode: (String, WorldBookBookMode) -> Unit = { _, _ -> },
+    val onWorldBookEntryEnabled: (String, String, Boolean) -> Unit = { _, _, _ -> },
+    val onWorldBookEntryContent: (String, String, String) -> Unit = { _, _, _ -> },
+    val onWorldBookRestore: (String, String?) -> Unit = { _, _ -> },
+    val onWorldBookReset: () -> Unit = {},
 )
 
 private data class PendingMessageEdit(
@@ -146,6 +156,7 @@ fun ChatScreen(
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
     var nativeGuideVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var worldBookVisible by remember(state.conversationId) { mutableStateOf(false) }
     var historicalStateMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val hasNativeGuide = state.character.nativeAdaptation?.guide != null
     val nativeGuide = remember(state.character) {
@@ -191,6 +202,13 @@ fun ChatScreen(
                     ) { Text("返回") }
                 },
                 actions = {
+                    if (state.character.worldBooks.isNotEmpty()) {
+                        TextButton(
+                            modifier = Modifier.testTag("openWorldBook"),
+                            enabled = !state.busy,
+                            onClick = { worldBookVisible = true },
+                        ) { Text("世界书", maxLines = 1) }
+                    }
                     TextButton(
                         modifier = Modifier.testTag("choosePreset"),
                         enabled = !state.busy,
@@ -511,6 +529,20 @@ fun ChatScreen(
         state.lastTrace?.let { trace ->
             TraceSheet(trace = trace, onDismiss = { traceVisible = false })
         }
+    }
+    if (worldBookVisible) {
+        WorldBookSessionDialog(
+            characterName = state.character.name,
+            books = state.character.worldBooks,
+            state = state.worldBookState,
+            busy = state.busy,
+            onDismiss = { worldBookVisible = false },
+            onBookMode = actions.onWorldBookMode,
+            onEntryEnabled = actions.onWorldBookEntryEnabled,
+            onEntryContent = actions.onWorldBookEntryContent,
+            onRestore = actions.onWorldBookRestore,
+            onResetAll = actions.onWorldBookReset,
+        )
     }
     pendingMessageEdit?.let { edit ->
         val consequences = buildList {
