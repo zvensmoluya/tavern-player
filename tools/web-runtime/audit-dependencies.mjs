@@ -1,4 +1,4 @@
-// 原卡作者程序的静态依赖核查：只读解码原件、用 acorn 解析作者 JS、与兼容目录交叉引用。
+﻿// 原卡作者程序的静态依赖核查：只读解码原件、用 acorn 解析作者 JS、与兼容目录交叉引用。
 // 不执行卡内程序，不联网，不请求模型。
 // 用法: node audit-dependencies.mjs <samples-dir> [--out <path>]
 // 默认输出: tools/web-runtime/build/dependency-audit.json
@@ -6,7 +6,7 @@
 // 三档口径：
 //   ① referenced        —— 源码里引用的 API（AST 静态扫描）
 //   ② runtime_evidence  —— 既有本地探测产物中实际执行到的 API（可能过期，逐条注明来源）
-//   ③ blocking_gaps     —— ①中绑定为 absent / rejecting-stub 的名字，运行时也执行到的优先列为
+//   ③ blocking_gaps     —— ①中绑定为 absent / rejecting-stub 的名字（浏览器程序），运行时也执行到的优先列为
 //                          runtime-observed，其余为 source-reference-only（仅推断，未逐条运行验证）
 //
 // 入库文件不出现角色卡标题、人物名、作者名或含原名的文件名；素材只用 SHA-256 与编号追溯。
@@ -422,6 +422,7 @@ const samples = SAMPLES.map(meta => {
     external_imports: [],
     runtime_evidence: [],
     blocking_gaps: [],
+    external_host_calls: [],
     unbound_references: [],
     unmatched_references: [],
     parse_warnings: warnings,
@@ -471,13 +472,21 @@ const samples = SAMPLES.map(meta => {
     if (entry.binding !== 'absent' && entry.binding !== 'rejecting-stub') continue;
     gaps.set(entry.name, { name: entry.name, binding: entry.binding, basis: runtimeNames.has(entry.name) ? 'runtime-observed' : 'source-reference-only' });
   }
-  // 运行时证据来自卡内引用的外部程序（如 MVU bundle），静态扫描看不到其内部调用；单独标出来源。
+  // 运行时证据里的调用来自卡内引用的外部程序（如 MVU bundle），它由另一套宿主执行。
+  // 不能用浏览器接口目录判定它们：宿主名要在对应执行环境（QuickJS 宿主）里核对，因此单列而不计入阻塞缺口。
+  const externalHostCalls = new Map();
   for (const entry of sample.runtime_evidence) {
     const binding = catalogBindings.get(entry.name);
-    if (!binding || (binding.binding !== 'absent' && binding.binding !== 'rejecting-stub')) continue;
-    if (gaps.has(entry.name)) continue;
-    gaps.set(entry.name, { name: entry.name, binding: binding.binding, basis: 'runtime-observed-external', origins: entry.origins });
+    if (!binding) continue;
+    if (entry.name in gaps) continue;
+    externalHostCalls.set(entry.name, {
+      name: entry.name,
+      browser_binding: binding.binding,
+      origins: entry.origins,
+      verdict: 'external-program-host-name: judge against the QuickJS host, not the browser catalog',
+    });
   }
+  sample.external_host_calls = [...externalHostCalls.values()].sort((a, b) => a.name.localeCompare(b.name, 'en'));
   sample.blocking_gaps = [...gaps.values()].sort((a, b) => a.name.localeCompare(b.name, 'en'));
   sample.unmatched_references = [...unmatched.entries()].sort(([a], [b]) => a.localeCompare(b, 'en')).map(([name, locations]) => {
     const sorted = [...locations].sort(compareLocation);
@@ -512,6 +521,7 @@ const result = {
     installed_by_parent: countBinding('installed-by-parent'),
     runtime_evidence_total: samples.reduce((sum, sample) => sum + sample.runtime_evidence.length, 0),
     blocking_gap_total: samples.reduce((sum, sample) => sum + sample.blocking_gaps.length, 0),
+    external_host_call_total: samples.reduce((sum, sample) => sum + (sample.external_host_calls?.length ?? 0), 0),
     parse_warning_total: samples.reduce((sum, sample) => sum + sample.parse_warnings.length, 0),
   },
   warnings: globalWarnings.sort(),

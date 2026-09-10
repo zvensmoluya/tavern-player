@@ -81,12 +81,7 @@ cd tools/web-runtime; npm run test:browser
   - `getVariables`（2 处）—— MVU 数据缺失时读取指定楼层的变量（`stat_data`）作后备。
   - `Mvu` / `Mvu.getMvuData`（各 2 处）—— 通过 `window.Mvu` 读取指定楼层的 MVU 状态数据。
 - 运行时证据（14 项，来源 `mvu-probe/build/card-report.json`）：`$`、`eventEmit`、`eventOn`、`getCharLorebooks`、`getChatMessages`、`getLastMessageId`、`getLorebookEntries`、`getLorebookSettings`、`Mvu.getMvuData`、`registerVariableSchema`、`setChatMessages`、`setLorebookSettings`、`substitudeMacros`、`updateVariablesWith`；另在 `survey-v2.json` 中观察到 `getChatMessages`、`getLastMessageId`、`Mvu.getMvuData`。
-- 阻塞缺口（4 项，均为 `runtime-observed-external`，即卡内引用的外部 MVU 程序在 Node 研究宿主上实际执行到的调用；探测宿主不是 Player，产物也可能过期，按风险线索处理）：
-  - `getLorebookSettings` / `setLorebookSettings` —— `absent`；用途：读取/写入世界书设置。
-  - `registerVariableSchema` —— `absent`；用途：注册 MVU 变量结构（schema）。
-  - `substitudeMacros` —— `absent`；用途：变量文本中的宏替换。
-  - 说明：同一批证据里的 `getLorebookEntries` 曾是 `rejecting-stub`，本次核查之后已随[对话内世界书读写](../web-runtime.md)交付，不再计入缺口。
-- 外部 import：MVU bundle 与 mvu_zod 两个远程地址各 1 处；内容未下载、未解析，上述运行时缺口正来自该 bundle 的实际执行路径。
+- 外部 import：MVU bundle 与 mvu_zod 两个远程地址各 1 处；内容未下载、未解析。**这是扫描范围限制，不表示生产缺失**：该 MVU 程序已被 QuickJS 路径接管（见本档末节"执行归属"，以及 `docs/web-runtime.md` 的 MVU 条目），bundle 内部调用的宿主名由 QuickJS 宿主提供，不能用浏览器接口目录判定。
 - parse_warning：`regex_replace:0` 在卡内 disabled，仍参与扫描。
 - 未解析的自由全局：`_`（lodash）、`$`（jQuery）、`z`（Zod）。
 
@@ -127,11 +122,28 @@ cd tools/web-runtime; npm run test:browser
 - 未解析的自由全局：`_`、`$`、`z`。
 - 阻塞缺口：无。
 
+## 执行归属与宿主契约（2026-09-10 复核）
+
+卡内脚本引用的接口要按**执行环境**分别判定：浏览器程序查浏览器接口目录；已被接管的 MVU 程序查 QuickJS 宿主；未识别依赖单列。研究宿主的调用记录不能直接与浏览器接口目录比较后判为缺失。
+
+C-04、C-07 的 helper 脚本只 import 远程 MVU / mvu_zod 地址，该程序由 QuickJS 路径接管（`BrowserProgramPreparer` 识别为 `mvu-schema` / `mvu-loader`，对应脚本不再进入 WebView），宿主为 `tools/mvu-probe/checkpoint-host.mjs`，经 `quickjs-entry.ts` 打包进 Android 资产。按锁定 MVU 源码 `source/mvu-research`（`61010da…`）逐项复核：
+
+| 名字 | 复核结论 |
+| --- | --- |
+| `registerVariableSchema` | 在锁定 MVU 源码中**没有任何引用**，是宿主侧的冗余绑定；空实现不影响行为。 |
+| `substitudeMacros` | 用于 initvar 解析与回复更新（5 处）。宿主只替换 `{{user}}` / `{{char}}`；本机 6 份原件的 `[initvar]` 条目仅出现 `{{user}}`，覆盖充分。 |
+| `getLorebookSettings` / `setLorebookSettings` | 用于 initvar 的启用书列表。宿主返回 `selected_global_lorebooks: []`，与 Player 无全局世界书一致；实际条目来自角色书，由 `MvuConversationRuntime` 传入的 `entries` 提供，`getLorebookEntries` 因此**不是**返回空。 |
+| `getLorebookEntries` | 宿主持有生产侧传入的角色世界书条目，initvar 加载因此可用；有测试断言原件的初始状态存在且 `{{user}}` 已展开。 |
+
+因此先前按名字判定的“运行时阻塞缺口”是**误报**，已从逐样本明细中移除。initvar 那条链路（`getEnabledLorebookList` → `getCharLorebooks` → `getLorebookEntries` → 解析 `[initvar]`）在本机原件上确实执行成功。
+
+已知的宿主边界（不是当前故障）：MVU 源码里存在 `{ type: 'chat' }` 作用域的写入（`update_variables.ts` 的更新路径与 `cleanup/chat_variables.ts`），宿主会明确拒绝。该分支由 `兼容性.更新到聊天变量` 控制，默认 `false`（`store.ts`），其覆盖来自 `[config_override]` 世界书条目，而读取覆盖的 `initCharacterSettingsOverride()` 只在 `main.ts` 调用——`entry.ts` 未导出，所以当前执行面**不会**走到该分支。本机 6 份原件也都没有该条目。若将来扩大被执行的入口面，需要先补这个作用域。
+
 ## 未被覆盖的部分
 
 1. **运行时档全部来自既有本地产物**：`mvu-probe/build/card-report.json` 是 Node 研究宿主（无 Android、无模型请求、无 EJS 与原生渲染验证），`card-probe/build/survey-v2.json` 是模拟宿主 + 无网络浏览器的 2026-09-09 记录；两者都可能过期，`blocked` 是被阻断的资源请求数（含 favicon 等噪声），不是 API 失败数。这些证据只说明“该路径被执行过”，不说明 Player 行为。
 2. **C-01、C-02 本机无原件，未扫描**。另有 1 份 JSON 原件（`68c9429e69a9c38d…`）不在 C-01…C-07 编号内，只登记哈希；该 JSON 与 C-03 的 PNG 解出同一份卡数据，不是独立样本。
-3. **卡内引用的远程 bundle 未下载、未解析**：C-04…C-07 的 helper 脚本只 import 远程 MVU / mvu_zod 地址，bundle 内部的 API 使用只能由既有产物覆盖（目前仅 C-04 有此类证据）。因此“引用 API 数为 0”不等于运行时不依赖任何 API。
+3. **卡内引用的远程 bundle 未下载、未解析**：C-04…C-07 的 helper 脚本只 import 远程 MVU / mvu_zod 地址，bundle 内部的 API 使用不在扫描范围内。这是**工具的范围限制**，不是生产缺口——该程序由 QuickJS 路径接管，内部调用的宿主名由该宿主提供（见"执行归属与宿主契约"）。因此"引用 API 数为 0"不等于运行时不使用任何宿主接口。
 4. **静态扫描看不到的形态**：字符串拼接的 API 名、`eval`、computed 成员访问、运行时动态插入的 `<script>`、`<script src=...>` 外部脚本、`on*` 内联处理器（本轮按范围排除）以及世界书正文中的代码。
 5. **`<script>` 提取使用正则**：脚本字符串内部出现 `</script>` 会提前截断。本轮样本未触发，但属于工具限制。
 6. **disabled 模板仍计入引用**：C-04 与 C-06 各有一条 disabled 脚本/模板参与扫描，引用数可能高于实际运行路径。
@@ -143,6 +155,6 @@ cd tools/web-runtime; npm run test:browser
 
 | 命令 | 结果 |
 | --- | --- |
-| `node tools/web-runtime/audit-dependencies.mjs source` | 匹配 5 份原件；19 个引用行全部已绑定；4 个运行时阻塞缺口（均 C-04）；2 条 disabled 说明；连续两次运行输出字节一致 |
+| `node tools/web-runtime/audit-dependencies.mjs source` | 匹配 5 份原件；19 个引用行全部已绑定；浏览器侧阻塞缺口 0 项；外部程序的宿主调用 23 项单列（不与浏览器目录比较）；2 条 disabled 说明；连续两次运行输出字节一致 |
 | `npm test`（`tools/web-runtime`） | 通过，0 失败、0 跳过（首次执行 30 项；仓库内其他并行改动加入新用例后重跑 40 项仍通过） |
 | `node --test test/browser/complex.test.mjs` | 4 项通过；写入 `build/capability-calls.json`（4 卡各 `ready` + 2×`frame.create`，C-06 另有 `host.messages.set`、`host.regex.replace`） |
