@@ -5,7 +5,7 @@ import { tavernEvents, mvuEvents, iframeEvents } from './host.mjs';
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
 let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, programKey = '', following = true;
-let renderQueue = Promise.resolve();
+let renderQueue = Promise.resolve(), coordinator = null;
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
 function lifecycle(name, args) { broadcast(name, args).catch(error => notice(error.message)); }
@@ -58,13 +58,26 @@ async function createFrame(kind, html, target, sourceId) {
   const frame = { element, token: result.token, origin: new URL(result.url).origin, kind, messageId: target?.message_id };
   frames.set(result.token, frame);
   if (kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_STARTED, [frame.token]);
+  if (kind === 'session') { element.name = 'player_author_session'; element.hidden = true; element.style.display = 'none'; }
   element.src = result.url;
   return frame;
 }
 function dispose(frame) {
   if (!frame) return;
+  if (coordinator && frame !== coordinator) post(coordinator, { type: 'dispose-owner', token: frame.token });
   post(frame, { type: 'dispose' }); frame.element.remove(); frames.delete(frame.token);
+  for (const [id, item] of eventAcks) if (item.frame === frame) { eventAcks.delete(id); item.reject(new Error('Runtime disposed')); }
   rpc('frame.dispose', { token: frame.token }).catch(() => {});
+}
+async function ensureCoordinator() {
+  if (coordinator) return;
+  const frame = await createFrame('session', '');
+  coordinator = frame;
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('会话运行环境启动超时')), 15000);
+    frame.onLoaded = () => { clearTimeout(timer); resolve(); };
+    document.body.append(frame.element);
+  });
 }
 async function render() {
   if (!snapshot) return;
@@ -149,19 +162,20 @@ async function updateScripts() {
 function scriptButtons(item, buttons) {
   item.node.querySelectorAll('button').forEach(b => b.remove());
   for (const value of buttons) if (value.visible !== false && typeof value.name === 'string') {
-    item.node.append(button(value.name, () => dispatchTo(item.frame, 'player_button:' + [...scriptFrames].find(([, v]) => v === item)?.[0] + ':' + value.name, [])));
+    item.node.append(button(value.name, () => broadcast('player_button:' + [...scriptFrames].find(([, v]) => v === item)?.[0] + ':' + value.name, [])));
   }
 }
 function dispatchTo(frame, name, args) {
   return new Promise((resolve, reject) => {
     const id = 'dispatch-' + (++sequence);
-    const timer = setTimeout(() => { eventAcks.delete(id); reject(new Error('脚本事件处理超时')); }, 10000);
-    eventAcks.set(id, { frame, resolve: () => { clearTimeout(timer); resolve(); }, reject: error => { clearTimeout(timer); reject(error); } });
+    // A valid listener may await a whole generation. Its lifetime, not an arbitrary
+    // ten-second timeout, bounds this acknowledgement.
+    eventAcks.set(id, { frame, resolve, reject });
     post(frame, { type: 'event', id, name, args });
   });
 }
 async function broadcast(name, args) {
-  for (const frame of [...frames.values()]) if (frame.loaded && frame.kind !== 'static') await dispatchTo(frame, name, args);
+  if (coordinator?.loaded) await dispatchTo(coordinator, name, args);
 }
 window.addEventListener('message', async event => {
   if (event.data?.channel !== 'player-frame' || event.data.epoch !== epoch) return;
@@ -172,7 +186,8 @@ window.addEventListener('message', async event => {
     const height = Number(data.height);
     if (Number.isFinite(height) && height > 0) { frame.element.style.height = Math.min(height, 100000) + 'px'; if (following) requestAnimationFrame(bottom); }
   } else if (data.type === 'loaded') {
-    frame.loaded = true; post(frame, { type: 'snapshot', snapshot });
+    frame.loaded = true;
+    if (frame.kind === 'session') { post(frame, { type: 'snapshot', snapshot }); frame.onLoaded?.(); return; }
     if (frame.kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_ENDED, [frame.token]);
     if (frame.kind !== 'script') lifecycle(snapshot.messages[frame.messageId]?.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
   } else if (data.type === 'notice') {
@@ -181,12 +196,12 @@ window.addEventListener('message', async event => {
     } else notice(data.message);
   } else if (data.type === 'request') {
     try {
-      if (frame.kind === 'static') throw new Error('Static HTML has no host capability');
+      if (frame.kind === 'static' || frame.kind === 'session') throw new Error('Static HTML has no host capability');
       const result = await rpc('host.' + data.method, data.args, { actorToken: frame.token, revision: data.revision });
       if (result.snapshot) {
         // Do not replace render metadata with the smaller authoritative host state.
         snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({ ...snapshot.messages.find(old => old.id === m.id), ...m })) };
-        for (const target of frames.values()) post(target, { type: 'snapshot', snapshot });
+        if (coordinator) post(coordinator, { type: 'snapshot', snapshot });
       }
       if (result.refresh && result.refresh.mode !== 'none') {
         const refresh = result.refresh;
@@ -201,9 +216,6 @@ window.addEventListener('message', async event => {
       }
       post(frame, { type: 'result', id: data.id, result });
     } catch (error) { post(frame, { type: 'result', id: data.id, error: error.message }); }
-  } else if (data.type === 'broadcast') {
-    try { await broadcast(data.name, data.args); post(frame, { type: 'event-result', id: data.id }); }
-    catch (error) { post(frame, { type: 'event-result', id: data.id, error: error.message }); }
   } else if (data.type === 'event-ack') {
     const item = eventAcks.get(data.id); if (!item || item.frame !== frame) return;
     eventAcks.delete(data.id); data.error ? item.reject(new Error(data.error)) : item.resolve();
@@ -222,7 +234,8 @@ async function apply(packet) {
   if (previous && snapshot.messages.length > previous.messages.length)
     shown += snapshot.messages.length - previous.messages.length;
   flags = packet.flags;
-  for (const frame of frames.values()) post(frame, { type: 'snapshot', snapshot });
+  await ensureCoordinator();
+  post(coordinator, { type: 'snapshot', snapshot });
   notice(flags.notice);
   await render();
   if (!previous) { lifecycle(tavernEvents.CHAT_CHANGED, [snapshot.conversationId]); return; }
@@ -247,7 +260,7 @@ globalThis.Player = {
   receive(packet) {
     if (packet.type === 'fatal') {
       notice(packet.message);
-      for (const frame of frames.values()) post(frame, { type: 'fatal', message: packet.message });
+      if (coordinator) post(coordinator, { type: 'fatal', message: packet.message });
       return;
     }
     if (packet.type === 'result') {

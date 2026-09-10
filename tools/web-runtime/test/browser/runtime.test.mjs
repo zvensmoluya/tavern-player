@@ -11,7 +11,7 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     const frames = new Map(); let number = 0, sent = 0;
     const display = 'Narrative\n\n```html\n<body><button id="change">Change</button><button id="send">Send</button><p id="count"></p><script>' +
       '$(errorCatched(()=>{window.boots=(window.boots||0)+1;document.getElementById("count").textContent=String(window.boots);' +
-      'document.getElementById("change").onclick=()=>{replaceVariables({score:3});document.getElementById("count").textContent=String(getVariables().score)};' +
+      'document.getElementById("change").onclick=()=>{insertOrAssignVariables({score:3});document.getElementById("count").textContent=String(getAllVariables().score)};' +
       'document.getElementById("send").onclick=()=>{parent.$("#send_textarea").val("From card");parent.$("#send_but").click()};' +
       '}));</script></body>\n```';
     let snapshot = { conversationId: 'c', revision: 'r0', chatVariables: {}, scriptVariables: {}, draft: '', mvu: null, worldbooks: [],
@@ -25,7 +25,10 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
         await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
       } else if (req.method === 'frame.create') {
         const token = String(++number);
-        frames.set(token, { html: req.args.html, kind: req.args.kind, actor: { id: token, turnId: 't', variantId: 'v' }, snapshot, epoch, rootOrigin: root, viewportHeight: 700 });
+        const message = snapshot.messages.find(value => value.id === req.args.messageId);
+        const script = [snapshot.program, snapshot.presetProgram].flatMap(value => value.sources ?? []).find(value => value.id === req.args.sourceId);
+        frames.set(token, { html: script?.content ?? req.args.html, kind: req.args.kind,
+          actor: { id: token, turnId: message?.turnId, variantId: message?.variantId, scriptId: script?.id }, snapshot, epoch, rootOrigin: root, viewportHeight: 700 });
         result = { token, url: origin + '/frame/' + token };
       } else if (req.method === 'frame.dispose') frames.delete(req.args.token);
       else if (req.method === 'host.variables.replace') {
@@ -89,6 +92,62 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     assert.equal(await staticFrame.locator('script').count(), 1); // Only the trusted resize/bootstrap hook remains.
     assert.equal(await frame.evaluate(() => window.boots), 1);
     assert.equal(await page.locator('article iframe').count(), 2);
+
+    await frame.evaluate(() => {
+      initializeGlobal('Shared', { count: 0, increment() { this.count++; } });
+      window.nativeUpdates = 0;
+      eventOn(tavern_events.MESSAGE_UPDATED, () => nativeUpdates++);
+      eventOn('cross-page', value => { Shared.increment(); value.first = true; });
+    });
+    const secondDisplay = '```html\n<body><p id="second">Second</p><script>' +
+      '$(errorCatched(async()=>{await waitGlobalInitialized("Shared");window.nativeUpdates=0;' +
+      'eventOn(tavern_events.MESSAGE_UPDATED,()=>nativeUpdates++);' +
+      'eventMakeFirst("cross-page",value=>{value.before=Shared.count;Shared.increment()});' +
+      'initializeGlobal("Second",{alive:true});window.started=true}));</script></body>\n```';
+    const secondMessage = { ...snapshot.messages[0], id: 'second', turnId: 'second', variantId: 'second', message_id: 3,
+      message: secondDisplay, display: secondDisplay, swipes: [secondDisplay] };
+    snapshot = { ...snapshot, messages: [...snapshot.messages, secondMessage] };
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    await page.waitForFunction(() => document.querySelectorAll('article').length === 4);
+    let second;
+    for (let i = 0; i < 100 && !second; i++) {
+      second = page.frames().find(candidate => candidate.url() === 'about:srcdoc' && candidate !== frame &&
+        candidate.parentFrame()?.url().endsWith('/' + number));
+      if (!second) await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.ok(second); await second.waitForFunction(() => window.started);
+    assert.deepEqual(await second.evaluate(() => {
+      const value = {}; eventEmitAndWait('cross-page', value);
+      return { ...value, count: Shared.count, same: Shared === parent.Shared };
+    }), { before: 0, first: true, count: 2, same: true });
+    assert.equal(await frame.evaluate(() => Shared.count), 2);
+    // One native event is emitted once into the shared registry, not once per page.
+    snapshot = { ...snapshot, messages: snapshot.messages.map((message, i) => i ? message : { ...message, message: message.message + '\nChanged' }) };
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    await frame.waitForFunction(() => nativeUpdates === 1);
+    assert.equal(await second.evaluate(() => nativeUpdates), 1);
+    // Removal cleans owned callbacks/globals while the coordinator and first page survive.
+    snapshot = { ...snapshot, messages: snapshot.messages.slice(0, 3) };
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    await frame.waitForFunction(() => typeof Second === 'undefined');
+    assert.deepEqual(await frame.evaluate(() => { const value = {}; eventEmitAndWait('cross-page', value); return { ...value, count: Shared.count }; }),
+      { first: true, count: 3 });
+    assert.equal(await page.locator('iframe[name="player_author_session"]').count(), 1);
+
+    const source = { id: 'preset-script', enabled: true, sha256: 'one',
+      content: "initializeGlobal('PresetLibrary',{version:1});eventOn('preset-event',()=>Shared.increment());" };
+    snapshot = { ...snapshot, presetHash: 'p1', presetProgram: { sources: [source] } };
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    await frame.waitForFunction(() => typeof PresetLibrary !== 'undefined' && PresetLibrary.version === 1);
+    snapshot = { ...snapshot, presetHash: 'p2', presetProgram: { sources: [{ ...source, sha256: 'two',
+      content: "initializeGlobal('PresetLibrary',{version:2});eventOn('preset-event',()=>{Shared.count+=10});" }] } };
+    // A running generation retains its captured preset runtime.
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags: { ...flags, running: true } });
+    assert.equal(await frame.evaluate(() => PresetLibrary.version), 1);
+    await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
+    await frame.waitForFunction(() => PresetLibrary?.version === 2);
+    assert.equal(await frame.evaluate(() => { eventEmitAndWait('preset-event'); return Shared.count; }), 13);
+    assert.equal(await page.locator('iframe[name="player_author_session"]').count(), 1);
 
   } finally { await browser.close(); }
 });

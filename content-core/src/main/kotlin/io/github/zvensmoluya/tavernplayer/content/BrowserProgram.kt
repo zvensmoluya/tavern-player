@@ -15,6 +15,7 @@ data class BrowserProgram(
     val blockedSourceIds: Set<String> = emptySet(),
     val runtimeFingerprint: String = "",
     val diagnostics: List<String> = emptyList(),
+    val variables: JsonObject = JsonObject(emptyMap()),
 )
 
 @Serializable
@@ -26,6 +27,7 @@ data class BrowserScriptSource(
     val enabled: Boolean,
     val buttons: List<BrowserScriptButton> = emptyList(),
     val declaredId: String? = null,
+    val data: JsonObject = JsonObject(emptyMap()),
 )
 
 @Serializable
@@ -83,7 +85,7 @@ object BrowserProgramReader {
                             val v = b as? JsonObject ?: return@mapNotNull null
                             val name = (v["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                             BrowserScriptButton(name, (v["visible"] as? JsonPrimitive)?.booleanOrNull ?: true)
-                        }, declaredId)
+                        }, declaredId, obj["data"] as? JsonObject ?: JsonObject(emptyMap()))
                 }
                 (obj["scripts"] as? JsonArray)?.let { walk(it, "$location/scripts", active, depth + 1) }
             }
@@ -95,7 +97,7 @@ object BrowserProgramReader {
                 else "$pointer/tavern_helper/scripts"
             walk(scripts, path, true, 0)
         }
-        return BrowserProgram(sources = result)
+        return BrowserProgram(sources = result, variables = helper["variables"] as? JsonObject ?: JsonObject(emptyMap()))
     }
 
     fun sha256(text: String): String = MessageDigest.getInstance("SHA-256")

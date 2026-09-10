@@ -207,7 +207,7 @@ class BrowserSession(
                 method.startsWith("host.") -> {
                     check(!failed) { "当前网页运行实例已停止，请重新加载" }
                     val frame = frames[request["actorToken"]?.jsonPrimitive?.content] ?: error("作者页面已销毁")
-                    require(frame.kind != "static") { "普通 HTML 没有执行权限" }
+                    require(frame.kind == "page" || frame.kind == "script") { "该网页实例没有业务操作权限" }
                     val actor = frame.actor
                     if (actor.turnId != null) require(state.browserSnapshot["messages"]?.jsonArray?.any {
                         it.jsonObject["turnId"]?.jsonPrimitive?.content == actor.turnId && it.jsonObject["variantId"]?.jsonPrimitive?.content == actor.variantId
@@ -237,13 +237,14 @@ class BrowserSession(
     private fun createFrame(args: JsonObject): JsonObject {
         require(frames.size < 512) { "当前会话的网页实例达到 512 个上限" }
         val kind = args["kind"]?.jsonPrimitive?.content
-        require(kind in setOf("static", "page", "script")) { "无效网页类型" }
+        require(kind in setOf("static", "page", "script", "session")) { "无效网页类型" }
+        if (kind == "session") require(frames.values.none { it.kind == "session" }) { "会话协调器已存在" }
         val sourceId = args["sourceId"]?.jsonPrimitive?.contentOrNull
         val source = if (kind == "script") listOfNotNull(state.browserSnapshot["program"], preparedPreset.takeIf { it != JsonNull })
             .flatMap { it.jsonObject["sources"]?.jsonArray.orEmpty() }
             .firstOrNull { it.jsonObject["id"]?.jsonPrimitive?.content == sourceId && it.jsonObject["enabled"]?.jsonPrimitive?.boolean == true }?.jsonObject
             ?: error("脚本来源未启用") else null
-        val message = if (kind != "script") state.browserSnapshot["messages"]?.jsonArray?.firstOrNull {
+        val message = if (kind == "page" || kind == "static") state.browserSnapshot["messages"]?.jsonArray?.firstOrNull {
             it.jsonObject["id"]?.jsonPrimitive?.content == args["messageId"]?.jsonPrimitive?.content
         }?.jsonObject ?: error("消息已失效") else null
         if (kind == "page") require(message?.get("status")?.jsonPrimitive?.content == "COMPLETE") { "消息尚未完成" }

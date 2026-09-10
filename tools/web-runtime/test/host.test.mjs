@@ -30,6 +30,58 @@ const snapshot = () => ({ revision: 'r0', conversationId: 'c', draft: '', chatVa
       data: {}, extra: {}, swipe_id: 0, swipes: ['Opening', 'Alternative'], swipes_data: [{}, {}], swipes_info: [{}, {}] },
   ] });
 
+test('getAllVariables shallowly merges through the owned floor and tracks candidate changes', () => {
+  const initial = snapshot();
+  initial.program = { variables: { inherited: 1, nested: { character: true } } };
+  initial.chatVariables = { chat: true, nested: { chat: true } };
+  initial.messages[0].data = { first: true, nested: { first: true } };
+  initial.messages.push({ ...initial.messages[0], turnId: 't1', message_id: 1, data: { future: true } });
+  const host = createHost({ initial, actor: { turnId: 't0' }, request: async () => ({}) });
+  assert.deepEqual(host.api.getAllVariables(), { inherited: 1, chat: true, first: true, nested: { first: true } });
+  const copy = host.api.getAllVariables(); copy.nested.first = false;
+  assert.equal(host.api.getAllVariables().nested.first, true);
+  initial.messages[0].data = { alternative: true };
+  host.receive(initial);
+  assert.deepEqual(host.api.getAllVariables(), { inherited: 1, chat: true, nested: { chat: true }, alternative: true });
+  initial.messages = [];
+  host.receive(initial);
+  assert.throws(() => host.api.getAllVariables(), /no longer exists/);
+});
+
+test('script aggregation uses imported defaults and pending writes without including message variables', async () => {
+  const initial = snapshot();
+  initial.program = { variables: { character: true }, sources: [{ id: 's', data: { seed: 2, shared: 'script' } }] };
+  initial.chatVariables = { shared: 'chat' };
+  initial.messages[0].data = { messageOnly: true };
+  const host = createHost({ initial, actor: { scriptId: 's' }, request: async (_, args) => ({ snapshot: { scriptVariables: { s: args.data } } }) });
+  assert.deepEqual(host.api.getVariables({ type: 'script' }), { seed: 2, shared: 'script' });
+  assert.deepEqual(host.api.getAllVariables(), { character: true, seed: 2, shared: 'chat' });
+  host.api.replaceVariables({}, { type: 'script' });
+  assert.deepEqual(host.api.getAllVariables(), { character: true, shared: 'chat' });
+  await host.flush();
+  assert.deepEqual(host.api.getVariables({ type: 'script' }), {});
+});
+
+test('variable helpers merge nested objects, replace arrays and preserve durable ordering', async () => {
+  const initial = snapshot(), writes = [];
+  initial.chatVariables = { actor: { score: 0, keep: true }, items: ['old', 'tail'] };
+  const host = createHost({ initial, actor: {}, request: async (_, args) => {
+    writes.push(args.data); return { snapshot: { chatVariables: args.data } };
+  } });
+  assert.deepEqual(host.api.insertOrAssignVariables({ actor: { score: 3 }, items: ['new'] }),
+    { actor: { score: 3, keep: true }, items: ['new'] });
+  assert.deepEqual(host.api.insertVariables({ actor: { score: 9, added: false }, items: ['ignored', 'tail'] }),
+    { actor: { score: 3, keep: true, added: false }, items: ['new'] });
+  const deleted = host.api.deleteVariable('actor.score');
+  assert.equal(deleted.delete_occurred, true);
+  assert.deepEqual(deleted.variables.actor, { keep: true, added: false });
+  // Lodash unset returns true even when the path was already absent.
+  assert.equal(host.api.deleteVariable('actor.absent').delete_occurred, true);
+  await host.flush();
+  assert.equal(writes.length, 4);
+  assert.deepEqual(writes.at(-1), host.api.getVariables());
+});
+
 test('synchronous writes are visible immediately and durably ordered', async () => {
   let saved = snapshot(), serial = 0; const calls = [];
   const host = createHost({ initial: saved, actor: { scriptId: 'script' }, request: async (method, args, revision) => {

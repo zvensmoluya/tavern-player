@@ -29,6 +29,8 @@ app ───────────────> model-gateway
 
 `BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ChatViewModel` 串行协调原生操作、保存与生成。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
 
+网页外壳先创建一个持久作者会话协调 iframe，再挂载消息和后台脚本。`session.mjs` 统一保存共享对象、事件监听器、待提交视图和命令队列；各 `host.mjs` 保留页面身份与原生传输入口。作者内容与协调器同源，通过实际对象引用共享函数和回调；协调器仍与可信外壳不同源且不直接访问原生桥。原生事实事件只向协调器分发一次，销毁页面按所属身份清理监听器、等待及排队操作。
+
 可信外壳和作者兼容父页面使用不同来源；消息和后台脚本各自持有候选/脚本身份。初次快照、后续增量、50 ms 合并更新、先保存后确认、失败停止实例及销毁取消均由生产路径实现。`executionMode` 缺省为旧 Native，新建主入口显式 BROWSER，保存程序指纹、候选变量/head 与资源版本。
 
 网页图片命中已有持久资源索引，缺失图片按需补入。`WebResourceRepository` 独立保存 HTTPS 静态资源，URL 在会话内绑定首个内容哈希，重定向模块/CSS 保留最终解析基址。具体协议、容量、接口、恢复和验证命令集中维护在[网页运行契约](web-runtime.md)。

@@ -22,6 +22,57 @@ import java.util.concurrent.atomic.AtomicReference
 @RunWith(AndroidJUnit4::class)
 class BrowserSessionAndroidTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    @Test fun authorPagesShareObjectsAndSynchronousEventsThroughProductionSession() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val graph = AppGraph(context)
+        val root = File(context.cacheDir, "web-session-${UUID.randomUUID()}")
+        val repository = ConversationRepository(root, graph.promptCompiler, prepareBrowser = graph.browserEnvironment::prepare)
+        val pages = """```html
+<body><p>Provider</p><script>
+initializeGlobal('Shared', {count:0, increment(){this.count++}});
+eventOn('shared-event', value => {Shared.increment(); value.provider=true});
+</script></body>
+```
+
+```html
+<body><p>Consumer</p><script>
+(async()=>{await waitGlobalInitialized('Shared');
+const value={};eventEmitAndWait('shared-event',value);
+let isolated=false;try{parent.parent.document.title}catch(e){isolated=true}
+replaceVariables({count:Shared.count,provider:value.provider,same:Shared===parent.Shared,isolated});
+})().catch(error=>toastr.error(error.message));
+</script></body>
+```"""
+        val saved = AtomicReference(runBlocking { repository.create(CharacterAsset("session-audit", name = "Actor", firstMessage = pages),
+            Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER) })
+        val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
+        lateinit var web: WebView
+        lateinit var session: BrowserSession
+        fun state() = saved.get().let { record -> ChatUiState(conversationId = record.id, character = record.character,
+            executionMode = record.executionMode, loadingConnections = false,
+            browserSnapshot = JsonObject(BrowserConversation.snapshot(record) +
+                ("program" to Json.encodeToJsonElement(BrowserProgram.serializer(), record.character.browserProgram!!)))) }
+        try {
+            compose.runOnUiThread {
+                web = WebView(compose.activity); compose.activity.setContentView(web)
+                session = BrowserSession(web, graph.browserEnvironment, state(), { actor, revision, method, args ->
+                    BrowserConversation.authorize(saved.get(), actor, revision)
+                    saved.set(repository.save(BrowserConversation.apply(saved.get(), actor, method, args)))
+                    session.update(state())
+                    buildJsonObject { put("snapshot", BrowserConversation.snapshot(saved.get())); put("value", JsonNull) }
+                }, { _, _ -> }, failures::add)
+                session.start()
+            }
+            compose.waitUntil(30_000) { saved.get().runtimeState.browserChatVariables["count"] == JsonPrimitive(1) || failures.isNotEmpty() }
+            assertTrue(failures.joinToString(), failures.isEmpty())
+            val variables = saved.get().runtimeState.browserChatVariables
+            assertEquals(JsonPrimitive(1), variables["count"])
+            listOf("provider", "same", "isolated").forEach { assertEquals(it, JsonPrimitive(true), variables[it]) }
+        } finally {
+            compose.runOnUiThread { session.release(); web.destroy() }
+            root.deleteRecursively()
+        }
+    }
     @Test fun originalPageSavesThroughProductionBridgeAndReopensFromDurableState() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val graph = AppGraph(context)

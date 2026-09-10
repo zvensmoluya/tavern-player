@@ -1,0 +1,4863 @@
+{
+  "schemaVersion": 1,
+  "helperCommit": "dd8327d437eb0cdbd1eddc23b5491812870aa7d8",
+  "meaning": "Binding presence is not compatibility. Domains, namespace members, aliases and source dependencies are inventoried separately. No conformance percentage is computed.",
+  "hostSourceSha256": "048dd624d14e52031979a52f51a5a68d1152225f712fa25a1ea81c1cfacef6b1",
+  "playerSources": {
+    "src/host.mjs": "048dd624d14e52031979a52f51a5a68d1152225f712fa25a1ea81c1cfacef6b1",
+    "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
+    "src/parent.mjs": "a223125055f2da315996c45a20033749ccde68438d6fdd63957ff20b35b12553",
+    "src/shell.mjs": "f277869d9be6351382fcc7270b2738d1fa5463b0f9a4212f684eb3bcd8c9390f"
+  },
+  "sources": {
+    "@types/function/audio.d.ts": "02c7ace1acbb1949037aca6f2156e4f109212dd6b9642a63d06934316b24c908",
+    "@types/function/builtin.d.ts": "cc2d1006b92c6ab07266ea38271f5355a07195cb68417243446a30194aa73a8d",
+    "@types/function/character.d.ts": "00b088ac8f85c8efc9afa8de9e71340dae666a07bf110564d5df903f8ccbf147",
+    "@types/function/chat_message.d.ts": "302930d6cc697321d0e1514d096dcd272a465fbc418f2190b41ddcffafc19327",
+    "@types/function/displayed_message.d.ts": "fec1e5463e931e788c787d2a7263e24570ae42429ba04f4648779afe9a161bb1",
+    "@types/function/extension.d.ts": "8f465ba49481eec9786526e90c58321d7e4ae813b9732a77b64e51e64274593c",
+    "@types/function/generate.d.ts": "562e41dc421f45c65739f43a2e11a16a27986d2fceaf9dab27410287f2e20c1f",
+    "@types/function/global.d.ts": "d80f189038ab1aba7385764f629760fe7c7c8f0436024f06cbb52c39c2daabdd",
+    "@types/function/import_raw.d.ts": "436bd0f69cc9f1633389172fed30258eb402c9a9af45eef12411a2aa4cbffaa9",
+    "@types/function/index.d.ts": "efc360240795db754b068d803ddd65a2f99f66dd78516d6de0bdf819496b9d36",
+    "@types/function/inject.d.ts": "315bbd3329cea8fe269e1d396948bd98f5c916787d9bd8c4f8cd0359015d71b0",
+    "@types/function/lorebook_entry.d.ts": "e47a25ec0daa12124ef6304ee49f93ab23353673295c5da046a9aa1c0538555d",
+    "@types/function/lorebook.d.ts": "da35836080d2d95a63b7217f9c2550d29e843ec33012953a0fc3b296799c7883",
+    "@types/function/macro_like.d.ts": "0b9bd09646f2e2692f51dbfdd9eade9c0efbb10f092d86de5ed681a1972eda0b",
+    "@types/function/persona.d.ts": "edcc00eff62629c2029a2d618ef5b3550939d3aad4fd16a231e51951304dfa26",
+    "@types/function/preset.d.ts": "442ee5198e2135ad4fb3e689fbeeac1458f6c813dfc8a60e3d1e00157e0a5ea5",
+    "@types/function/raw_character.d.ts": "8a1f41833c846f5345b7d40588a1f1bcfbc68d129fa56cc92511366c71bf5410",
+    "@types/function/script.d.ts": "85212926bc42224ae82ffca2dd86063cdc351863b3ae2e18ef407026e9b263d9",
+    "@types/function/slash.d.ts": "773543ca4ac5e231e7ba8dc1d22c779f980755bf57601b946369b63a718c4285",
+    "@types/function/tavern_regex.d.ts": "43616428cd19241d8e015d7dffed695488e4d091f15e1a3994bf80518a372fe4",
+    "@types/function/util.d.ts": "12ad465ff717f86b259bb49cf32cc915fa938b3f632a980192edbea19419fd2b",
+    "@types/function/variables.d.ts": "45bc282ef55a070edcd6d659313f609fe38dae0650897c2fcf9243b00041ce1b",
+    "@types/function/version.d.ts": "f512d3d436b96ccd1b17a4c67e6ac2912cd4b1121d8a9ce02315b9593667e0b7",
+    "@types/function/worldbook.d.ts": "ec7c2b0f935b114c47f19c57505f9ccef213e25fc4917e61ba7f39290065c81a",
+    "@types/iframe/event.d.ts": "c2f53dfb276489f191a0fb1ffd9ccea402f48967c9a3ca832711ef7a7fd45343",
+    "@types/iframe/exported.ejstemplate.d.ts": "55dc38589c2a01a01e162411af321c536d6cd142a18ce3ffb207d699d14fabe8",
+    "@types/iframe/exported.mvu.d.ts": "f59b8af4782ebd813be11bd1040d4d37f14241ff79bed5b09b9b7aa5c141728d",
+    "@types/iframe/exported.sillytavern.d.ts": "eae4ed517b5ff493afca4581e191b212020088ad12577d699297efd0eb5ab0bb",
+    "@types/iframe/exported.tavernhelper.d.ts": "3ce05ebcbedee09da964156f506ac1191fa1477b7e07b876b705aa58891e69a3",
+    "@types/iframe/script.d.ts": "b3eefce598b3eefe03aa598e2d76b97922b058a3551a8fdd37265743fc8e9f11",
+    "@types/iframe/util.d.ts": "57939734be3b0728bf502f0c6713727920391dfa3c3f7ad834dc8ee8a2523ab0",
+    "@types/iframe/variables.d.ts": "b85166d18310f84d6fcd68ff5a9957170a53d655a507e97587a15f79d720c902",
+    "src/function/audio.ts": "7ea7f194e0c0152f7d2aee29bc82a37b763a35dbe0d2e9decb255a2f80996dfd",
+    "src/function/builtin.ts": "d9ab4112fedbd621abada2ba2abb7311753f6332e39510da206da3b292608432",
+    "src/function/character.ts": "0442cebe3133a95e207b21cd1aa43452be9af50ac77758f58dc2725e579fba9a",
+    "src/function/chat_message.ts": "7400499e36f664a55fe5a2a55cc77cda49c968ea5af982f6ed28e1001d6ef43f",
+    "src/function/displayed_message.ts": "31802565e713beabab49bbc3c77f8cbf499ea7eedbd2cc5c40d79d2f54d6e187",
+    "src/function/event.ts": "0ebfcb420bd256eb9f78bb38195922605451d8dab4c82e24d0fc75f23962044d",
+    "src/function/extension.ts": "98ab39a0ed9955f86c78d08d3826ec212e00916c1e90260834f87b6787867048",
+    "src/function/generate/dataProcessor.ts": "0b2c3efad15380701b11d68007d23e6cd198b32f93fb63bf7574b41d1df6594a",
+    "src/function/generate/generate.ts": "bcfb14c6dea0dc4e525f72c6d82300b2fd10420ac06338534d427d3e52c1f6fa",
+    "src/function/generate/generateRaw.ts": "cf108cd90ebe10bca817fedb57fa4071b3a86ca9d6f171efa7066322737042de",
+    "src/function/generate/index.ts": "c2e07b64eb365b076c1adccee7fe88b29a3e85133a7f74cf3fc2bdb840bc5161",
+    "src/function/generate/inputProcessor.ts": "db994f43c5672c6264bd6da4ebc72d0533d9fcdab6ea54d3d0611cc44a997b7a",
+    "src/function/generate/responseGenerator.ts": "bea14d54d54191ee60400fdb10d0020ab07345a8ddf9fdf2a1f19abed7aea81b",
+    "src/function/global.ts": "03e8b8a5da47e1b3c685d651252ac29f9209379faf4e2f287e8087bc23abb74d",
+    "src/function/import_raw.ts": "074d5fe86df7587910ab51a18c273a4273136832f723663c4fa8fbd8f8b7dc86",
+    "src/function/index.ts": "beed8209b3e304bb9147092868c9bf4835f10b9ea04813d5ce7c69b8f98c9774",
+    "src/function/inject.ts": "9a988fbd25c086beaf995005b60f1a123f6afc9a2da7b1237ea7185cbfc0d500",
+    "src/function/lorebook_entry.ts": "dd533685c071d0d931bc0d848554db70db2b25cee0288a1ab9990c29c0ffced4",
+    "src/function/lorebook.ts": "56a9210cd77e847f9f25eafa768286cdc859e44284f070924afd8de534cd2dd1",
+    "src/function/macro_like.ts": "89fcb67e73b6a39c26e5518b8c2cedcf5aec35247434f9ac897698805d784b7a",
+    "src/function/persona.ts": "147312ed468c8730e8ba0ad77d453d1d56b3f6fe65f4f0be0d5f3cc982e93bef",
+    "src/function/preset.ts": "cb87f8af8c3c9cbe65c7fd71721f2e9c68af42a1f079f62c18d67d24f9b3bd85",
+    "src/function/raw_character.ts": "959edfd7700108be4e3f69349a1542bb4754c06678e74679b6e0b90233221c35",
+    "src/function/script.ts": "289704ccd78017c7f2c03a2c8f25822e8f8c92ec687ee91ef06603aba22de59f",
+    "src/function/slash.ts": "eb389bdb1ed4b7f8e57f86b66c577cdc1657c9b7234e70223e506ce5ca633c94",
+    "src/function/tavern_regex.ts": "6c2bcede950ab76290787edb3249c592b5391b3d9fc455ed8cd1a966d4e503f9",
+    "src/function/util.ts": "028b46f2d138d383f40a9ec409d9c631244b7a19d65649703a30829372fc4ca6",
+    "src/function/variables.ts": "49b161facd0c83917b29bdc97e189e33ee35a16643eac56a6cb8489dd8421f45",
+    "src/function/version.ts": "a5b0ed51aad84ff70010547d3ee60bcbd1b5e79553a88327172f1d2c43d287b5",
+    "src/function/worldbook.ts": "1860ad65613949c099bbf4a182b888c33a8150305ff3b6071f81f15bb4071d94",
+    "src/iframe/predefine.js": "5a75bdd4e1d8b8e3c0a8626a26f7d1635a103837904792b3833e8fc26ec9b323"
+  },
+  "domains": [
+    {
+      "id": "runtime",
+      "title": "运行环境、初始化与事件",
+      "declarations": [
+        "function/global.d.ts",
+        "function/util.d.ts",
+        "iframe/event.d.ts",
+        "iframe/util.d.ts",
+        "iframe/exported.tavernhelper.d.ts"
+      ],
+      "implementations": [
+        "src/function/event.ts",
+        "src/function/global.ts",
+        "src/function/util.ts"
+      ],
+      "owner": "browser-session",
+      "status": "partial",
+      "batch": "A",
+      "dependencies": [
+        "./variables",
+        "@/function/event",
+        "@/function/script",
+        "@/function/util",
+        "@/util/algorithm",
+        "@sillytavern/script",
+        "async-wait-until",
+        "is-promise",
+        "type-fest",
+        "zod"
+      ],
+      "entries": [
+        {
+          "name": "errorCatched",
+          "kind": "function",
+          "declaration": "@types/function/util.d.ts",
+          "line": 33,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventClearAll",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 164,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventClearEvent",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 148,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventClearListener",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 157,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventEmit",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 118,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventEmitAndWait",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 126,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventMakeFirst",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 79,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventMakeLast",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 62,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventOn",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 42,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventOnButton",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 45,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventOnce",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 96,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "eventRemoveListener",
+          "kind": "function",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 139,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getCurrentMessageId",
+          "kind": "function",
+          "declaration": "@types/iframe/util.d.ts",
+          "line": 46,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getIframeName",
+          "kind": "function",
+          "declaration": "@types/iframe/util.d.ts",
+          "line": 37,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getLastMessageId",
+          "kind": "function",
+          "declaration": "@types/function/util.d.ts",
+          "line": 18,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getMessageId",
+          "kind": "function",
+          "declaration": "@types/function/util.d.ts",
+          "line": 43,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getScriptId",
+          "kind": "function",
+          "declaration": "@types/iframe/util.d.ts",
+          "line": 55,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events",
+          "kind": "const",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 172,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.GENERATION_ENDED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.GENERATION_STARTED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.MESSAGE_IFRAME_RENDER_ENDED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.MESSAGE_IFRAME_RENDER_STARTED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.STREAM_TOKEN_RECEIVED_FULLY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "iframe_events.STREAM_TOKEN_RECEIVED_INCREMENTALLY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "initializeGlobal",
+          "kind": "function",
+          "declaration": "@types/function/global.d.ts",
+          "line": 14,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "reloadIframe",
+          "kind": "function",
+          "declaration": "@types/iframe/util.d.ts",
+          "line": 30,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "substitudeMacros",
+          "kind": "function",
+          "declaration": "@types/function/util.d.ts",
+          "line": 11,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events",
+          "kind": "const",
+          "declaration": "@types/iframe/event.d.ts",
+          "line": 188,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.APP_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_DUPLICATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_EDITED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_EDITOR_OPENED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_FIRST_MESSAGE_SELECTED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_MANAGEMENT_DROPDOWN",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_MESSAGE_RENDERED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.CHARACTER_PAGE_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_RENAMED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHARACTER_RENAMED_IN_PAST_CHAT",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHAT_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.CHAT_COMPLETION_PROMPT_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHAT_COMPLETION_SETTINGS_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHAT_CREATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHAT_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHATCOMPLETION_MODEL_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CHATCOMPLETION_SOURCE_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CONNECTION_PROFILE_CREATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CONNECTION_PROFILE_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CONNECTION_PROFILE_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.CONNECTION_PROFILE_UPDATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.EXTENSION_SETTINGS_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.EXTENSIONS_FIRST_LOAD",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.EXTRAS_CONNECTED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.FILE_ATTACHMENT_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.FORCE_SET_BACKGROUND",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.GENERATE_AFTER_COMBINE_PROMPTS",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.GENERATE_AFTER_DATA",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.GENERATE_BEFORE_COMBINE_PROMPTS",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.GENERATION_AFTER_COMMANDS",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.GENERATION_ENDED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.GENERATION_STARTED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.GENERATION_STOPPED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.IMAGE_SWIPED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.IMPERSONATE_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MAIN_API_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MEDIA_ATTACHMENT_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_EDITED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_FILE_EMBEDDED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_REASONING_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_REASONING_EDITED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_RECEIVED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.MESSAGE_SENT",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_SWIPE_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MESSAGE_SWIPED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.MESSAGE_UPDATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.MORE_MESSAGES_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.MOVABLE_PANELS_RESET",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.OAI_PRESET_CHANGED_AFTER",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.OAI_PRESET_CHANGED_BEFORE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.OAI_PRESET_EXPORT_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.OAI_PRESET_IMPORT_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.ONLINE_STATUS_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.OPEN_CHARACTER_LIBRARY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.PRESET_CHANGED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.PRESET_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.PRESET_RENAMED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.PRESET_RENAMED_BEFORE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SD_PROMPT_PROCESSING",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SECRET_DELETED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SECRET_EDITED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SECRET_ROTATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SECRET_WRITTEN",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SETTINGS_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SETTINGS_LOADED_AFTER",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SETTINGS_LOADED_BEFORE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SETTINGS_UPDATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.SMOOTH_STREAM_TOKEN_RECEIVED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.STREAM_REASONING_DONE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.STREAM_TOKEN_RECEIVED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.TEXT_COMPLETION_SETTINGS_READY",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.TOOL_CALLS_PERFORMED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.TOOL_CALLS_RENDERED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.USER_MESSAGE_RENDERED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "tavern_events.WORLD_INFO_ACTIVATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.WORLDINFO_ENTRIES_LOADED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.WORLDINFO_FORCE_ACTIVATE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.WORLDINFO_SCAN_DONE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.WORLDINFO_SETTINGS_UPDATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "tavern_events.WORLDINFO_UPDATED",
+          "kind": "object-member",
+          "declaration": "@types/iframe/event.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "TavernHelper",
+          "kind": "const",
+          "declaration": "@types/iframe/exported.tavernhelper.d.ts",
+          "line": 5,
+          "declarationCount": 1,
+          "playerBinding": "installed-by-parent"
+        },
+        {
+          "name": "waitGlobalInitialized",
+          "kind": "function",
+          "declaration": "@types/function/global.d.ts",
+          "line": 27,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        }
+      ]
+    },
+    {
+      "id": "variables",
+      "title": "变量与作用域",
+      "declarations": [
+        "function/variables.d.ts",
+        "iframe/variables.d.ts"
+      ],
+      "implementations": [
+        "src/function/variables.ts"
+      ],
+      "owner": "native-state-with-synchronous-js-view",
+      "status": "partial",
+      "batch": "B",
+      "dependencies": [
+        "@/function/util",
+        "@/store/iframe_runtimes",
+        "@/store/settings",
+        "@/store/variable_schemas",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/extensions",
+        "is-promise"
+      ],
+      "entries": [
+        {
+          "name": "deleteVariable",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 182,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getAllVariables",
+          "kind": "function",
+          "declaration": "@types/iframe/variables.d.ts",
+          "line": 9,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getVariables",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 65,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "insertOrAssignVariables",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 148,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "insertVariables",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 165,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "registerVariableSchema",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 203,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceVariables",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 91,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "updateVariablesWith",
+          "kind": "function",
+          "declaration": "@types/function/variables.d.ts",
+          "line": 112,
+          "declarationCount": 2,
+          "playerBinding": "binding-present"
+        }
+      ]
+    },
+    {
+      "id": "messages",
+      "title": "消息、候选与显示",
+      "declarations": [
+        "function/chat_message.d.ts",
+        "function/displayed_message.d.ts"
+      ],
+      "implementations": [
+        "src/function/chat_message.ts",
+        "src/function/displayed_message.ts"
+      ],
+      "owner": "native-conversation-and-browser-display",
+      "status": "partial",
+      "batch": "B",
+      "dependencies": [
+        "@/function/displayed_message",
+        "@/panel/optimize/better_message_to_load",
+        "@/tauritavern_chat_surface",
+        "@/util/is_frontend",
+        "@/util/message",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/macros"
+      ],
+      "entries": [
+        {
+          "name": "createChatMessages",
+          "kind": "function",
+          "declaration": "@types/function/chat_message.d.ts",
+          "line": 188,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "deleteChatMessages",
+          "kind": "function",
+          "declaration": "@types/function/chat_message.d.ts",
+          "line": 208,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "formatAsDisplayedMessage",
+          "kind": "function",
+          "declaration": "@types/function/displayed_message.d.ts",
+          "line": 46,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getChatMessages",
+          "kind": "function",
+          "declaration": "@types/function/chat_message.d.ts",
+          "line": 56,
+          "declarationCount": 3,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "refreshOneMessage",
+          "kind": "function",
+          "declaration": "@types/function/displayed_message.d.ts",
+          "line": 70,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "retrieveDisplayedMessage",
+          "kind": "function",
+          "declaration": "@types/function/displayed_message.d.ts",
+          "line": 21,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "rotateChatMessages",
+          "kind": "function",
+          "declaration": "@types/function/chat_message.d.ts",
+          "line": 229,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "setChatMessages",
+          "kind": "function",
+          "declaration": "@types/function/chat_message.d.ts",
+          "line": 150,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        }
+      ]
+    },
+    {
+      "id": "worldbooks",
+      "title": "世界书及旧版接口",
+      "declarations": [
+        "function/worldbook.d.ts",
+        "function/lorebook.d.ts",
+        "function/lorebook_entry.d.ts"
+      ],
+      "implementations": [
+        "src/function/worldbook.ts",
+        "src/function/lorebook.ts",
+        "src/function/lorebook_entry.ts"
+      ],
+      "owner": "native-content-and-prompt",
+      "status": "partial",
+      "batch": "C",
+      "dependencies": [
+        "@/function/lorebook",
+        "@/function/raw_character",
+        "@/util/compatibility",
+        "@sillytavern/script",
+        "@sillytavern/scripts/utils",
+        "@sillytavern/scripts/world-info",
+        "type-fest"
+      ],
+      "entries": [
+        {
+          "name": "createLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 31,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createLorebookEntries",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 67,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createOrReplaceWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 177,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 165,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createWorldbookEntries",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 285,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deleteLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 28,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deleteLorebookEntries",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 73,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deleteWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 190,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deleteWorldbookEntries",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 307,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharLorebooks",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 46,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getCharWorldbookNames",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 32,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getChatLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 55,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getChatWorldbookName",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 48,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentCharPrimaryLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 49,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getGlobalWorldbookNames",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 13,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getLorebookEntries",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 47,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "getLorebooks",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 25,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getLorebookSettings",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 20,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getOrCreateChatLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 61,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getOrCreateChatWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 62,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 155,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getWorldbookNames",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 6,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "rebindCharWorldbooks",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 39,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "rebindChatWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 55,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "rebindGlobalWorldbooks",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 19,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceLorebookEntries",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 50,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 226,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "setChatLorebook",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 58,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "setCurrentCharLorebooks",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 52,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "setLorebookEntries",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 61,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "setLorebookSettings",
+          "kind": "function",
+          "declaration": "@types/function/lorebook.d.ts",
+          "line": 22,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateLorebookEntriesWith",
+          "kind": "function",
+          "declaration": "@types/function/lorebook_entry.d.ts",
+          "line": 58,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateWorldbookWith",
+          "kind": "function",
+          "declaration": "@types/function/worldbook.d.ts",
+          "line": 263,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "transforms",
+      "title": "Regex、Macro 与显示投影",
+      "declarations": [
+        "function/tavern_regex.d.ts",
+        "function/macro_like.d.ts"
+      ],
+      "implementations": [
+        "src/function/tavern_regex.ts",
+        "src/function/macro_like.ts"
+      ],
+      "owner": "native-projection-with-browser-callbacks",
+      "status": "unimplemented-bridge",
+      "batch": "C",
+      "dependencies": [
+        "@/function/displayed_message",
+        "@/function/macro_like",
+        "@/function/raw_character",
+        "@/function/variables",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/char-data",
+        "@sillytavern/scripts/extensions",
+        "@sillytavern/scripts/extensions/regex/engine",
+        "@sillytavern/scripts/openai",
+        "lodash-omitdeep",
+        "yaml"
+      ],
+      "entries": [
+        {
+          "name": "formatAsTavernRegexedString",
+          "kind": "function",
+          "declaration": "@types/function/tavern_regex.d.ts",
+          "line": 23,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getTavernRegexes",
+          "kind": "function",
+          "declaration": "@types/function/tavern_regex.d.ts",
+          "line": 87,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isCharacterTavernRegexesEnabled",
+          "kind": "function",
+          "declaration": "@types/function/tavern_regex.d.ts",
+          "line": 62,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "registerMacroLike",
+          "kind": "function",
+          "declaration": "@types/function/macro_like.d.ts",
+          "line": 27,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceTavernRegexes",
+          "kind": "function",
+          "declaration": "@types/function/tavern_regex.d.ts",
+          "line": 103,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "unregisterMacroLike",
+          "kind": "function",
+          "declaration": "@types/function/macro_like.d.ts",
+          "line": 37,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateTavernRegexesWith",
+          "kind": "function",
+          "declaration": "@types/function/tavern_regex.d.ts",
+          "line": 131,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "generation",
+      "title": "生成、注入与命令",
+      "declarations": [
+        "function/generate.d.ts",
+        "function/inject.d.ts",
+        "function/slash.d.ts"
+      ],
+      "implementations": [
+        "src/function/generate/index.ts",
+        "src/function/generate/generate.ts",
+        "src/function/generate/generateRaw.ts",
+        "src/function/generate/responseGenerator.ts",
+        "src/function/generate/inputProcessor.ts",
+        "src/function/generate/dataProcessor.ts",
+        "src/function/inject.ts",
+        "src/function/slash.ts"
+      ],
+      "owner": "native-generation-with-browser-hooks",
+      "status": "partial",
+      "batch": "D",
+      "dependencies": [
+        "../inject",
+        "@/function/event",
+        "@/function/generate/createGenerationParametersCompat",
+        "@/function/generate/dataProcessor",
+        "@/function/generate/generate",
+        "@/function/generate/generateRaw",
+        "@/function/generate/inputProcessor",
+        "@/function/generate/responseGenerator",
+        "@/function/generate/toolCallCompat",
+        "@/function/generate/types",
+        "@/function/generate/utils",
+        "@/function/inject",
+        "@/function/preset",
+        "@/function/util",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/PromptManager",
+        "@sillytavern/scripts/authors-note",
+        "@sillytavern/scripts/extensions",
+        "@sillytavern/scripts/extensions/regex/engine",
+        "@sillytavern/scripts/openai",
+        "@sillytavern/scripts/power-user",
+        "@sillytavern/scripts/slash-commands",
+        "@sillytavern/scripts/sse-stream",
+        "@sillytavern/scripts/utils",
+        "@sillytavern/scripts/world-info",
+        "yaml"
+      ],
+      "entries": [
+        {
+          "name": "builtin_prompt_default_order",
+          "kind": "const",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 525,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "generate",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 146,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "generateRaw",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 199,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getModelList",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 208,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getProxyPresetNames",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 6,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "injectPrompts",
+          "kind": "function",
+          "declaration": "@types/function/inject.d.ts",
+          "line": 39,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "placeholder_prompt_default_order",
+          "kind": "const",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 326,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "stopAllGeneration",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 223,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "stopGenerationById",
+          "kind": "function",
+          "declaration": "@types/function/generate.d.ts",
+          "line": 216,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "triggerSlash",
+          "kind": "function",
+          "declaration": "@types/function/slash.d.ts",
+          "line": 29,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "uninjectPrompts",
+          "kind": "function",
+          "declaration": "@types/function/inject.d.ts",
+          "line": 46,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "scripts",
+      "title": "脚本树、身份、按钮与信息",
+      "declarations": [
+        "function/script.d.ts",
+        "iframe/script.d.ts"
+      ],
+      "implementations": [
+        "src/function/script.ts"
+      ],
+      "owner": "browser-lifecycle-and-native-program-state",
+      "status": "partial",
+      "batch": "A",
+      "dependencies": [
+        "@/function/util",
+        "@/store/iframe_runtimes",
+        "@/store/iframe_runtimes/script",
+        "@/store/scripts",
+        "@/type/scripts",
+        "is-promise",
+        "type-fest"
+      ],
+      "entries": [
+        {
+          "name": "appendInexistentScriptButtons",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 76,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getAllEnabledScriptButtons",
+          "kind": "function",
+          "declaration": "@types/function/script.d.ts",
+          "line": 4,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getButtonEvent",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 13,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getScriptButtons",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 24,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "getScriptInfo",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 82,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getScriptName",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 79,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getScriptTrees",
+          "kind": "function",
+          "declaration": "@types/function/script.d.ts",
+          "line": 51,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceScriptButtons",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 41,
+          "declarationCount": 1,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "replaceScriptInfo",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 89,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceScriptTrees",
+          "kind": "function",
+          "declaration": "@types/function/script.d.ts",
+          "line": 59,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateScriptButtonsWith",
+          "kind": "function",
+          "declaration": "@types/iframe/script.d.ts",
+          "line": 54,
+          "declarationCount": 2,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateScriptTreesWith",
+          "kind": "function",
+          "declaration": "@types/function/script.d.ts",
+          "line": 69,
+          "declarationCount": 2,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "characters",
+      "title": "角色定义与原始数据",
+      "declarations": [
+        "function/character.d.ts",
+        "function/raw_character.d.ts"
+      ],
+      "implementations": [
+        "src/function/character.ts",
+        "src/function/raw_character.ts"
+      ],
+      "owner": "native-character-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E",
+      "dependencies": [
+        "@/function/raw_character",
+        "@/function/tavern_regex",
+        "@/function/worldbook",
+        "@/store/settings",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/RossAscends-mods",
+        "@sillytavern/scripts/char-data",
+        "@sillytavern/scripts/utils",
+        "is-blob",
+        "object-to-formdata",
+        "type-fest"
+      ],
+      "entries": [
+        {
+          "name": "createCharacter",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 59,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createOrReplaceCharacter",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 76,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deleteCharacter",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 91,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharacter",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 105,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharacterIds",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 33,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharacterNames",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 26,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharAvatarPath",
+          "kind": "function",
+          "declaration": "@types/function/raw_character.d.ts",
+          "line": 113,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCharData",
+          "kind": "function",
+          "declaration": "@types/function/raw_character.d.ts",
+          "line": 105,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getChatHistoryBrief",
+          "kind": "function",
+          "declaration": "@types/function/raw_character.d.ts",
+          "line": 121,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getChatHistoryDetail",
+          "kind": "function",
+          "declaration": "@types/function/raw_character.d.ts",
+          "line": 132,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentCharacterId",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 47,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentCharacterName",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 40,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "RawCharacter",
+          "kind": "class",
+          "declaration": "@types/function/raw_character.d.ts",
+          "line": 5,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceCharacter",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 141,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateCharacterWith",
+          "kind": "function",
+          "declaration": "@types/function/character.d.ts",
+          "line": 183,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "presets",
+      "title": "预设与捕获配置",
+      "declarations": [
+        "function/preset.d.ts"
+      ],
+      "implementations": [
+        "src/function/preset.ts"
+      ],
+      "owner": "native-preset-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E",
+      "dependencies": [
+        "@/function/tavern_regex",
+        "@/util/compatibility",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/openai",
+        "@sillytavern/scripts/utils",
+        "type-fest"
+      ],
+      "entries": [
+        {
+          "name": "createOrReplacePreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 204,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createPreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 192,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "default_preset",
+          "kind": "const",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 143,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deletePreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 217,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getLoadedPresetName",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 161,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 180,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPresetNames",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 150,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isPresetNormalPrompt",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 139,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isPresetPlaceholderPrompt",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 141,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isPresetSystemPrompt",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 140,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "loadPreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 169,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "renamePreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 227,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replacePreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 276,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "setPreset",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 361,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updatePresetWith",
+          "kind": "function",
+          "declaration": "@types/function/preset.d.ts",
+          "line": 332,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "personas",
+      "title": "用户身份",
+      "declarations": [
+        "function/persona.d.ts"
+      ],
+      "implementations": [
+        "src/function/persona.ts"
+      ],
+      "owner": "native-persona-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E",
+      "dependencies": [
+        "@sillytavern/script",
+        "@sillytavern/scripts/personas",
+        "@sillytavern/scripts/power-user",
+        "is-blob",
+        "type-fest"
+      ],
+      "entries": [
+        {
+          "name": "createOrReplacePersona",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 104,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "createPersona",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 85,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "deletePersona",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 119,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentPersonaId",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 51,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentPersonaName",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 44,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPersona",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 71,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPersonaAvatarPath",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 60,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPersonaIds",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 37,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getPersonaNames",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 30,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replacePersona",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 137,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updatePersonaWith",
+          "kind": "function",
+          "declaration": "@types/function/persona.d.ts",
+          "line": 164,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "imports",
+      "title": "原始资产导入",
+      "declarations": [
+        "function/import_raw.d.ts"
+      ],
+      "implementations": [
+        "src/function/import_raw.ts"
+      ],
+      "owner": "native-import-services",
+      "status": "unimplemented-bridge",
+      "batch": "E",
+      "dependencies": [
+        ", {\n    method: ",
+        "@/function/character",
+        "@/function/raw_character",
+        "@/function/tavern_regex",
+        "@/store/settings",
+        "@/util/compatibility",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/extensions",
+        "@sillytavern/scripts/utils",
+        "@sillytavern/scripts/world-info"
+      ],
+      "entries": [
+        {
+          "name": "importRawCharacter",
+          "kind": "function",
+          "declaration": "@types/function/import_raw.d.ts",
+          "line": 12,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "importRawChat",
+          "kind": "function",
+          "declaration": "@types/function/import_raw.d.ts",
+          "line": 27,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "importRawPreset",
+          "kind": "function",
+          "declaration": "@types/function/import_raw.d.ts",
+          "line": 40,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "importRawTavernRegex",
+          "kind": "function",
+          "declaration": "@types/function/import_raw.d.ts",
+          "line": 66,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "importRawWorldbook",
+          "kind": "function",
+          "declaration": "@types/function/import_raw.d.ts",
+          "line": 53,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "audio",
+      "title": "音频与播放列表",
+      "declarations": [
+        "function/audio.d.ts"
+      ],
+      "implementations": [
+        "src/function/audio.ts"
+      ],
+      "owner": "browser-media-and-native-settings",
+      "status": "unimplemented-bridge",
+      "batch": "F",
+      "dependencies": [
+        "@/store/audio",
+        "@/type/settings"
+      ],
+      "entries": [
+        {
+          "name": "appendAudioList",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 60,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getAudioList",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 44,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getAudioSettings",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 85,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getCurrentAudio",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 128,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "pauseAudio",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 36,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "playAudio",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 29,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "replaceAudioList",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 52,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "setAudioSettings",
+          "kind": "function",
+          "declaration": "@types/function/audio.d.ts",
+          "line": 105,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "extension_management",
+      "title": "扩展管理、版本与内置内容",
+      "declarations": [
+        "function/extension.d.ts",
+        "function/version.d.ts",
+        "function/builtin.d.ts"
+      ],
+      "implementations": [
+        "src/function/extension.ts",
+        "src/function/version.ts",
+        "src/function/builtin.ts"
+      ],
+      "owner": "native-capability-description",
+      "status": "unimplemented-bridge",
+      "batch": "F",
+      "dependencies": [
+        "@/../manifest.json",
+        "@/function/extension",
+        "@/util/compatibility",
+        "@/util/tavern",
+        "@sillytavern/script",
+        "@sillytavern/scripts/extensions",
+        "@sillytavern/scripts/openai",
+        "@sillytavern/scripts/user",
+        "@sillytavern/scripts/utils",
+        "@sillytavern/scripts/world-info"
+      ],
+      "entries": [
+        {
+          "name": "builtin",
+          "kind": "const",
+          "declaration": "@types/function/builtin.d.ts",
+          "line": 1,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.addOneMessage",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.copyText",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.duringGenerating",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.getImageTokenCost",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.getVideoTokenCost",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.parseRegexFromString",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.promptManager",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.reloadAndRenderChatWithoutEvents",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.reloadChatWithoutEvents",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.reloadEditor",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.reloadEditorDebounced",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.renderMarkdown",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.renderPromptManager",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.renderPromptManagerDebounced",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.saveSettings",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "builtin.uuidv4",
+          "kind": "object-member",
+          "declaration": "@types/function/builtin.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getExtensionInstallationInfo",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 29,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getExtensionType",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 15,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getTavernHelperExtensionId",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 5,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "getTavernHelperVersion",
+          "kind": "function",
+          "declaration": "@types/function/version.d.ts",
+          "line": 4,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "getTavernVersion",
+          "kind": "function",
+          "declaration": "@types/function/version.d.ts",
+          "line": 9,
+          "declarationCount": 1,
+          "playerBinding": "rejecting-stub"
+        },
+        {
+          "name": "installExtension",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 59,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isAdmin",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 2,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "isInstalledExtension",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 40,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "reinstallExtension",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 89,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "uninstallExtension",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 74,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "updateExtension",
+          "kind": "function",
+          "declaration": "@types/function/extension.d.ts",
+          "line": 104,
+          "declarationCount": 1,
+          "playerBinding": "absent"
+        }
+      ]
+    },
+    {
+      "id": "external_runtimes",
+      "title": "MVU 与 EJS 扩展对象",
+      "declarations": [
+        "iframe/exported.mvu.d.ts",
+        "iframe/exported.ejstemplate.d.ts"
+      ],
+      "implementations": [],
+      "owner": "single-owner-runtime-adapters",
+      "status": "partial",
+      "batch": "A+D",
+      "dependencies": [],
+      "entries": [
+        {
+          "name": "EjsTemplate",
+          "kind": "namespace",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "line": 1,
+          "declarationCount": 2,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.allVariables",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.evaltemplate",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.getFeatures",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.getSyntaxErrorInfo",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.prepareContext",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.resetFeatures",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "EjsTemplate.setFeatures",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.ejstemplate.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "Mvu",
+          "kind": "namespace",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "line": 1,
+          "declarationCount": 2,
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "Mvu.events",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "Mvu.getMvuData",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "playerBinding": "binding-present"
+        },
+        {
+          "name": "Mvu.isDuringExtraAnalysis",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "Mvu.parseMessage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "Mvu.replaceMvuData",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.mvu.d.ts",
+          "playerBinding": "binding-present"
+        }
+      ]
+    },
+    {
+      "id": "st_context",
+      "title": "SillyTavern 上下文",
+      "declarations": [
+        "iframe/exported.sillytavern.d.ts"
+      ],
+      "implementations": [],
+      "owner": "browser-context-facade-and-native-services",
+      "status": "unimplemented-bridge",
+      "batch": "A",
+      "dependencies": [],
+      "entries": [
+        {
+          "name": "SillyTavern",
+          "kind": "namespace",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "line": 2,
+          "declarationCount": 2,
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.accountStorage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.activateSendButtons",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.addLocaleData",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.addOneMessage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.appendMediaToMessage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.ARGUMENT_TYPE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.callGenericPopup",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.canPerformToolCalls",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.characterId",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.characters",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.chat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.ChatCompletionService",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.chatCompletionSettings",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.chatId",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.chatMetadata",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.clearChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.CONNECT_API_MAP",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.ConnectionManagerRequestService",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.convertCharacterBook",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.createCharacterData",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.deactivateSendButtons",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.deleteLastMessage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.eventSource",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.eventTypes",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.executeSlashCommandsWithOptions",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.extensionPrompts",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.extensionSettings",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.extractMessageFromData",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.generate",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.generateQuietPrompt",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getCharacterCardFields",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getCharacters",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getChatCompletionModel",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getCurrentChatId",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getCurrentLocale",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getPresetManager",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getRequestHeaders",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getTextGenServer",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getTextTokens",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getThumbnailUrl",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getTokenCountAsync",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getTokenizerModel",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.getWorldInfoPrompt",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.groupId",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.groups",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.hideLoader",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.humanizedDateTime",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.isMobile",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.isToolCallingSupported",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.loadWorldInfo",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.mainApi",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.maxContext",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.menuType",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.messageFormatting",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.ModuleWorkerWrapper",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.name1",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.name2",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.onlineStatus",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.openCharacterChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.openGroupChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.parseReasoningFromString",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.Popup",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.POPUP_RESULT",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.POPUP_TYPE",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.powerUserSettings",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.printMessages",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.registerDataBankScraper",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.registerDebugFunction",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.registerFunctionTool",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.registerMacro",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.reloadCurrentChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.reloadWorldInfoEditor",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.renameChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.renderExtensionTemplateAsync",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.saveChat",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.saveMetadata",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.saveReply",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.saveSettingsDebounced",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.saveWorldInfo",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.selectCharacterById",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.sendGenerationRequest",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.sendStreamingRequest",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.sendSystemMessage",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.setExtensionPrompt",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.shouldSendOnEnter",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.showLoader",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.SlashCommand",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.SlashCommandArgument",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.SlashCommandNamedArgument",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.SlashCommandParser",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.stopGeneration",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.streamingProcessor",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.substituteParams",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.substituteParamsExtended",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.symbols",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.t",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.tagMap",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.tags",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.TextCompletionService",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.textCompletionSettings",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.timestampToMoment",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.tokenizers",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.ToolManager",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.translate",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.unregisterFunctionTool",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.unregisterMacro",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.unshallowCharacter",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.unshallowGroupMembers",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.updateChatMetadata",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.updateMessageBlock",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.updateReasoningUI",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.updateWorldInfoList",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.uuidv4",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        },
+        {
+          "name": "SillyTavern.writeExtensionField",
+          "kind": "object-member",
+          "declaration": "@types/iframe/exported.sillytavern.d.ts",
+          "playerBinding": "absent"
+        }
+      ]
+    }
+  ],
+  "declarationFacade": [
+    {
+      "name": "playAudio",
+      "declarationTarget": "playAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "pauseAudio",
+      "declarationTarget": "pauseAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAudioList",
+      "declarationTarget": "getAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceAudioList",
+      "declarationTarget": "replaceAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "appendAudioList",
+      "declarationTarget": "appendAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAudioSettings",
+      "declarationTarget": "getAudioSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setAudioSettings",
+      "declarationTarget": "setAudioSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentAudio",
+      "declarationTarget": "getCurrentAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "builtin",
+      "declarationTarget": "builtin",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacterNames",
+      "declarationTarget": "getCharacterNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacterIds",
+      "declarationTarget": "getCharacterIds",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharacterName",
+      "declarationTarget": "getCurrentCharacterName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharacterId",
+      "declarationTarget": "getCurrentCharacterId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createCharacter",
+      "declarationTarget": "createCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplaceCharacter",
+      "declarationTarget": "createOrReplaceCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteCharacter",
+      "declarationTarget": "deleteCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacter",
+      "declarationTarget": "getCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceCharacter",
+      "declarationTarget": "replaceCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateCharacterWith",
+      "declarationTarget": "updateCharacterWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatMessages",
+      "declarationTarget": "getChatMessages",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "setChatMessages",
+      "declarationTarget": "setChatMessages",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "createChatMessages",
+      "declarationTarget": "createChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "deleteChatMessages",
+      "declarationTarget": "deleteChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "rotateChatMessages",
+      "declarationTarget": "rotateChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "formatAsDisplayedMessage",
+      "declarationTarget": "formatAsDisplayedMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "retrieveDisplayedMessage",
+      "declarationTarget": "retrieveDisplayedMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "refreshOneMessage",
+      "declarationTarget": "refreshOneMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isAdmin",
+      "declarationTarget": "isAdmin",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getExtensionType",
+      "declarationTarget": "getExtensionType",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getExtensionStatus",
+      "declarationTarget": "getExtensionInstallationInfo",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isInstalledExtension",
+      "declarationTarget": "isInstalledExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "installExtension",
+      "declarationTarget": "installExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "uninstallExtension",
+      "declarationTarget": "uninstallExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "reinstallExtension",
+      "declarationTarget": "reinstallExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateExtension",
+      "declarationTarget": "updateExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "builtin_prompt_default_order",
+      "declarationTarget": "builtin_prompt_default_order",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "generate",
+      "declarationTarget": "generate",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "generateRaw",
+      "declarationTarget": "generateRaw",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getModelList",
+      "declarationTarget": "getModelList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getProxyPresetNames",
+      "declarationTarget": "getProxyPresetNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "stopGenerationById",
+      "declarationTarget": "stopGenerationById",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "stopAllGeneration",
+      "declarationTarget": "stopAllGeneration",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "initializeGlobal",
+      "declarationTarget": "initializeGlobal",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "waitGlobalInitialized",
+      "declarationTarget": "waitGlobalInitialized",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "importRawCharacter",
+      "declarationTarget": "importRawCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawChat",
+      "declarationTarget": "importRawChat",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawPreset",
+      "declarationTarget": "importRawPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawWorldbook",
+      "declarationTarget": "importRawWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawTavernRegex",
+      "declarationTarget": "importRawTavernRegex",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "injectPrompts",
+      "declarationTarget": "injectPrompts",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "uninjectPrompts",
+      "declarationTarget": "uninjectPrompts",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLorebookEntries",
+      "declarationTarget": "getLorebookEntries",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "replaceLorebookEntries",
+      "declarationTarget": "replaceLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updatelorebookEntriesWith",
+      "declarationTarget": "updateLorebookEntriesWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setLorebookEntries",
+      "declarationTarget": "setLorebookEntries",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "createLorebookEntries",
+      "declarationTarget": "createLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteLorebookEntries",
+      "declarationTarget": "deleteLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLorebookSettings",
+      "declarationTarget": "getLorebookSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setLorebookSettings",
+      "declarationTarget": "setLorebookSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLorebooks",
+      "declarationTarget": "getLorebooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteLorebook",
+      "declarationTarget": "deleteLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createLorebook",
+      "declarationTarget": "createLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharLorebooks",
+      "declarationTarget": "getCharLorebooks",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "setCurrentCharLorebooks",
+      "declarationTarget": "setCurrentCharLorebooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharPrimaryLorebook",
+      "declarationTarget": "getCurrentCharPrimaryLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getOrCreateChatLorebook",
+      "declarationTarget": "getOrCreateChatLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "registerMacroLike",
+      "declarationTarget": "registerMacroLike",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetNormalPrompt",
+      "declarationTarget": "isPresetNormalPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetSystemPrompt",
+      "declarationTarget": "isPresetSystemPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetPlaceholderPrompt",
+      "declarationTarget": "isPresetPlaceholderPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "default_preset",
+      "declarationTarget": "default_preset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPresetNames",
+      "declarationTarget": "getPresetNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLoadedPresetName",
+      "declarationTarget": "getLoadedPresetName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "loadPreset",
+      "declarationTarget": "loadPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createPreset",
+      "declarationTarget": "createPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplacePreset",
+      "declarationTarget": "createOrReplacePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deletePreset",
+      "declarationTarget": "deletePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "renamePreset",
+      "declarationTarget": "renamePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPreset",
+      "declarationTarget": "getPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replacePreset",
+      "declarationTarget": "replacePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updatePresetWith",
+      "declarationTarget": "updatePresetWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setPreset",
+      "declarationTarget": "setPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaNames",
+      "declarationTarget": "getPersonaNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaIds",
+      "declarationTarget": "getPersonaIds",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentPersonaName",
+      "declarationTarget": "getCurrentPersonaName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentPersonaId",
+      "declarationTarget": "getCurrentPersonaId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaAvatarPath",
+      "declarationTarget": "getPersonaAvatarPath",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createPersona",
+      "declarationTarget": "createPersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplacePersona",
+      "declarationTarget": "createOrReplacePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deletePersona",
+      "declarationTarget": "deletePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersona",
+      "declarationTarget": "getPersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replacePersona",
+      "declarationTarget": "replacePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updatePersonaWith",
+      "declarationTarget": "updatePersonaWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "RawCharacter",
+      "declarationTarget": "RawCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharData",
+      "declarationTarget": "getCharData",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharAvatarPath",
+      "declarationTarget": "getCharAvatarPath",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatHistoryBrief",
+      "declarationTarget": "getChatHistoryBrief",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatHistoryDetail",
+      "declarationTarget": "getChatHistoryDetail",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAllEnabledScriptButtons",
+      "declarationTarget": "getAllEnabledScriptButtons",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "triggerSlash",
+      "declarationTarget": "triggerSlash",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "formatAsTavernRegexedString",
+      "declarationTarget": "formatAsTavernRegexedString",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isCharacterTavernRegexesEnabled",
+      "declarationTarget": "isCharacterTavernRegexesEnabled",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getTavernRegexes",
+      "declarationTarget": "getTavernRegexes",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceTavernRegexes",
+      "declarationTarget": "replaceTavernRegexes",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateTavernRegexesWith",
+      "declarationTarget": "updateTavernRegexesWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "substitudeMacros",
+      "declarationTarget": "substitudeMacros",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLastMessageId",
+      "declarationTarget": "getLastMessageId",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "errorCatched",
+      "declarationTarget": "errorCatched",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getMessageId",
+      "declarationTarget": "getMessageId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getVariables",
+      "declarationTarget": "getVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceVariables",
+      "declarationTarget": "replaceVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "updateVariablesWith",
+      "declarationTarget": "updateVariablesWith",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertOrAssignVariables",
+      "declarationTarget": "insertOrAssignVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertVariables",
+      "declarationTarget": "insertVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "deleteVariable",
+      "declarationTarget": "deleteVariable",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getTavernHelperVersion",
+      "declarationTarget": "getTavernHelperVersion",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "getTavernHelperExtensionId",
+      "declarationTarget": "getTavernHelperExtensionId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getTavernVersion",
+      "declarationTarget": "getTavernVersion",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "getWorldbookNames",
+      "declarationTarget": "getWorldbookNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getGlobalWorldbookNames",
+      "declarationTarget": "getGlobalWorldbookNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "rebindGlobalWorldbooks",
+      "declarationTarget": "rebindGlobalWorldbooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharWorldbookNames",
+      "declarationTarget": "getCharWorldbookNames",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "rebindCharWorldbooks",
+      "declarationTarget": "rebindCharWorldbooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatWorldbookName",
+      "declarationTarget": "getChatWorldbookName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "rebindChatWorldbook",
+      "declarationTarget": "rebindChatWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getOrCreateChatWorldbook",
+      "declarationTarget": "getOrCreateChatWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createWorldbook",
+      "declarationTarget": "createWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplaceWorldbook",
+      "declarationTarget": "createOrReplaceWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteWorldbook",
+      "declarationTarget": "deleteWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getWorldbook",
+      "declarationTarget": "getWorldbook",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceWorldbook",
+      "declarationTarget": "replaceWorldbook",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "updateWorldbookWith",
+      "declarationTarget": "updateWorldbookWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createWorldbookEntries",
+      "declarationTarget": "createWorldbookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteWorldbookEntries",
+      "declarationTarget": "deleteWorldbookEntries",
+      "playerBinding": "absent"
+    }
+  ],
+  "runtimeRegistrations": [
+    {
+      "name": "audioEnable",
+      "target": "audioEnable",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "audioImport",
+      "target": "audioImport",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "audioMode",
+      "target": "audioMode",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "audioPlay",
+      "target": "audioPlay",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "audioSelect",
+      "target": "audioSelect",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "playAudio",
+      "target": "playAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "pauseAudio",
+      "target": "pauseAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAudioList",
+      "target": "getAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceAudioList",
+      "target": "replaceAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "appendAudioList",
+      "target": "appendAudioList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAudioSettings",
+      "target": "getAudioSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setAudioSettings",
+      "target": "setAudioSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentAudio",
+      "target": "getCurrentAudio",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "builtin",
+      "target": "builtin",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacterNames",
+      "target": "getCharacterNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacterIds",
+      "target": "getCharacterIds",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharacterName",
+      "target": "getCurrentCharacterName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharacterId",
+      "target": "getCurrentCharacterId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createCharacter",
+      "target": "createCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplaceCharacter",
+      "target": "createOrReplaceCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteCharacter",
+      "target": "deleteCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharacter",
+      "target": "getCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceCharacter",
+      "target": "replaceCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateCharacterWith",
+      "target": "updateCharacterWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatMessages",
+      "target": "getChatMessages",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "setChatMessages",
+      "target": "setChatMessages",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "setChatMessage",
+      "target": "setChatMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createChatMessages",
+      "target": "createChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "deleteChatMessages",
+      "target": "deleteChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "rotateChatMessages",
+      "target": "rotateChatMessages",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "formatAsDisplayedMessage",
+      "target": "formatAsDisplayedMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "retrieveDisplayedMessage",
+      "target": "retrieveDisplayedMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "refreshOneMessage",
+      "target": "refreshOneMessage",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "tavern_events",
+      "target": "tavern_events",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "iframe_events",
+      "target": "iframe_events",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "isAdmin",
+      "target": "isAdmin",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getTavernHelperExtensionId",
+      "target": "getTavernHelperExtensionId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getExtensionType",
+      "target": "getExtensionType",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getExtensionStatus",
+      "target": "getExtensionInstallationInfo",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isInstalledExtension",
+      "target": "isInstalledExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "installExtension",
+      "target": "installExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "uninstallExtension",
+      "target": "uninstallExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "reinstallExtension",
+      "target": "reinstallExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateExtension",
+      "target": "updateExtension",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawCharacter",
+      "target": "importRawCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawPreset",
+      "target": "importRawPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawChat",
+      "target": "importRawChat",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawWorldbook",
+      "target": "importRawWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "importRawTavernRegex",
+      "target": "importRawTavernRegex",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "injectPrompts",
+      "target": "injectPrompts",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "uninjectPrompts",
+      "target": "uninjectPrompts",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "builtin_prompt_default_order",
+      "target": "placeholder_prompt_default_order",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getModelList",
+      "target": "getModelList",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getProxyPresetNames",
+      "target": "getProxyPresetNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "generate",
+      "target": "generate",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "generateRaw",
+      "target": "generateRaw",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "stopGenerationById",
+      "target": "stopGenerationById",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "stopAllGeneration",
+      "target": "stopAllGeneration",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "initializeGlobal",
+      "target": "initializeGlobal",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "waitGlobalInitialized",
+      "target": "waitGlobalInitialized",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getLorebookEntries",
+      "target": "getLorebookEntries",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "replaceLorebookEntries",
+      "target": "replaceLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateLorebookEntriesWith",
+      "target": "updateLorebookEntriesWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setLorebookEntries",
+      "target": "setLorebookEntries",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "createLorebookEntries",
+      "target": "createLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createLorebookEntry",
+      "target": "createLorebookEntry",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteLorebookEntries",
+      "target": "deleteLorebookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteLorebookEntry",
+      "target": "deleteLorebookEntry",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLorebookSettings",
+      "target": "getLorebookSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setLorebookSettings",
+      "target": "setLorebookSettings",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharLorebooks",
+      "target": "getCharLorebooks",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "setCurrentCharLorebooks",
+      "target": "setCurrentCharLorebooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLorebooks",
+      "target": "getLorebooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteLorebook",
+      "target": "deleteLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createLorebook",
+      "target": "createLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentCharPrimaryLorebook",
+      "target": "getCurrentCharPrimaryLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatLorebook",
+      "target": "getChatLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setChatLorebook",
+      "target": "setChatLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getOrCreateChatLorebook",
+      "target": "getOrCreateChatLorebook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetNormalPrompt",
+      "target": "isPresetNormalPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetSystemPrompt",
+      "target": "isPresetSystemPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isPresetPlaceholderPrompt",
+      "target": "isPresetPlaceholderPrompt",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "default_preset",
+      "target": "default_preset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPresetNames",
+      "target": "getPresetNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLoadedPresetName",
+      "target": "getLoadedPresetName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "loadPreset",
+      "target": "loadPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createPreset",
+      "target": "createPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplacePreset",
+      "target": "createOrReplacePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deletePreset",
+      "target": "deletePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "renamePreset",
+      "target": "renamePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPreset",
+      "target": "getPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replacePreset",
+      "target": "replacePreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updatePresetWith",
+      "target": "updatePresetWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "setPreset",
+      "target": "setPreset",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaNames",
+      "target": "getPersonaNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaIds",
+      "target": "getPersonaIds",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentPersonaName",
+      "target": "getCurrentPersonaName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCurrentPersonaId",
+      "target": "getCurrentPersonaId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersonaAvatarPath",
+      "target": "getPersonaAvatarPath",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createPersona",
+      "target": "createPersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplacePersona",
+      "target": "createOrReplacePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deletePersona",
+      "target": "deletePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getPersona",
+      "target": "getPersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replacePersona",
+      "target": "replacePersona",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updatePersonaWith",
+      "target": "updatePersonaWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "RawCharacter",
+      "target": "RawCharacter",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharData",
+      "target": "getCharData",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharAvatarPath",
+      "target": "getCharAvatarPath",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatHistoryBrief",
+      "target": "getChatHistoryBrief",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatHistoryDetail",
+      "target": "getChatHistoryDetail",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "registerMacroLike",
+      "target": "registerMacroLike",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "unregisterMacroLike",
+      "target": "unregisterMacroLike",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getAllEnabledScriptButtons",
+      "target": "getAllEnabledScriptButtons",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getScriptTrees",
+      "target": "getScriptTrees",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceScriptTrees",
+      "target": "replaceScriptTrees",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateScriptTreesWith",
+      "target": "updateScriptTreesWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "triggerSlash",
+      "target": "triggerSlash",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "triggerSlashWithResult",
+      "target": "triggerSlash",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "formatAsTavernRegexedString",
+      "target": "formatAsTavernRegexedString",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "isCharacterTavernRegexesEnabled",
+      "target": "isCharacterTavernRegexesEnabled",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getTavernRegexes",
+      "target": "getTavernRegexes",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceTavernRegexes",
+      "target": "replaceTavernRegexes",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateTavernRegexesWith",
+      "target": "updateTavernRegexesWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "substitudeMacros",
+      "target": "substitudeMacros",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getLastMessageId",
+      "target": "getLastMessageId",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "errorCatched",
+      "target": "errorCatched",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getMessageId",
+      "target": "getMessageId",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "registerVariableSchema",
+      "target": "registerVariableSchema",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getVariables",
+      "target": "getVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceVariables",
+      "target": "replaceVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "updateVariablesWith",
+      "target": "updateVariablesWith",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertOrAssignVariables",
+      "target": "insertOrAssignVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "deleteVariable",
+      "target": "deleteVariable",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertVariables",
+      "target": "insertVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getTavernHelperVersion",
+      "target": "getTavernHelperVersion",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "getFrontendVersion",
+      "target": "getTavernHelperVersion",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateTavernHelper",
+      "target": "updateTavernHelper",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "updateFrontendVersion",
+      "target": "updateTavernHelper",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getTavernVersion",
+      "target": "getTavernVersion",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "getWorldbookNames",
+      "target": "getWorldbookNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getGlobalWorldbookNames",
+      "target": "getGlobalWorldbookNames",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "rebindGlobalWorldbooks",
+      "target": "rebindGlobalWorldbooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getCharWorldbookNames",
+      "target": "getCharWorldbookNames",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "rebindCharWorldbooks",
+      "target": "rebindCharWorldbooks",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getChatWorldbookName",
+      "target": "getChatWorldbookName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "rebindChatWorldbook",
+      "target": "rebindChatWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getOrCreateChatWorldbook",
+      "target": "getOrCreateChatWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createWorldbook",
+      "target": "createWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createOrReplaceWorldbook",
+      "target": "createOrReplaceWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteWorldbook",
+      "target": "deleteWorldbook",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getWorldbook",
+      "target": "getWorldbook",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceWorldbook",
+      "target": "replaceWorldbook",
+      "playerBinding": "rejecting-stub"
+    },
+    {
+      "name": "updateWorldbookWith",
+      "target": "updateWorldbookWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "createWorldbookEntries",
+      "target": "createWorldbookEntries",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "deleteWorldbookEntries",
+      "target": "deleteWorldbookEntries",
+      "playerBinding": "absent"
+    }
+  ],
+  "iframeBoundRegistrations": [
+    {
+      "name": "eventOn",
+      "target": "_eventOn",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventOnButton",
+      "target": "_eventOnButton",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventMakeLast",
+      "target": "_eventMakeLast",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventMakeFirst",
+      "target": "_eventMakeFirst",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventOnce",
+      "target": "_eventOnce",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventEmit",
+      "target": "_eventEmit",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventEmitAndWait",
+      "target": "_eventEmitAndWait",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventRemoveListener",
+      "target": "_eventRemoveListener",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventClearEvent",
+      "target": "_eventClearEvent",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventClearListener",
+      "target": "_eventClearListener",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "eventClearAll",
+      "target": "_eventClearAll",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "initializeGlobal",
+      "target": "_initializeGlobal",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "waitGlobalInitialized",
+      "target": "_waitGlobalInitialized",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "registerMacroLike",
+      "target": "_registerMacroLike",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getButtonEvent",
+      "target": "_getButtonEvent",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getScriptButtons",
+      "target": "_getScriptButtons",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceScriptButtons",
+      "target": "_replaceScriptButtons",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "updateScriptButtonsWith",
+      "target": "_updateScriptButtonsWith",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "appendInexistentScriptButtons",
+      "target": "_appendInexistentScriptButtons",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getScriptName",
+      "target": "_getScriptName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getScriptInfo",
+      "target": "_getScriptInfo",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "replaceScriptInfo",
+      "target": "_replaceScriptInfo",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getVariables",
+      "target": "_getVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getAllVariables",
+      "target": "_getAllVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "replaceVariables",
+      "target": "_replaceVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "updateVariablesWith",
+      "target": "_updateVariablesWith",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertOrAssignVariables",
+      "target": "_insertOrAssignVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "insertVariables",
+      "target": "_insertVariables",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "deleteVariable",
+      "target": "_deleteVariable",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "reloadIframe",
+      "target": "_reloadIframe",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "errorCatched",
+      "target": "_errorCatched",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getIframeName",
+      "target": "_getIframeName",
+      "playerBinding": "absent"
+    },
+    {
+      "name": "getScriptId",
+      "target": "_getScriptId",
+      "playerBinding": "binding-present"
+    },
+    {
+      "name": "getCurrentMessageId",
+      "target": "_getCurrentMessageId",
+      "playerBinding": "binding-present"
+    }
+  ]
+}

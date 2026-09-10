@@ -1,6 +1,6 @@
 # 网页消息区与原程序运行契约
 
-更新：2026-09-09。运行配置为 `player-web-1`。这是声明范围内的兼容宿主，不是完整 SillyTavern 或 Tavern Helper。默认新建对话使用网页模式；已有记录缺省解释为旧 Native 模式，切换模式必须新建对话。
+更新：2026-09-10。运行配置为 `player-web-1`。这是声明范围内的兼容宿主，不是完整 SillyTavern 或 Tavern Helper。默认新建对话使用网页模式；已有记录缺省解释为旧 Native 模式，切换模式必须新建对话。
 
 ## 执行与状态归属
 
@@ -24,17 +24,55 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 | --- | --- | --- |
 | 消息读取 | `getChatMessages` 的楼层、范围、角色、隐藏过滤及候选读取；当前/最后消息身份 | 只读取当前对话，不提供其他会话访问 |
 | 消息修改 | `setChatMessages` 改写已有正文、候选内容、选中候选、变量和隐藏状态；`refresh` 为 none/affected/all | 不新增、删除或移动楼层，不增减候选数量；正文按字面量保存，不调用用户编辑的 Macro/截断流程 |
-| 变量 | `getVariables`、`replaceVariables`、`updateVariablesWith`；chat、message、当前 script 作用域 | global、角色/预设资产、其他脚本作用域不开放；单份变量最多 1 MiB |
-| 事件 | 注册、注销、一次性监听、顺序调整、自定义异步事件；消息、候选、渲染、生成和 MVU 更新事件 | 不提供完整扩展事件集合；同步跨页面 `eventEmitAndWait` 明确失败 |
+| 变量 | `getVariables`、`replaceVariables`、`updateVariablesWith`、`insertOrAssignVariables`、`insertVariables`、`deleteVariable`；chat、message、当前 script 作用域；`getAllVariables` 聚合读取 | 独立 global、角色/预设资产、其他脚本作用域读写尚未接入；单份变量最多 1 MiB |
+| 事件 | 注册、注销、一次性监听、顺序调整、自定义异步事件；消息、候选、渲染、生成和 MVU 更新事件 | 不提供完整扩展事件集合；同一作者会话内支持跨页面同步 `eventEmitAndWait`，不访问其他对话 |
 | 生成 | `generate` 使用当前连接和预设；`generateRaw` 接受显式 role/content 数组；生成 ID、流式事件与停止 | 不接受 custom_api、凭据、任意 Provider、工具、图片或注入/覆盖参数；raw 不接受内置 marker 名称 |
 | MVU | 初始化、完整回复更新、候选检查点读取和直接替换 | 替换保留原 schema；不提供完整扩展编辑器/设置、跨引擎共享闭包 |
 | EJS | 已登记原世界书模板的只读求值 | 页面私有状态须先通过宿主保存；未完成初始化导致缺少变量时明确失败 |
 | 世界书 | `getWorldbook` 读取当前角色世界书；显式 `setWorldbookEnabled` / `setWorldbookEntryEnabled` | 旧版 `getLorebookEntries` 明确拒绝；不提供通用资产编辑，不改变其他角色资产 |
-| 页面辅助 | 初始化等待、脚本身份、按钮、toastr 诊断、有限父页面 | 父页面仅提供 `#send_textarea` 与 `#send_but`；不提供 ST 内部模块/播放器工具栏 |
+| 页面辅助 | 共享对象初始化/等待、脚本身份、按钮、toastr 诊断、有限父页面 | 父页面仅提供 `#send_textarea` 与 `#send_but`；不提供 ST 内部模块/播放器工具栏 |
 
-同步读取来自 JS 会话视图。同步写入立即更新待提交视图并排队保存，生成与异步消息修改排在此前写入之后。`updateVariablesWith` 保留同步/异步回调对应的返回类型。每次提交携带运行实例、候选身份、状态版本和请求 ID；Kotlin 验证后计算原子提案，保存成功才发布或确认。重复请求不会重复执行；旧候选、已销毁页面、过期状态或忙碌会话拒绝提交。一次存储失败停止整个网页运行实例，恢复已保存视图并提供重试入口。
+消息与后台脚本共用一个持久的作者会话协调 iframe；它和作者内容同源、和可信消息外壳不同源，不持有原生桥。同步读取来自统一的 JS 会话视图。同步写入立即更新待提交视图并排队保存，生成与异步消息修改排在此前写入之后。`updateVariablesWith` 保留同步/异步回调对应的返回类型。每次提交携带运行实例、候选身份、状态版本和请求 ID；Kotlin 验证后计算原子提案，保存成功才发布或确认。重复请求不会重复执行；旧候选、已销毁页面、过期状态或忙碌会话拒绝提交。一次存储失败停止整个网页运行实例，恢复已保存视图并提供重试入口。
+
+2026-09-10 起，变量接口按参照源码 `dd8327d437eb0cdbd1eddc23b5491812870aa7d8` 补齐：角色/预设助手容器中的 `variables` 与脚本 `data` 原样保留在程序快照；脚本尚未保存过变量时读取自身 `data`，显式写入空对象不会重新回退到初值。`getAllVariables` 在消息页面按角色初值 → 聊天变量 → 第 0 楼至当前楼层的选中候选变量浅合并，返回独立副本，不读取未来楼层。Player 没有应用级全局变量仓库，该合并层为空。脚本上下文按角色初值 → 当前脚本变量 → 聊天变量合并；参照实现只在消息 iframe 分支合并楼层，虽然其类型注释描述了更大的脚本范围，本次遵循实现。它不等价于只读取最新消息，也不访问其他对话。
+
+`insertOrAssignVariables` 深合并并覆盖旧值，`insertVariables` 深合并但保留已有值，数组均整体替换；`deleteVariable` 沿用 Lodash 路径及 `unset` 返回语义（路径本已不存在也可返回 true）。这些辅助函数继续使用同一保存队列和候选检查点，没有另建状态仓库。
+
+## 兼容推进与样本验收（2026-09-10）
+
+后续推进已转为[完整能力域及依赖顺序](reference/helper-compatibility.md)，逐项清单见[兼容目录](../tools/web-runtime/compatibility-catalog.json)。下表保留上一轮变量改动和样本验证的实际范围，不作为按样本补 API 的开发顺序。会话协调器现已接入生产宿主；以下变量/样本表格保留此前一轮的范围，新增运行环境交付见本节后文。
+
+实现路线是“作者原程序 → 酒馆助手兼容接口 → Player 业务操作”，页面计算与 DOM 留在浏览器。接口名、参数、默认值、返回类型、事件次序和保存语义一起验收；未接入能力是兼容缺口，不自动归因于安全限制。
+
+| 能力组 | 本次进展 | 后续缺口 |
+| --- | --- | --- |
+| 初始化与父页面表单 | C-05 原 HTML 表单在生产网页外壳/父页面脚本下完成输入栏回写，刷新保留字段 | Android 原卡完整发送/生成链路与真机输入法仍需验证 |
+| 变量 | 聚合读取、深合并/补缺/删除、角色与脚本初值 | 其他作用域的实际存储归属与接口 |
+| 消息与事件 | 保留已有接口，本地复杂样本词法扫描发现实际引用 | 消息修改后的页面更新、跨页面事件及完整卡流程验收 |
+| 世界书与 Regex | 世界书读取/启停保持当前实现；发现复杂样本引用 `updateTavernRegexesWith` | 世界书写入、Regex 修改及其 Prompt/显示生效链路 |
+| MVU/EJS | 保留当前单宿主路径 | 更广加载形式的执行归属与重复更新验证 |
+
+C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61dda961a9`。可选测试 `test/browser/community.test.mjs` 按哈希定位本地原件，直接加载第一个 Regex 替换页面，不复制或重写源码；填写表单、点击确认后验证共享草稿、没有自动发送、页面刷新保留输入。它使用生产 JS 和模拟原生桥，不执行 Android Regex/Macro 投影或真实模型生成，因此不代表完整游玩验收。无原件时明确跳过；摘要保存到忽略路径 `tools/web-runtime/build/community-form-audit.json`，不包含原文或文件名。
+
+本地六份 JSON/PNG 原件的词法扫描摘要位于忽略路径 `tools/web-runtime/build/local-capability-audit.json`，只记录哈希及疑似调用名，不代表所有分支执行过，也不能证明无外部依赖。此次已执行的 JS 契约测试为 16 项、Edge 集成测试为 2 项，均通过，包括 C-05 原件；核心验证执行 `:content-core:test :conversation-core:test` 并通过。
+
+本次另执行 `:app:testDebugUnitTest :app:assembleDebug`，应用单测与 Debug APK 构建成功。核心及应用共报告 425 项、失败/错误 0、跳过 20 项（沿用各可选测试条件）；不把跳过项计为通过。当前 `adb devices` 无连接设备，未执行 Android instrumentation 或真机原卡发送/生成验收。
 
 有限父页面与作者内容同属不可信区域，使用不同于可信消息外壳的来源。只有可信主框架能调用 WebMessageListener。作者内容可以修改自己的兼容父页面，但不能读取原生桥、播放器 DOM、文件路径或模型凭据。WebView 禁止文件/content URI、弹窗、设备权限、Worker 和 Service Worker；CSP 配合取得层限制资源协议与请求方法。
+
+## 会话级作者运行环境（2026-09-10）
+
+`session.mjs` 由持久作者协调 iframe 持有，页面的 `host.mjs` 只绑定身份、接口和传输入口。外壳先等待协调器就绪，再加载消息页面与脚本。原生事实事件只发送给协调器一次，不再逐页面广播后重复执行全局监听器。
+
+- `initializeGlobal(name, value)` 发布实际对象和函数；作者页面及其兼容父页通过 getter 访问同一对象。`waitGlobalInitialized` 支持先等待后发布，以及后来创建的页面；MVU 已保存状态仍可唤醒现有原生 facade。
+- `eventOn`、`eventOnce`、`eventMakeFirst/Last`、`eventOnButton` 及清理操作使用会话级注册表。清理仅移除调用页面拥有的监听器。`eventEmit` 按顺序等待普通异步监听器；`eventEmitAndWait` 同步调用、不等待 Promise。对照登记的 ST EventEmitter，once 在回调前移除，其异步返回不阻塞后续监听；异常报告后继续后续监听器。
+- 所有作者页面共用待提交视图、状态版本和保存队列。跨页面立即写后读可见，不再各自携带独立队列的旧版本。保存失败停止所有作者写入，恢复同一已保存视图。
+- 页面销毁注销监听、拒绝未完成等待、撤销该页面发布的全局注册并取消未提交操作；正在等待原生结果的传输 Promise 也被释放，避免阻塞其他页面。已保存结果仍以原生快照为准。其他作者显式持有的旧对象引用无法自动撤销，不宣称能清空任意闭包。
+- 候选身份变化在新快照到达时先使旧页面失效；预设脚本继续保留到当前生成结束，再销毁旧实例、加载新实例。滚动、追加消息不销毁协调器。
+
+这批完成生产协调器、共享对象、初始化、事件、共享队列和清理；不等于设计中 A 的全部内容已完成。完整 SillyTavern Context、脚本管理接口、完整事件集合和更广 MVU/EJS provider 归属仍未交付。
+
+本轮 JS 契约测试 26 项和 Edge 测试 3 项通过。生产网页集成覆盖双页面同步回调、原生事件不重复、销毁清理、预设生成中保留/结束后替换和原表单回归；独立架构证明仍保留。新增 Android 测试 `authorPagesShareObjectsAndSynchronousEventsThroughProductionSession` 通过编译但未执行：当前无连接设备，SDK 未安装 emulator。应用单测、Debug APK 和 Android 测试 APK 构建通过；设备上的同源 sibling 访问、生命周期及原卡完整生成流程仍需验收。
 
 ## 资源与恢复
 

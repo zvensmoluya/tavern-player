@@ -22,6 +22,7 @@
 | [Preset 能力调查](reference/preset-import-capabilities.md) | 样本结构与上游依赖，不能据此承诺完整兼容 |
 | [Shelf 传输协议 v1](reference/transfer-protocol-v1.md) | 当前传输格式与接收边界 |
 | [社区样本编号](reference/community-samples.md) | 中性编号、夹具与原件哈希的追溯规则 |
+| [酒馆助手兼容能力与实现顺序](reference/helper-compatibility.md) | 全量接口清单、能力域依赖、目标归属与成组交付门槛；区分目标和生产现状 |
 
 ## 历史记录
 

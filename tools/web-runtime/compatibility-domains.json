@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "notes": "Status describes the domain, not full API conformance. Batches and ownership are target decisions; see docs/reference/helper-compatibility.md.",
+  "domains": [
+    {
+      "id": "runtime",
+      "title": "运行环境、初始化与事件",
+      "declarations": [
+        "function/global.d.ts",
+        "function/util.d.ts",
+        "iframe/event.d.ts",
+        "iframe/util.d.ts",
+        "iframe/exported.tavernhelper.d.ts"
+      ],
+      "implementations": [
+        "src/function/event.ts",
+        "src/function/global.ts",
+        "src/function/util.ts"
+      ],
+      "owner": "browser-session",
+      "status": "partial",
+      "batch": "A"
+    },
+    {
+      "id": "variables",
+      "title": "变量与作用域",
+      "declarations": [
+        "function/variables.d.ts",
+        "iframe/variables.d.ts"
+      ],
+      "implementations": [
+        "src/function/variables.ts"
+      ],
+      "owner": "native-state-with-synchronous-js-view",
+      "status": "partial",
+      "batch": "B"
+    },
+    {
+      "id": "messages",
+      "title": "消息、候选与显示",
+      "declarations": [
+        "function/chat_message.d.ts",
+        "function/displayed_message.d.ts"
+      ],
+      "implementations": [
+        "src/function/chat_message.ts",
+        "src/function/displayed_message.ts"
+      ],
+      "owner": "native-conversation-and-browser-display",
+      "status": "partial",
+      "batch": "B"
+    },
+    {
+      "id": "worldbooks",
+      "title": "世界书及旧版接口",
+      "declarations": [
+        "function/worldbook.d.ts",
+        "function/lorebook.d.ts",
+        "function/lorebook_entry.d.ts"
+      ],
+      "implementations": [
+        "src/function/worldbook.ts",
+        "src/function/lorebook.ts",
+        "src/function/lorebook_entry.ts"
+      ],
+      "owner": "native-content-and-prompt",
+      "status": "partial",
+      "batch": "C"
+    },
+    {
+      "id": "transforms",
+      "title": "Regex、Macro 与显示投影",
+      "declarations": [
+        "function/tavern_regex.d.ts",
+        "function/macro_like.d.ts"
+      ],
+      "implementations": [
+        "src/function/tavern_regex.ts",
+        "src/function/macro_like.ts"
+      ],
+      "owner": "native-projection-with-browser-callbacks",
+      "status": "unimplemented-bridge",
+      "batch": "C"
+    },
+    {
+      "id": "generation",
+      "title": "生成、注入与命令",
+      "declarations": [
+        "function/generate.d.ts",
+        "function/inject.d.ts",
+        "function/slash.d.ts"
+      ],
+      "implementations": [
+        "src/function/generate/index.ts",
+        "src/function/generate/generate.ts",
+        "src/function/generate/generateRaw.ts",
+        "src/function/generate/responseGenerator.ts",
+        "src/function/generate/inputProcessor.ts",
+        "src/function/generate/dataProcessor.ts",
+        "src/function/inject.ts",
+        "src/function/slash.ts"
+      ],
+      "owner": "native-generation-with-browser-hooks",
+      "status": "partial",
+      "batch": "D"
+    },
+    {
+      "id": "scripts",
+      "title": "脚本树、身份、按钮与信息",
+      "declarations": [
+        "function/script.d.ts",
+        "iframe/script.d.ts"
+      ],
+      "implementations": [
+        "src/function/script.ts"
+      ],
+      "owner": "browser-lifecycle-and-native-program-state",
+      "status": "partial",
+      "batch": "A"
+    },
+    {
+      "id": "characters",
+      "title": "角色定义与原始数据",
+      "declarations": [
+        "function/character.d.ts",
+        "function/raw_character.d.ts"
+      ],
+      "implementations": [
+        "src/function/character.ts",
+        "src/function/raw_character.ts"
+      ],
+      "owner": "native-character-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E"
+    },
+    {
+      "id": "presets",
+      "title": "预设与捕获配置",
+      "declarations": [
+        "function/preset.d.ts"
+      ],
+      "implementations": [
+        "src/function/preset.ts"
+      ],
+      "owner": "native-preset-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E"
+    },
+    {
+      "id": "personas",
+      "title": "用户身份",
+      "declarations": [
+        "function/persona.d.ts"
+      ],
+      "implementations": [
+        "src/function/persona.ts"
+      ],
+      "owner": "native-persona-repository",
+      "status": "unimplemented-bridge",
+      "batch": "E"
+    },
+    {
+      "id": "imports",
+      "title": "原始资产导入",
+      "declarations": [
+        "function/import_raw.d.ts"
+      ],
+      "implementations": [
+        "src/function/import_raw.ts"
+      ],
+      "owner": "native-import-services",
+      "status": "unimplemented-bridge",
+      "batch": "E"
+    },
+    {
+      "id": "audio",
+      "title": "音频与播放列表",
+      "declarations": [
+        "function/audio.d.ts"
+      ],
+      "implementations": [
+        "src/function/audio.ts"
+      ],
+      "owner": "browser-media-and-native-settings",
+      "status": "unimplemented-bridge",
+      "batch": "F"
+    },
+    {
+      "id": "extension_management",
+      "title": "扩展管理、版本与内置内容",
+      "declarations": [
+        "function/extension.d.ts",
+        "function/version.d.ts",
+        "function/builtin.d.ts"
+      ],
+      "implementations": [
+        "src/function/extension.ts",
+        "src/function/version.ts",
+        "src/function/builtin.ts"
+      ],
+      "owner": "native-capability-description",
+      "status": "unimplemented-bridge",
+      "batch": "F"
+    },
+    {
+      "id": "external_runtimes",
+      "title": "MVU 与 EJS 扩展对象",
+      "declarations": [
+        "iframe/exported.mvu.d.ts",
+        "iframe/exported.ejstemplate.d.ts"
+      ],
+      "implementations": [],
+      "owner": "single-owner-runtime-adapters",
+      "status": "partial",
+      "batch": "A+D"
+    },
+    {
+      "id": "st_context",
+      "title": "SillyTavern 上下文",
+      "declarations": [
+        "iframe/exported.sillytavern.d.ts"
+      ],
+      "implementations": [],
+      "owner": "browser-context-facade-and-native-services",
+      "status": "unimplemented-bridge",
+      "batch": "A"
+    }
+  ]
+}
