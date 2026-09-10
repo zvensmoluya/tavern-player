@@ -108,6 +108,8 @@ data class WorldBookDefinition(
 data class WorldBookEntryDefinition(
     val id: String,
     val sourceId: String? = null,
+    /** Player 在会话内为条目分配的 uid；卡内条目沿用 `sourceId`，此字段为空。 */
+    val uid: Int? = null,
     val name: String = "",
     val comment: String = "",
     val keys: List<String> = emptyList(),

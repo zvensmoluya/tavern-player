@@ -889,6 +889,7 @@ class ChatViewModel(
                         require(actor.id == "native-resource-preparation" && args.isEmpty()) { "资源更新只能从原生界面操作" }
                         result = JsonPrimitive(requireNotNull(browserEnvironment).resources.reprepare(record.id, record.character.sourceSha256))
                     }
+                    "worldbook.entries.read" -> result = BrowserConversation.readWorldBookEntries(record, args)
                     "generation.generate", "generation.raw" -> {
                         browserGenerationJob = currentCoroutineContext()[Job]
                         browserGenerationId = args["generation_id"]?.jsonPrimitive?.contentOrNull ?: idGenerator()

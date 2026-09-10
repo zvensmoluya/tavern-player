@@ -160,6 +160,142 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     if (!value) throw new Error('World book does not exist');
     return value;
   }
+  // World books are conversation-scoped here: the snapshot owns the nested entry shape, and the
+  // legacy flat shape is only read back through the bridge call that produced it.
+  const nestedEntries = book => clone(worldbook(book).entries ?? []);
+  async function flatEntries(book) { return clone(await enqueue('worldbook.entries.read', { book })); }
+  function entryArray(value, label = 'Entries') {
+    if (!Array.isArray(value)) throw new Error(label + ' must be an array');
+    return value;
+  }
+  /** `setLorebookEntries` patches entries, so every patch has to name the uid it targets. */
+  function entryPatches(value) {
+    entryArray(value);
+    for (const entry of value) {
+      object(entry);
+      if (!Number.isInteger(entry.uid)) throw new Error('Entry uid must be an integer');
+    }
+    return value;
+  }
+  /** This profile has no world book editor: legal render modes are accepted and ignored. */
+  function renderOption(options) {
+    if (options === undefined) return;
+    only(options, ['render']);
+    if (options.render !== undefined && !['debounced', 'immediate', 'none'].includes(options.render))
+      throw new Error('Invalid render option: ' + options.render);
+  }
+  /** Only books that participate in composition are bound; the first enabled one is the primary. */
+  function charWorldbooks(character_name) {
+    // Upstream defaults a missing name to the current character.
+    const scope = character_name ?? 'current';
+    if (scope !== 'current') throw new Error('Unavailable character scope: ' + scope);
+    const enabled = session.state.worldbooks.filter(book => book.enabled).map(book => book.name);
+    return { primary: enabled[0] ?? null, additional: enabled.slice(1) };
+  }
+  function getCharLorebooks(options) {
+    // The legacy signature takes an options object; callers here also pass the scope name directly.
+    if (typeof options === 'string') return charWorldbooks(options);
+    if (options === undefined) return charWorldbooks('current');
+    object(options); only(options, ['name', 'type']);
+    // Upstream declares a `type` filter but only ever reads `name`.
+    return charWorldbooks(options.name ?? 'current');
+  }
+  async function rebindCharWorldbooks(character_name, char_worldbooks) {
+    if (character_name !== 'current') throw new Error('Unavailable character scope: ' + character_name);
+    object(char_worldbooks);
+    const primary = char_worldbooks.primary ?? null, additional = char_worldbooks.additional ?? [];
+    if (primary !== null && typeof primary !== 'string') throw new Error('World book name must be a string or null');
+    if (!Array.isArray(additional) || additional.some(name => typeof name !== 'string'))
+      throw new Error('Additional world books must be an array of names');
+    return enqueue('worldbook.books.rebind', { primary, additional });
+  }
+  const getCharWorldbookNames = charWorldbooks;
+  const getWorldbookNames = () => session.state.worldbooks.map(book => book.name);
+  const getGlobalWorldbookNames = () => [];
+  // Reading an empty scope is honest; acknowledging a global rebind this profile cannot perform is not.
+  const rebindGlobalWorldbooks = () => {
+    throw new Error('Unsupported host capability: rebindGlobalWorldbooks: world books are conversation-scoped');
+  };
+  const getWorldbook = async name => nestedEntries(name).map(({ player_entry_id, comment, ...entry }) => entry);
+  async function createOrReplaceWorldbook(name, entries, options) {
+    renderOption(options);
+    if (entries !== undefined) entryArray(entries);
+    const created = !session.state.worldbooks.some(book => book.name === name);
+    await enqueue('worldbook.books.create', entries === undefined ? { name } : { name, entries });
+    return created;
+  }
+  const createWorldbook = (name, entries) => createOrReplaceWorldbook(name, entries);
+  async function deleteWorldbook(name) {
+    const existed = session.state.worldbooks.some(book => book.name === name);
+    await enqueue('worldbook.books.delete', { name });
+    return existed;
+  }
+  async function replaceWorldbook(name, entries, options) {
+    renderOption(options); entryArray(entries);
+    await enqueue('worldbook.entries.replace', { book: worldbook(name).name, entries });
+  }
+  async function updateWorldbookWith(name, updater, options) {
+    if (typeof updater !== 'function') throw new Error('Updater must be a function');
+    renderOption(options);
+    const book = worldbook(name).name;
+    const updated = await updater(clone(worldbook(book).entries ?? []));
+    entryArray(updated, 'Updater result');
+    await enqueue('worldbook.entries.replace', { book, entries: updated });
+    return nestedEntries(book);
+  }
+  async function createWorldbookEntries(name, new_entries, options) {
+    renderOption(options); entryArray(new_entries);
+    const book = worldbook(name).name;
+    const known = new Set(nestedEntries(book).map(entry => entry.uid));
+    await enqueue('worldbook.entries.create', { book, entries: new_entries });
+    const worldbook_entries = nestedEntries(book);
+    return { worldbook: worldbook_entries, new_entries: worldbook_entries.filter(entry => !known.has(entry.uid)) };
+  }
+  async function deleteWorldbookEntries(name, predicate, options) {
+    renderOption(options);
+    if (typeof predicate !== 'function') throw new Error('Predicate must be a function');
+    const book = worldbook(name).name;
+    const deleted_entries = nestedEntries(book).filter(entry => predicate(clone(entry)));
+    await enqueue('worldbook.entries.delete', { book, uids: deleted_entries.map(entry => entry.uid) });
+    return { worldbook: nestedEntries(book), deleted_entries };
+  }
+  const setWorldbookEnabled = async (name, enabled) => enqueue('worldbook.activation', { book: worldbook(name).name, enabled });
+  const setWorldbookEntryEnabled = async (name, uid, enabled) => enqueue('worldbook.activation', { book: worldbook(name).name, entry: String(uid), enabled });
+  const getLorebookEntries = async name => flatEntries(worldbook(name).name);
+  async function replaceLorebookEntries(name, entries) {
+    entryArray(entries);
+    await enqueue('worldbook.entries.replace', { book: worldbook(name).name, entries });
+  }
+  async function setLorebookEntries(name, entries) {
+    entryPatches(entries);
+    const book = worldbook(name).name;
+    await enqueue('worldbook.entries.update', { book, entries });
+    return flatEntries(book);
+  }
+  async function createLorebookEntries(name, entries) {
+    entryArray(entries);
+    const book = worldbook(name).name;
+    const known = new Set(nestedEntries(book).map(entry => entry.uid));
+    await enqueue('worldbook.entries.create', { book, entries });
+    const current = await flatEntries(book);
+    return { entries: current, new_uids: current.filter(entry => !known.has(entry.uid)).map(entry => entry.uid) };
+  }
+  async function deleteLorebookEntries(name, uids) {
+    entryArray(uids, 'Entry uids');
+    if (uids.some(uid => !Number.isInteger(uid))) throw new Error('Entry uids must be integers');
+    const book = worldbook(name).name;
+    const known = new Set(nestedEntries(book).map(entry => entry.uid));
+    await enqueue('worldbook.entries.delete', { book, uids });
+    return { entries: await flatEntries(book), delete_occurred: uids.some(uid => known.has(uid)) };
+  }
+  async function updateLorebookEntriesWith(name, updater) {
+    if (typeof updater !== 'function') throw new Error('Updater must be a function');
+    const book = worldbook(name).name;
+    const updated = await updater(await flatEntries(book));
+    entryArray(updated, 'Updater result');
+    await enqueue('worldbook.entries.replace', { book, entries: updated });
+    return flatEntries(book);
+  }
   function regexScope(options = {}) {
     only(options, ['type', 'name', 'scope', 'enable_state']);
     const scope = options.type ?? options.scope ?? 'all';
@@ -240,12 +376,11 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     eventOnButton: (name, fn) => on('player_button:' + actor.scriptId + ':' + name, fn),
     initializeGlobal: initialize, waitGlobalInitialized,
     tavern_events: tavernEvents, iframe_events: iframeEvents,
-    getCharWorldbookNames: () => ({ primary: session.state.worldbooks[0]?.name ?? null, additional: session.state.worldbooks.slice(1).map(b => b.name) }),
-    getCharLorebooks: () => ({ primary: session.state.worldbooks[0]?.name ?? null, additional: session.state.worldbooks.slice(1).map(b => b.name) }),
-    getWorldbook: async name => clone(worldbook(name).entries).map(({ player_entry_id, comment, ...entry }) => entry),
-    getLorebookEntries: unsupported('getLorebookEntries: use getWorldbook in this profile'),
-    setWorldbookEnabled: async (name, enabled) => enqueue('worldbook.activation', { book: worldbook(name).name, enabled }),
-    setWorldbookEntryEnabled: async (name, uid, enabled) => enqueue('worldbook.activation', { book: worldbook(name).name, entry: String(uid), enabled }),
+    getWorldbookNames, getGlobalWorldbookNames, rebindGlobalWorldbooks, getCharWorldbookNames, rebindCharWorldbooks, getCharLorebooks,
+    getWorldbook, createWorldbook, createOrReplaceWorldbook, deleteWorldbook, replaceWorldbook, updateWorldbookWith,
+    createWorldbookEntries, deleteWorldbookEntries, setWorldbookEnabled, setWorldbookEntryEnabled,
+    getLorebookEntries, replaceLorebookEntries, setLorebookEntries, createLorebookEntries, deleteLorebookEntries,
+    updateLorebookEntriesWith,
     generate: async (options = {}) => { await flush(); return enqueue('generation.generate', options); },
     generateRaw: async (options = {}) => { await flush(); return enqueue('generation.raw', options); },
     stopAllGeneration: () => stopGeneration(),
@@ -271,7 +406,7 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     isValidMvuData: data => !!data && typeof data.stat_data === 'object' && 'schema' in data,
   };
   for (const name of ['triggerSlash', 'executeSlashCommands',
-    'registerMvuSchema', 'setWorldbook', 'replaceWorldbook', 'setLorebookEntries', 'injectPrompts', 'replaceAllVariables']) api[name] = unsupported(name);
+    'registerMvuSchema', 'setWorldbook', 'injectPrompts', 'replaceAllVariables']) api[name] = unsupported(name);
   // Retained function references must not operate after their owner is destroyed.
   for (const [name, fn] of Object.entries(api)) if (typeof fn === 'function')
     api[name] = (...args) => { if (!owner.active) throw new Error('Runtime disposed'); return fn(...args); };

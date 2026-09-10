@@ -250,3 +250,268 @@ test('character variables keep their scope and update aggregation before durable
   await host.flush();
   assert.deepEqual(host.api.getVariables({ type: 'character' }), {});
 });
+
+// World books live inside the conversation: the snapshot owns the nested entry shape, while
+// `worldbook.entries.read` produces the legacy flat shape. Both are synthetic fixtures.
+const worldbookFixture = () => [
+  { id: 'alpha', name: 'alpha', enabled: true, entries: [
+    { uid: 5, player_entry_id: 'alpha:5', book: 'alpha', name: 'Dragon', comment: 'Dragon', enabled: true,
+      strategy: { type: 'selective', keys: ['dragon'], keys_secondary: { logic: 'and_any', keys: ['cave'] }, scan_depth: 4 },
+      position: { type: 'at_depth', role: 'system', depth: 3, order: 100 },
+      probability: 80, recursion: { prevent_incoming: false, prevent_outgoing: true, delay_until: 2 },
+      effect: { sticky: 3, cooldown: null, delay: null }, extra: { note: 'fixture' }, content: 'Dragons sleep in caves.' },
+    { uid: 9, player_entry_id: 'alpha:9', book: 'alpha', name: 'Rune', comment: 'Rune', enabled: true,
+      strategy: { type: 'constant', keys: [], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+      position: { type: 'before_character_definition', role: 'system', depth: 4, order: 200 },
+      probability: 100, recursion: { prevent_incoming: true, prevent_outgoing: false, delay_until: null },
+      effect: { sticky: null, cooldown: 5, delay: 1 }, extra: {}, content: 'A rune glows.' },
+  ] },
+  { id: 'beta', name: 'beta', enabled: false, entries: [] },
+  { id: 'gamma', name: 'gamma', enabled: true, entries: [] },
+];
+const flatWorldbookFixture = () => [
+  { uid: 5, display_index: 0, comment: 'Dragon', enabled: true, type: 'selective', position: 'at_depth_as_system',
+    depth: 3, order: 100, probability: 80, keys: ['dragon'], logic: 'and_any', filters: [], scan_depth: 4,
+    case_sensitive: 'same_as_global', match_whole_words: 'same_as_global', use_group_scoring: 'same_as_global', automation_id: null,
+    exclude_recursion: false, prevent_recursion: true, delay_until_recursion: 2, content: 'Dragons sleep in caves.',
+    group: '', group_prioritized: false, group_weight: 100, sticky: 3, cooldown: null, delay: null },
+  { uid: 9, display_index: 1, comment: 'Rune', enabled: true, type: 'constant', position: 'before_character_definition',
+    depth: null, order: 200, probability: 100, keys: [], logic: 'and_any', filters: [], scan_depth: 'same_as_global',
+    case_sensitive: 'same_as_global', match_whole_words: 'same_as_global', use_group_scoring: 'same_as_global', automation_id: null,
+    exclude_recursion: true, prevent_recursion: false, delay_until_recursion: null, content: 'A rune glows.',
+    group: '', group_prioritized: false, group_weight: 100, sticky: null, cooldown: 5, delay: 1 },
+];
+const pick = (value, keys) => Object.fromEntries(keys.map(key => [key, value[key]]));
+const nestedPayload = entry => entry.strategy || entry.recursion || entry.effect || typeof entry.position === 'object';
+
+/** Answers world book bridge calls from mutable fixture state, like the native snapshot would. */
+function worldbookStub() {
+  const calls = [];
+  let revision = 0, next_uid = 20, worldbooks = worldbookFixture();
+  const flat = { alpha: flatWorldbookFixture() };
+  const book = name => worldbooks.find(value => value.name === name);
+  const flatOf = name => (flat[name] ??= []);
+  const copy = value => JSON.parse(JSON.stringify(value));
+  const view = () => ({ revision: 'r' + (++revision), worldbooks: copy(worldbooks) });
+  const request = async (method, args) => {
+    calls.push({ method, args: copy(args) });
+    if (method === 'worldbook.activation') book(args.book).enabled = args.enabled;
+    else if (method === 'worldbook.entries.read') return { snapshot: view(), value: copy(flatOf(args.book)) };
+    else if (method === 'worldbook.entries.replace') {
+      // Both shapes reach this method; the fixture decides by looking at the payload.
+      if (args.entries.some(nestedPayload)) book(args.book).entries = args.entries;
+      else flat[args.book] = args.entries;
+    } else if (method === 'worldbook.entries.update') {
+      const entries = flatOf(args.book);
+      for (const patch of args.entries) {
+        const index = entries.findIndex(entry => entry.uid === patch.uid);
+        entries[index] = { ...entries[index], ...patch };
+      }
+    } else if (method === 'worldbook.entries.create') {
+      const nested = args.entries.some(nestedPayload);
+      for (const entry of args.entries) {
+        const uid = entry.uid ?? next_uid++;
+        if (nested) book(args.book).entries.push({ enabled: true, ...entry, uid, book: args.book });
+        else flatOf(args.book).push({ ...flatWorldbookFixture()[0], comment: '', content: '', keys: [],
+          sticky: null, cooldown: null, delay: null, display_index: flatOf(args.book).length, ...entry, uid });
+      }
+    } else if (method === 'worldbook.entries.delete') {
+      book(args.book).entries = book(args.book).entries.filter(entry => !args.uids.includes(entry.uid));
+      flat[args.book] = flatOf(args.book).filter(entry => !args.uids.includes(entry.uid));
+    } else if (method === 'worldbook.books.create') {
+      const entries = (args.entries ?? []).map(entry => ({ enabled: true, ...entry, uid: entry.uid ?? next_uid++ }));
+      const existing = book(args.name);
+      if (existing) existing.entries = entries;
+      else worldbooks.push({ id: args.name, name: args.name, enabled: false, entries });
+    } else if (method === 'worldbook.books.delete') worldbooks = worldbooks.filter(value => value.name !== args.name);
+    else if (method !== 'worldbook.books.rebind') throw new Error('Unexpected bridge method: ' + method);
+    return { snapshot: view(), value: null };
+  };
+  return { calls, request, get worldbooks() { return copy(worldbooks); } };
+}
+const worldbookHost = () => {
+  const stub = worldbookStub();
+  return { stub, host: createHost({ initial: { ...snapshot(), worldbooks: stub.worldbooks }, actor: {}, request: stub.request }) };
+};
+
+test('world book reads expose the nested and the legacy flat shape', async () => {
+  const { stub, host } = worldbookHost();
+  assert.deepEqual(host.api.getWorldbookNames(), ['alpha', 'beta', 'gamma']);
+  assert.deepEqual(host.api.getGlobalWorldbookNames(), []);
+  const nested = await host.api.getWorldbook('alpha');
+  assert.equal(nested.length, 2);
+  assert.deepEqual(pick(nested[0], ['uid', 'name', 'enabled', 'content']),
+    { uid: 5, name: 'Dragon', enabled: true, content: 'Dragons sleep in caves.' });
+  assert.equal(nested[0].position.type, 'at_depth');
+  assert.equal(nested[0].position.role, 'system');
+  assert.equal(nested[0].position.depth, 3);
+  assert.equal(nested[0].position.order, 100);
+  assert.equal(nested[0].effect.sticky, 3);
+  assert.equal(nested[0].effect.cooldown, null);
+  assert.deepEqual(nested[0].strategy.keys, ['dragon']);
+  assert.deepEqual(nested[0].recursion, { prevent_incoming: false, prevent_outgoing: true, delay_until: 2 });
+  assert.equal(nested[1].position.type, 'before_character_definition');
+  assert.equal('player_entry_id' in nested[0], false);
+  assert.deepEqual(stub.calls, []);
+  nested[0].content = 'mutated by the caller';
+  assert.equal((await host.api.getWorldbook('alpha'))[0].content, 'Dragons sleep in caves.');
+  const flat = await host.api.getLorebookEntries('alpha');
+  assert.deepEqual(stub.calls, [{ method: 'worldbook.entries.read', args: { book: 'alpha' } }]);
+  assert.deepEqual(flat, flatWorldbookFixture());
+  assert.equal(flat[0].position, 'at_depth_as_system');
+  assert.equal(flat[1].position, 'before_character_definition');
+  assert.equal(flat[0].sticky, 3);
+  assert.equal(flat[1].sticky, null);
+  assert.equal(flat[1].cooldown, 5);
+  assert.equal(flat[0].effect, undefined);
+  assert.equal(flat[0].automation_id, null);
+  assert.deepEqual(flat[0].filters, []);
+  await assert.rejects(host.api.getWorldbook('missing'), /does not exist/);
+  await assert.rejects(host.api.getLorebookEntries('missing'), /does not exist/);
+});
+
+test('character world book bindings only count enabled books', async () => {
+  const { stub, host } = worldbookHost();
+  const expected = { primary: 'alpha', additional: ['gamma'] };
+  assert.deepEqual(host.api.getCharWorldbookNames('current'), expected);
+  assert.deepEqual(host.api.getCharWorldbookNames(), expected);
+  assert.deepEqual(host.api.getCharLorebooks('current'), expected);
+  assert.deepEqual(host.api.getCharLorebooks(), expected);
+  assert.throws(() => host.api.getCharWorldbookNames('other'), /Unavailable/);
+  assert.throws(() => host.api.getCharLorebooks('other'), /Unavailable/);
+  await host.api.setWorldbookEnabled('alpha', false);
+  assert.deepEqual(host.api.getCharWorldbookNames('current'), { primary: 'gamma', additional: [] });
+  assert.deepEqual(host.api.getWorldbookNames(), ['alpha', 'beta', 'gamma']);
+  await host.api.rebindCharWorldbooks('current', { primary: 'beta', additional: ['gamma'] });
+  assert.deepEqual(stub.calls.at(-1), { method: 'worldbook.books.rebind', args: { primary: 'beta', additional: ['gamma'] } });
+  await host.api.rebindCharWorldbooks('current', { primary: null, additional: [] });
+  assert.deepEqual(stub.calls.at(-1).args, { primary: null, additional: [] });
+  await assert.rejects(host.api.rebindCharWorldbooks('other', {}), /Unavailable/);
+  await assert.rejects(host.api.rebindCharWorldbooks('current', { additional: 'gamma' }), /array of names/);
+  await assert.rejects(host.api.rebindCharWorldbooks('current', { primary: 3 }), /string or null/);
+});
+
+test('setLorebookEntries sends only the patches it was given and answers with the flat list', async () => {
+  const { stub, host } = worldbookHost();
+  const entries = await host.api.setLorebookEntries('alpha', [{ uid: 9, comment: 'Rune II', sticky: 2 }]);
+  assert.deepEqual(stub.calls.map(call => call.method), ['worldbook.entries.update', 'worldbook.entries.read']);
+  assert.deepEqual(stub.calls[0].args, { book: 'alpha', entries: [{ uid: 9, comment: 'Rune II', sticky: 2 }] });
+  assert.deepEqual(entries.map(entry => entry.uid), [5, 9]);
+  assert.equal(entries[0].comment, 'Dragon');
+  assert.equal(entries[1].comment, 'Rune II');
+  assert.equal(entries[1].sticky, 2);
+  // Fields this profile cannot express are forwarded as-is: the bridge is what rejects them.
+  await host.api.setLorebookEntries('alpha', [{ uid: 5, filters: ['x'] }]);
+  assert.deepEqual(stub.calls[2],
+    { method: 'worldbook.entries.update', args: { book: 'alpha', entries: [{ uid: 5, filters: ['x'] }] } });
+  await assert.rejects(host.api.setLorebookEntries('alpha', 'nope'), /must be an array/);
+  await assert.rejects(host.api.setLorebookEntries('alpha', [{ comment: 'no uid' }]), /uid/);
+});
+
+test('updateWorldbookWith runs the updater in the client and replaces the whole nested list', async () => {
+  const { stub, host } = worldbookHost();
+  const seen = [];
+  const result = await host.api.updateWorldbookWith('alpha', async current => {
+    seen.push(current.map(entry => entry.uid));
+    // The updater works on a copy: nothing reaches the snapshot before the write lands.
+    assert.equal(host.state.worldbooks[0].entries[0].content, 'Dragons sleep in caves.');
+    current[0].content = 'Rewritten in the browser.';
+    current.push({ uid: 30, name: 'Appended' });
+    return current;
+  }, { render: 'immediate' });
+  assert.deepEqual(seen, [[5, 9]]);
+  assert.deepEqual(stub.calls.map(call => call.method), ['worldbook.entries.replace']);
+  assert.equal(stub.calls[0].args.book, 'alpha');
+  assert.deepEqual(stub.calls[0].args.entries.map(entry => entry.uid), [5, 9, 30]);
+  assert.equal(stub.calls[0].args.entries[0].content, 'Rewritten in the browser.');
+  assert.deepEqual(result.map(entry => entry.uid), [5, 9, 30]);
+  assert.equal(result[0].content, 'Rewritten in the browser.');
+  await assert.rejects(host.api.updateWorldbookWith('alpha', 'nope'), /Updater must be a function/);
+  await assert.rejects(host.api.updateWorldbookWith('missing', current => current), /does not exist/);
+  await assert.rejects(host.api.updateWorldbookWith('alpha', current => current, { render: 'eager' }), /render/);
+});
+
+test('deleteWorldbookEntries converts predicate matches into their uids', async () => {
+  const { stub, host } = worldbookHost();
+  const visited = [];
+  const result = await host.api.deleteWorldbookEntries('alpha', entry => { visited.push(entry.uid); return entry.name === 'Rune'; });
+  assert.deepEqual(visited, [5, 9]);
+  assert.deepEqual(stub.calls.at(-1), { method: 'worldbook.entries.delete', args: { book: 'alpha', uids: [9] } });
+  assert.deepEqual(result.deleted_entries.map(entry => entry.uid), [9]);
+  assert.deepEqual(result.worldbook.map(entry => entry.uid), [5]);
+  await host.api.deleteWorldbookEntries('alpha', () => false);
+  assert.deepEqual(stub.calls.at(-1).args.uids, []);
+  await assert.rejects(host.api.deleteWorldbookEntries('alpha', 'nope'), /Predicate must be a function/);
+});
+
+test('createWorldbookEntries reports the entries the bridge appended', async () => {
+  const { stub, host } = worldbookHost();
+  const payload = [{ name: 'Shadow', strategy: { type: 'selective', keys: ['shadow'] } }, { name: 'Ash' }];
+  const created = await host.api.createWorldbookEntries('alpha', payload, { render: 'debounced' });
+  assert.deepEqual(stub.calls.map(call => call.method), ['worldbook.entries.create']);
+  assert.deepEqual(stub.calls[0].args, { book: 'alpha', entries: payload });
+  assert.deepEqual(created.worldbook.map(entry => entry.uid), [5, 9, 20, 21]);
+  assert.deepEqual(created.new_entries.map(entry => entry.name), ['Shadow', 'Ash']);
+  assert.deepEqual(created.new_entries.map(entry => entry.uid), [20, 21]);
+  await assert.rejects(host.api.createWorldbookEntries('alpha', 'nope'), /must be an array/);
+});
+
+test('legacy entry creation and deletion answer with the flat result shapes', async () => {
+  const { stub, host } = worldbookHost();
+  const created = await host.api.createLorebookEntries('alpha',
+    [{ comment: 'Extra', content: 'Added.', position: 'at_depth_as_user' }]);
+  assert.deepEqual(stub.calls.map(call => call.method), ['worldbook.entries.create', 'worldbook.entries.read']);
+  assert.deepEqual(created.new_uids, [20]);
+  assert.deepEqual(created.entries.map(entry => entry.uid), [5, 9, 20]);
+  assert.equal(created.entries[2].comment, 'Extra');
+  assert.equal(created.entries[2].position, 'at_depth_as_user');
+  const deleted = await host.api.deleteLorebookEntries('alpha', [5, 4096]);
+  assert.equal(deleted.delete_occurred, true);
+  assert.deepEqual(deleted.entries.map(entry => entry.uid), [9, 20]);
+  assert.deepEqual(stub.calls.slice(2).map(call => call.method), ['worldbook.entries.delete', 'worldbook.entries.read']);
+  assert.deepEqual(stub.calls[2].args, { book: 'alpha', uids: [5, 4096] });
+  assert.equal((await host.api.deleteLorebookEntries('alpha', [4096])).delete_occurred, false);
+  await assert.rejects(host.api.deleteLorebookEntries('alpha', 'nope'), /must be an array/);
+  await assert.rejects(host.api.deleteLorebookEntries('alpha', ['5']), /integers/);
+});
+
+test('updateLorebookEntriesWith replaces the flat list with the updater result', async () => {
+  const { stub, host } = worldbookHost();
+  const entries = await host.api.updateLorebookEntriesWith('alpha', async current => {
+    current[1].comment = 'Rune III';
+    return current;
+  });
+  assert.deepEqual(stub.calls.map(call => call.method), ['worldbook.entries.read', 'worldbook.entries.replace', 'worldbook.entries.read']);
+  assert.deepEqual(stub.calls[1].args.entries.map(entry => entry.comment), ['Dragon', 'Rune III']);
+  assert.equal(entries[1].comment, 'Rune III');
+  await assert.rejects(host.api.updateLorebookEntriesWith('alpha', 'nope'), /Updater must be a function/);
+});
+
+test('world book writes report creation, replacement and deletion through the bridge', async () => {
+  const { stub, host } = worldbookHost();
+  assert.equal(await host.api.createWorldbook('delta'), true);
+  assert.deepEqual(stub.calls.at(-1), { method: 'worldbook.books.create', args: { name: 'delta' } });
+  const entries = [{ uid: 2, name: 'Entry', strategy: { type: 'constant', keys: [] } }];
+  assert.equal(await host.api.createOrReplaceWorldbook('delta', entries, { render: 'immediate' }), false);
+  assert.deepEqual(stub.calls.at(-1).args, { name: 'delta', entries });
+  assert.equal(await host.api.deleteWorldbook('delta'), true);
+  assert.equal(await host.api.deleteWorldbook('delta'), false);
+  await host.api.replaceWorldbook('alpha', [{ uid: 5, name: 'Kept', content: 'Replaced.' }], { render: 'none' });
+  assert.deepEqual(stub.calls.at(-1), { method: 'worldbook.entries.replace',
+    args: { book: 'alpha', entries: [{ uid: 5, name: 'Kept', content: 'Replaced.' }] } });
+  await assert.rejects(host.api.replaceWorldbook('missing', []), /does not exist/);
+  await assert.rejects(host.api.replaceWorldbook('alpha', 'nope'), /must be an array/);
+  await assert.rejects(host.api.createWorldbook('alpha', 'nope'), /must be an array/);
+  await assert.rejects(host.api.replaceWorldbook('alpha', [], { render: 'eager' }), /render/);
+});
+
+test('capabilities this profile still lacks keep rejecting or stay absent', () => {
+  const { host } = worldbookHost();
+  assert.throws(() => host.api.rebindGlobalWorldbooks([]), /Unsupported host capability: rebindGlobalWorldbooks/);
+  assert.throws(() => host.api.setWorldbook('alpha', []), /Unsupported host capability: setWorldbook/);
+  assert.throws(() => host.api.triggerSlash('/help'), /Unsupported host capability: triggerSlash/);
+  // Deliberate compatibility gaps: no rejection stub pretends they are decision points.
+  for (const name of ['getChatWorldbookName', 'rebindChatWorldbook', 'getOrCreateChatWorldbook', 'getChatLorebook',
+    'setChatLorebook', 'getOrCreateChatLorebook', 'getCurrentCharPrimaryLorebook', 'setCurrentCharLorebooks',
+    'getLorebookSettings', 'setLorebookSettings']) assert.equal(host.api[name], undefined, name);
+});

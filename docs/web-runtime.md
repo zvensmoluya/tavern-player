@@ -29,7 +29,7 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 | 生成 | `generate` 使用当前连接和预设；`generateRaw` 接受显式 role/content 数组；生成 ID、流式事件与停止 | 不接受 custom_api、凭据、任意 Provider、工具、图片或注入/覆盖参数；raw 不接受内置 marker 名称 |
 | MVU | 初始化、完整回复更新、候选检查点读取和直接替换 | 替换保留原 schema；不提供完整扩展编辑器/设置、跨引擎共享闭包 |
 | EJS | 已登记原世界书模板的只读求值 | 页面私有状态须先通过宿主保存；未完成初始化导致缺少变量时明确失败 |
-| 世界书 | `getWorldbook` 读取当前角色世界书；显式 `setWorldbookEnabled` / `setWorldbookEntryEnabled` | 旧版 `getLorebookEntries` 明确拒绝；不提供通用资产编辑，不改变其他角色资产 |
+| 世界书 | `getWorldbook` 与旧版 `getLorebookEntries` 读取；条目读写 `createWorldbookEntries` / `updateWorldbookWith` / `replaceWorldbook` / `deleteWorldbookEntries` 及旧版 `setLorebookEntries` / `replaceLorebookEntries` / `createLorebookEntries` / `deleteLorebookEntries` / `updateLorebookEntriesWith`；书级 `getWorldbookNames` / `getCharWorldbookNames` / `getCharLorebooks` / `rebindCharWorldbooks` / `createWorldbook` / `createOrReplaceWorldbook` / `deleteWorldbook`；`setWorldbookEnabled` / `setWorldbookEntryEnabled` 启停 | 只改当前对话快照，不改变其他角色资产；没有全局与聊天文件作用域（`getGlobalWorldbookNames` 返回空、`rebindGlobalWorldbooks` 明确拒绝）；不提供世界书引擎设置（`getLorebookSettings` / `setLorebookSettings`）；条目 `filters` 与 `automation_id` 不支持 |
 | Regex | `getTavernRegexes` / `replaceTavernRegexes` / `updateTavernRegexesWith` 管理当前角色规则；旧 scope=character/all 可用 | 全局/预设规则、任意角色资产、同步格式化及 Macro 回调未接入 |
 | 页面辅助 | 共享对象初始化/等待、脚本身份、按钮、toastr 诊断、有限父页面 | 父页面仅提供 `#send_textarea` 与 `#send_but`；不提供 ST 内部模块/播放器工具栏 |
 
@@ -92,7 +92,21 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 
 本轮验证：`tools/web-runtime` 的 `npm test` 30 项、`npm run test:browser` 7 项通过；`tools/mvu-probe` 的 `npm test` 12 项通过。`gradlew.bat :conversation-core:test :app:testDebugUnitTest :app:assembleDebug` 成功：核心 149 项无跳过，应用 202 项中 17 项沿用可选条件跳过，其余通过。新增四原件测试实际执行，没有跳过；旧 C-04 专用 EJS 夹具测试仍因其独立生成夹具缺失而跳过。APK 内 Web/MVU 资产与当前生成 bundle 一致。没有执行本轮 Android 设备或真实模型请求验收。
 
-后续仍缺世界书写入、提示词注入及完整生成钩子、预设/global 变量、完整 ST Context/脚本管理和 MVU/EJS provider 覆盖。这些未完成项保留在能力目录中，不以单张卡的测试结果替代契约验收。
+后续仍缺提示词注入及完整生成钩子、预设/global 变量、完整 ST Context/脚本管理、世界书引擎设置与全局及聊天文件作用域，以及 MVU/EJS provider 覆盖。这些未完成项保留在能力目录中，不以单张卡的测试结果替代契约验收。
+
+## 对话内世界书读写（2026-09-10）
+
+世界书内容写入落在当前对话的 `CharacterSnapshot` 上：会话记录是这场对话世界书条目的唯一所有者，写入不触碰角色资产，也不建立第二份资产库。会话里的世界书因此可能与该角色新建对话时捕获的快照不同，这是有意的对话隔离，不是缓存不一致。
+
+- 条目身份：卡内条目沿用原 `uid`（保存在 `sourceId`），作者新建的条目由 Player 在书内分配 uid 并持久化。新 uid 取书内已用最大值之后的下一个，删除后该值可能被再次使用，与上游的选取方式一致。删除条目时一并回收它的激活覆盖与 sticky / cooldown / delay 跨轮状态。uid 在书内不唯一（例如卡内条目缺少 id 且与另一条目的数字 id 相撞）时，按 uid 的写入与删除明确失败，不会命中任意一条或一次删掉多条。
+- 两种形状：新版嵌套结构（`strategy` / `position` / `recursion` / `effect` 分组）与旧版扁平结构是同一份定义的两个投影，不是两份数据。读出后原样回写不改变条目含义：`selective` 与激活策略互不牵连，深度插入与身份按当前值还原，outlet 条目在旧版结构里没有对应值因此保持原样，`case_sensitive` / `match_whole_words` 的 `same_as_global` 视为未提供。写入次要关键字逻辑时会一并清掉卡内原始的 `selectiveLogic` 扩展，否则写入不会生效。条目的 `filters` 非空或 `automation_id` 非空时明确报错，不静默丢弃。
+- 书级操作：新建的书先不参与编排，要由 `rebindCharWorldbooks` 或 `setWorldbookEnabled` 显式启用。`rebindCharWorldbooks` 在本次对话的书集合内同时决定参与项与顺序，不新增或删除书。Player 没有独立的世界书注册表，书的集合与参与状态都属于这场对话，这与上游“全局世界书目录 + 绑定”的结构不同。
+- 条目内容变化后的 EJS 模板：模板引用按登记时的原文哈希校验。内容被改写后，该模板既不执行，也不把 `<% %>` 源码注入提示词，而是记一条 `STALE_EJS_TEMPLATE` 警告并继续本轮编排；这取代了此前“整张卡编译失败、这场对话无法再生成”的行为。已安装的 Native 适配仍按来源哈希保持严格失败。
+- 提交与原子性沿用变量写入：一次提交保存成功后才发布，失败停止整个网页运行实例。`getLorebookSettings` / `setLorebookSettings`、全局与聊天文件作用域保留为兼容缺口，不返回假成功。
+
+兼容目录已按本机 helper 检出 `dd8327d4` 重生成，`audit-contract.mjs --check` 通过；世界书域相关名称的状态随之更新。
+
+验证：`conversation-core` 新增 `BrowserWorldBookTest`（12 项），覆盖写入后按关键字进入下一轮提示词的实际内容、未命中时不注入、角色资产与另一场对话不受影响、序列化恢复、uid 分配与删除后的状态回收、条目级启停按对外 uid 寻址、旧版扁平结构双向映射与原样回写不改变含义、uid 歧义明确失败，以及失效模板的降级；`tools/web-runtime` 的 `host.test.mjs` 新增 10 项覆盖新旧接口到桥方法的映射与调用序。本轮实际执行 `:conversation-core:test`（161 项）与 `:app:testDebugUnitTest`（202 项，17 项沿用可选条件跳过），全部通过；`tools/web-runtime` 的 `npm test` 40 项通过。两侧都用模拟宿主或单元行为，不代表真机与真实模型验收；作者新建的含 `<%` 条目不在已登记模板内，本轮既不执行它也不跳过它，仍会作为普通文本注入。
 
 ## 资源与恢复
 

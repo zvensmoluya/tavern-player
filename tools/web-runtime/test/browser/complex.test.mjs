@@ -1,9 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import { parse as yaml } from 'yaml';
 import { localSample } from './local-sample.mjs';
+
+// 最近一次运行实际观察到的宿主桥调用；跳过的样本不写入，也不冒充结果。
+const callReport = new Map();
+async function recordCalls(hash, calls) {
+  callReport.set(hash.slice(0, 16), [...calls]);
+  const payload = {
+    tool: 'test/browser/complex.test.mjs',
+    note: '本文件只记录最近一次浏览器复杂样本测试每条用例实际发生的宿主桥调用；未运行的样本不会出现。',
+    samples: [...callReport.entries()].sort(([a], [b]) => a.localeCompare(b, 'en'))
+      .map(([sha256_16, list]) => ({ sha256_16, calls: list })),
+  };
+  await mkdir(new URL('../../build/', import.meta.url), { recursive: true });
+  await writeFile(new URL('../../build/capability-calls.json', import.meta.url), JSON.stringify(payload, null, 2) + '\n');
+}
 
 const cases = [
   { hash: '7df0b58b2a46ac9ae2169c45f715a58760ebdad63017c5a860222d808beabe32', rule: 1, selector: '#tabNav', implicitBody: true },
@@ -15,10 +29,11 @@ const cases = [
 for (const sample of cases) test(`original complex page ${sample.hash.slice(0, 12)} initializes and interacts`, async t => {
   const card = await localSample(sample.hash);
   if (!card) { t.skip('Optional original is unavailable'); return; }
+  const calls = [];
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const page = await browser.newPage(), root = 'https://player.invalid', origin = 'https://card.test', epoch = 'complex';
-    const frames = new Map(), errors = [], calls = [];
+    const frames = new Map(), errors = [];
     let serial = 0;
     const initial = card.character_book.entries.find(entry => /initvar/i.test(entry.comment ?? ''));
     const mvu = { stat_data: yaml(initial.content.replaceAll('{{user}}', 'User').replaceAll('{{char}}', 'Actor')), schema: {} };
@@ -94,5 +109,5 @@ for (const sample of cases) test(`original complex page ${sample.hash.slice(0, 1
     }
     assert.deepEqual(errors, []);
     assert.equal(await page.locator('#notice').textContent(), '');
-  } finally { await browser.close(); }
+  } finally { await browser.close(); await recordCalls(sample.hash, calls); }
 });

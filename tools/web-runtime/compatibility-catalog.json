@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "helperCommit": "dd8327d437eb0cdbd1eddc23b5491812870aa7d8",
   "meaning": "Binding presence is not compatibility. Domains, namespace members, aliases and source dependencies are inventoried separately. No conformance percentage is computed.",
-  "hostSourceSha256": "eb78d1f8ae7c9d35329ae2810d6ed8713b1606a0fca013e17bce6a8679d18d78",
+  "hostSourceSha256": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
   "playerSources": {
-    "src/host.mjs": "eb78d1f8ae7c9d35329ae2810d6ed8713b1606a0fca013e17bce6a8679d18d78",
+    "src/host.mjs": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
     "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
     "src/parent.mjs": "a223125055f2da315996c45a20033749ccde68438d6fdd63957ff20b35b12553",
     "src/shell.mjs": "64c8e7f8e730494479e77768de69b7393caaac8a22a3ec51ac94cd8666af2754"
@@ -1049,7 +1049,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 67,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "createOrReplaceWorldbook",
@@ -1057,7 +1057,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 177,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "createWorldbook",
@@ -1065,7 +1065,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 165,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "createWorldbookEntries",
@@ -1073,7 +1073,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 285,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "deleteLorebook",
@@ -1089,7 +1089,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 73,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "deleteWorldbook",
@@ -1097,7 +1097,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 190,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "deleteWorldbookEntries",
@@ -1105,7 +1105,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 307,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "getCharLorebooks",
@@ -1153,7 +1153,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 13,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "getLorebookEntries",
@@ -1161,7 +1161,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 47,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "getLorebooks",
@@ -1209,7 +1209,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 6,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "rebindCharWorldbooks",
@@ -1217,7 +1217,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 39,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "rebindChatWorldbook",
@@ -1233,7 +1233,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 19,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "replaceLorebookEntries",
@@ -1241,7 +1241,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 50,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "replaceWorldbook",
@@ -1249,7 +1249,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 226,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "setChatLorebook",
@@ -1273,7 +1273,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 61,
           "declarationCount": 1,
-          "playerBinding": "rejecting-stub"
+          "playerBinding": "binding-present"
         },
         {
           "name": "setLorebookSettings",
@@ -1289,7 +1289,7 @@
           "declaration": "@types/function/lorebook_entry.d.ts",
           "line": 58,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "updateWorldbookWith",
@@ -1297,7 +1297,7 @@
           "declaration": "@types/function/worldbook.d.ts",
           "line": 263,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         }
       ]
     },
@@ -3498,12 +3498,12 @@
     {
       "name": "getLorebookEntries",
       "declarationTarget": "getLorebookEntries",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "replaceLorebookEntries",
       "declarationTarget": "replaceLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updatelorebookEntriesWith",
@@ -3513,17 +3513,17 @@
     {
       "name": "setLorebookEntries",
       "declarationTarget": "setLorebookEntries",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createLorebookEntries",
       "declarationTarget": "createLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteLorebookEntries",
       "declarationTarget": "deleteLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getLorebookSettings",
@@ -3833,17 +3833,17 @@
     {
       "name": "getWorldbookNames",
       "declarationTarget": "getWorldbookNames",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getGlobalWorldbookNames",
       "declarationTarget": "getGlobalWorldbookNames",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "rebindGlobalWorldbooks",
       "declarationTarget": "rebindGlobalWorldbooks",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getCharWorldbookNames",
@@ -3853,7 +3853,7 @@
     {
       "name": "rebindCharWorldbooks",
       "declarationTarget": "rebindCharWorldbooks",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getChatWorldbookName",
@@ -3873,17 +3873,17 @@
     {
       "name": "createWorldbook",
       "declarationTarget": "createWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createOrReplaceWorldbook",
       "declarationTarget": "createOrReplaceWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteWorldbook",
       "declarationTarget": "deleteWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getWorldbook",
@@ -3893,22 +3893,22 @@
     {
       "name": "replaceWorldbook",
       "declarationTarget": "replaceWorldbook",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updateWorldbookWith",
       "declarationTarget": "updateWorldbookWith",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createWorldbookEntries",
       "declarationTarget": "createWorldbookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteWorldbookEntries",
       "declarationTarget": "deleteWorldbookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     }
   ],
   "runtimeRegistrations": [
@@ -4215,27 +4215,27 @@
     {
       "name": "getLorebookEntries",
       "target": "getLorebookEntries",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "replaceLorebookEntries",
       "target": "replaceLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updateLorebookEntriesWith",
       "target": "updateLorebookEntriesWith",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "setLorebookEntries",
       "target": "setLorebookEntries",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createLorebookEntries",
       "target": "createLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createLorebookEntry",
@@ -4245,7 +4245,7 @@
     {
       "name": "deleteLorebookEntries",
       "target": "deleteLorebookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteLorebookEntry",
@@ -4610,17 +4610,17 @@
     {
       "name": "getWorldbookNames",
       "target": "getWorldbookNames",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getGlobalWorldbookNames",
       "target": "getGlobalWorldbookNames",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "rebindGlobalWorldbooks",
       "target": "rebindGlobalWorldbooks",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getCharWorldbookNames",
@@ -4630,7 +4630,7 @@
     {
       "name": "rebindCharWorldbooks",
       "target": "rebindCharWorldbooks",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getChatWorldbookName",
@@ -4650,17 +4650,17 @@
     {
       "name": "createWorldbook",
       "target": "createWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createOrReplaceWorldbook",
       "target": "createOrReplaceWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteWorldbook",
       "target": "deleteWorldbook",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getWorldbook",
@@ -4670,22 +4670,22 @@
     {
       "name": "replaceWorldbook",
       "target": "replaceWorldbook",
-      "playerBinding": "rejecting-stub"
+      "playerBinding": "binding-present"
     },
     {
       "name": "updateWorldbookWith",
       "target": "updateWorldbookWith",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "createWorldbookEntries",
       "target": "createWorldbookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "deleteWorldbookEntries",
       "target": "deleteWorldbookEntries",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     }
   ],
   "iframeBoundRegistrations": [

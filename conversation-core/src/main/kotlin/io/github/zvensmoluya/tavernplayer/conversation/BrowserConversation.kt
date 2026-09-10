@@ -57,43 +57,17 @@ object BrowserConversation {
             }) }
         }
         putJsonArray("worldbooks") {
-            record.character.worldBooks.forEach { book -> add(buildJsonObject {
-                put("name", book.id)
-                put("enabled", record.runtimeState.worldBookActivationOverrides.books[book.id] ?: true)
-                putJsonArray("entries") { book.entries.forEachIndexed { index, entry -> add(buildJsonObject {
-                    put("uid", entry.sourceId?.toIntOrNull() ?: index); put("player_entry_id", entry.id)
-                    put("name", entry.name.ifBlank { entry.comment }); put("comment", entry.comment)
-                    putJsonObject("strategy") {
-                        put("type", if (entry.constant) "constant" else if (entry.extensions["vectorized"] == JsonPrimitive(true)) "vectorized" else "selective")
-                        put("keys", JsonArray(entry.keys.map(::JsonPrimitive)))
-                        putJsonObject("keys_secondary") { put("logic", entry.effectiveSecondaryLogic.name.lowercase()); put("keys", JsonArray(entry.secondaryKeys.map(::JsonPrimitive))) }
-                        put("scan_depth", entry.scanDepth?.let(::JsonPrimitive) ?: JsonPrimitive("same_as_global"))
-                    }
-                    putJsonObject("position") {
-                        put("type", when (entry.position.name) {
-                            "BEFORE_CHARACTER" -> "before_character_definition"; "AFTER_CHARACTER" -> "after_character_definition"
-                            "AUTHOR_NOTE_TOP" -> "before_author_note"; "AUTHOR_NOTE_BOTTOM" -> "after_author_note"
-                            "EXAMPLES_TOP" -> "before_example_messages"; "EXAMPLES_BOTTOM" -> "after_example_messages"
-                            "AT_DEPTH" -> "at_depth"; else -> "outlet"
-                        })
-                        put("role", entry.role.name.lowercase()); put("depth", entry.depth); put("order", entry.insertionOrder)
-                    }
-                    put("probability", if (entry.useProbability) entry.probability else 100)
-                    putJsonObject("recursion") {
-                        put("prevent_incoming", entry.excludeRecursion); put("prevent_outgoing", entry.preventRecursion)
-                        put("delay_until", (entry.extensions["delay_until_recursion"] as? JsonPrimitive)?.intOrNull?.takeIf { it > 0 }?.let(::JsonPrimitive)
-                            ?: if (entry.delayUntilRecursion) JsonPrimitive(1) else JsonNull)
-                    }
-                    putJsonObject("effect") {
-                        put("sticky", entry.sticky.takeIf { it > 0 }?.let(::JsonPrimitive) ?: JsonNull)
-                        put("cooldown", entry.cooldown.takeIf { it > 0 }?.let(::JsonPrimitive) ?: JsonNull)
-                        put("delay", entry.delay.takeIf { it > 0 }?.let(::JsonPrimitive) ?: JsonNull)
-                    }
-                    put("extra", entry.extensions)
-                    put("content", entry.content)
-                    put("enabled", record.runtimeState.worldBookActivationOverrides.entries[book.id]?.get(entry.id) ?: entry.enabled)
-                }) } }
-            }) }
+            record.character.worldBooks.forEach { book ->
+                val overrides = record.runtimeState.worldBookActivationOverrides
+                add(buildJsonObject {
+                    put("id", book.id); put("name", book.id)
+                    put("enabled", overrides.isBookEnabled(book.id))
+                    putJsonArray("entries") { book.entries.forEachIndexed { index, entry ->
+                        add(BrowserWorldBook.encodeEntry(book.id, entry, index,
+                            overrides.isEntryEnabled(book.id, entry.id, entry.enabled)))
+                    } }
+                })
+            }
         }
     }
 
@@ -136,7 +110,7 @@ object BrowserConversation {
             val requestedEntry = args["entry"]?.jsonPrimitive?.contentOrNull
             val entry = requestedEntry?.let { requested ->
                 record.character.worldBooks.find { it.id == book }?.entries?.withIndex()?.find {
-                    it.value.id == requested || (it.value.sourceId?.toIntOrNull() ?: it.index).toString() == requested
+                    it.value.id == requested || BrowserWorldBook.uid(it.value, it.index).toString() == requested
                 }?.value?.id ?: error("世界书条目不存在")
             }
             val intent = if (entry == null) WorldBookActivationIntent.SetBookEnabled(book, enabled)
@@ -146,11 +120,25 @@ object BrowserConversation {
                 is WorldBookActivationMutationResult.Rejected -> error("世界书或条目不存在")
             }
         }
+        // 世界书内容写入：只改当前对话自己那份快照，角色资产保持不变。
+        "worldbook.entries.replace" -> BrowserWorldBook.replaceEntries(record, args)
+        "worldbook.entries.update" -> BrowserWorldBook.updateEntries(record, args)
+        "worldbook.entries.create" -> BrowserWorldBook.createEntries(record, args)
+        "worldbook.entries.delete" -> BrowserWorldBook.deleteEntries(record, args)
+        "worldbook.books.create" -> BrowserWorldBook.createBook(record, args)
+        "worldbook.books.delete" -> BrowserWorldBook.deleteBook(record, args)
+        "worldbook.books.rebind" -> BrowserWorldBook.rebind(record, args)
         "draft.replace" -> {
             args.only("text")
             record.withDraft(args.string("text").also { require(it.length <= 262_144) { "草稿超过限制" } })
         }
         else -> error("未支持的宿主写入：$method")
+    }
+
+    /** 只读的旧版世界书条目列表；调用方不保存会话。 */
+    fun readWorldBookEntries(record: ConversationRecord, args: JsonObject): JsonElement {
+        args.only("book")
+        return BrowserWorldBook.readEntries(record, args.string("book"))
     }
 
     private fun restructureMessages(record: ConversationRecord, method: String, args: JsonObject): ConversationRecord {

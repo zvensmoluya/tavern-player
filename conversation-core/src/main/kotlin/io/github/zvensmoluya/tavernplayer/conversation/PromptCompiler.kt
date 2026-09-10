@@ -368,11 +368,17 @@ class PromptCompiler(
             depthPrompt = scanField(input.character.depthPrompt?.content.orEmpty()),
             creatorNotes = scanField(input.character.creatorNotes),
         )
-        val browserTemplatesValid = input.character.browserProgram?.ejsTemplates.orEmpty().all { ref ->
+        // 作者程序改动条目内容后，模板引用与保存的原文哈希不再匹配。这里跳过这些模板而不终止整次编排：
+        // 既不再执行来源已变的模板，也不把 `<% %>` 原样注入提示词，同时给出可诊断的痕迹。
+        val declaredTemplates = input.character.ejsProgramTemplates
+        val staleTemplates = declaredTemplates.filterNot { ref ->
             input.character.worldBooks.find { it.id == ref.bookId }?.entries?.find { it.id == ref.entryId }
                 ?.let { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.sha256(it.content) == ref.sourceContentSha256 } == true
         }
-        if (!browserTemplatesValid) return CompilationResult.Failure(diagnostics + error("INVALID_EJS_TEMPLATE", "EJS 模板与保存的原文哈希不匹配"), trace)
+        staleTemplates.forEach { ref ->
+            diagnostics += warning("STALE_EJS_TEMPLATE", "世界书条目内容已变化，已跳过它的 EJS 模板注入", ref.entryId)
+        }
+        val activeTemplates = declaredTemplates - staleTemplates.toSet()
         val ejsIssues = input.character.nativeAdaptation?.let {
             io.github.zvensmoluya.tavernplayer.content.NativeEjsValidator.validate(it, input.character.worldBooks)
         }.orEmpty()
@@ -424,7 +430,10 @@ class PromptCompiler(
             inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },
             literalEntryIds = memoryEntries.map { it.id }.toSet(),
             prepareEntry = { bookId, entry, entryTransaction ->
-                if (input.character.ejsProgramTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
+                if (staleTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
+                    // 模板来源已变：既不执行它，也不把模板源码原样注入提示词。
+                    WorldBookPreparedText("")
+                } else if (activeTemplates.any { it.bookId == bookId && it.entryId == entry.id }) {
                     val regexed = regexEngine.apply(entry.content, regexRules, RegexPlacement.WORLD_INFO,
                         RegexProjection.PROMPT, entry.depth, baseContext, entryTransaction)
                     diagnostics += regexed.diagnostics
