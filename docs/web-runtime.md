@@ -75,6 +75,16 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 
 本轮 JS 契约测试 26 项和 Edge 测试 3 项通过。生产网页集成覆盖双页面同步回调、原生事件不重复、销毁清理、预设生成中保留/结束后替换和原表单回归；独立架构证明仍保留。新增 Android 测试 `authorPagesShareObjectsAndSynchronousEventsThroughProductionSession` 通过编译但未执行：当前无连接设备，SDK 未安装 emulator。应用单测、Debug APK 和 Android 测试 APK 构建通过；设备上的同源 sibling 访问、生命周期及原卡完整生成流程仍需验收。
 
+## 键盘避让与视口同步（2026-09-11）
+
+键盘弹出时消息区会被真正压缩，而不只是把输入栏盖住的界面效果：底部输入栏消费一次 `WindowInsets.safeDrawing` 的底部与水平方向 inset（键盘在场取 IME 高度，键盘不在让开导航栏与显示缺口），底部条因此变高，Scaffold 随之把消息区（WebView）压到键盘之上。原生侧不再对键盘另加 padding，避免同一方向上重复让开。这样浏览器一侧的视口高度与可见高度一致，聚焦在作者页面里的输入框由浏览器自己的滚入可视区处理。
+
+- 窗口策略：API 30 起调用 `enableEdgeToEdge()`，系统栏图标固定为深色（应用只有浅色配色，默认样式会跟随系统深色模式切白图标），避让统一交给 Compose 的 WindowInsets；API 26–29 保留系统 `adjustResize` 收缩窗口的旧路径，因为关闭 decor 适配后更低版本无法可靠上报 IME inset，反而会让输入栏被键盘盖住。manifest 显式声明 `android:windowSoftInputMode="adjustResize"`。
+- 输入栏：发送／停止与输入框同一行，输入区最多 5 行，键盘占去高度时按钮不会被挤出可见区；WebView 获得焦点时收掉原生输入框焦点，避免两边抢同一个输入法。
+- 网页侧：WebView 变矮触发 `resize`，主壳用变化前的底部偏移判断读者是否本来贴底（直接按新几何重算会把原本贴底的读者判成已上滚），再把新的可见高度广播给所有作者帧；作者帧把 CSS 的 `min-height:<n>vh` 折算成 `calc(<n> * var(--player-frame-vh))`，收到广播只更新该变量，纯 CSS 生效、不重建页面。焦点位于作者帧内时暂停自动贴底，把滚入可视区让给浏览器；焦点离开后下一次渲染恢复跟随。三处 viewport meta 加 `interactive-widget=resizes-content`。
+
+未验证：这套行为只在桌面浏览器里用视口变矮做过等价模拟，当前没有连接设备。真机输入法（展开／收起／多行）、Android WebView 中 `window.innerHeight` 是否随 WebView 变矮、`interactive-widget` 是否被当前 WebView 版本识别、以及作者页聚焦输入框时浏览器是否跨 iframe 自动滚入可视区，都仍需真机验收。
+
 ## 消息与角色规则操作（2026-09-10）
 
 - 消息读取按参照实现截断越界端点、排序反向范围，非法范围返回空列表；默认结果保留旧版候选字段。消息修改合并指向同一楼层的更新，接受负索引、名称/角色和候选附加数据；候选数组按最长输入补齐，选中编号截断到有效范围。无效楼层按参照实现忽略，其余非法参数整批拒绝。空候选数组明确拒绝，避免无法选中任何消息。
@@ -128,6 +138,8 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 - `:app:testDebugUnitTest`：实际保存失败、图片复用/动态索引、离线资源/哈希/版本固定、原卡 MVU/EJS 免编译装载和现有聊天回归。
 - `tools/web-runtime` 的 `npm test` 与 `npm run test:browser`：同步视图、队列、事件、CSS/import 解析，以及真实 Edge 的作者页面、父输入/发送、来源隔离和页面保留。
 - `BrowserSessionAndroidTest`：生产 WebView 桥、表单触摸及字符输入回写、图片高度变化、状态保存与重建、长历史和流式阅读位置；进程恢复使用独立 prepare/recover instrumentation 运行，中间终止应用进程。
+
+- 键盘避让：`:app:testDebugUnitTest` 的 `ChatScreenTest` 验证可视高度不足时发送按钮与输入框仍在同一行并落在可见区内；`tools/web-runtime` 的 `test/browser/viewport.test.mjs` 用缩小视口模拟键盘，验证作者 `vh` 折算跟随可见高度、读者贴底状态跨视口变化保持、焦点在作者帧内时暂停自动贴底。真机输入法交互按上文未验证项处理。
 
 中性样本 C-04 使用现有原件及审计检查点，原件 SHA-256 为 `fa7e8ec564887780b331d0da29f7966f58f3688d49e6faf587d2d80ae9aecefe`。样本与生成夹具不打包进生产 APK、不进入仓库；不调用导入编译模型。单个样本通过不代表整卡或全部扩展兼容。
 

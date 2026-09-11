@@ -4,7 +4,7 @@ import { tavernEvents, mvuEvents, iframeEvents } from './host.mjs';
 
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
-let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, programKey = '', following = true;
+let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, programKey = '', following = true, previousBottom = 0;
 let renderQueue = Promise.resolve(), coordinator = null, factSnapshot = null;
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
@@ -39,6 +39,18 @@ function button(text, action, disabled = false) {
 }
 const ui = (action, id) => rpc('ui.' + action, id ? { id } : {});
 function bottom() { window.scrollTo({ top: document.documentElement.scrollHeight }); }
+// 视口变化时 scroll 可能晚于 resize 到达，贴底判定只能对比变化前记录的几何。
+function recordBottom() { previousBottom = document.documentElement.scrollHeight - window.innerHeight; }
+const focusInFrame = () => document.activeElement?.tagName === 'IFRAME';
+window.addEventListener('resize', () => {
+  // 键盘弹出会改变视口而不产生滚动，读者原本是否在底部要用变化前的偏移判断。
+  const wasFollowing = following && window.scrollY >= previousBottom - 80;
+  following = wasFollowing || document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  recordBottom();
+  document.getElementById('bottom').hidden = following;
+  for (const frame of frames.values()) if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
+  if (following && !focusInFrame()) requestAnimationFrame(bottom);
+}, { passive: true });
 window.addEventListener('scroll', () => {
   following = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
   document.getElementById('bottom').hidden = following;
@@ -156,7 +168,8 @@ async function render() {
     actionsNode.append(button('下一条', () => ui('next'), flags.busy || last.swipe_id === last.swipes.length - 1));
   }
   if (flags.regenerateAvailable) actionsNode.append(button('重新生成', () => ui('regenerate'), flags.busy));
-  if (following) requestAnimationFrame(bottom);
+  if (following && !focusInFrame()) requestAnimationFrame(bottom);
+  recordBottom();
   await updateScripts();
 }
 
@@ -203,11 +216,13 @@ window.addEventListener('message', async event => {
   const data = event.data;
   if (data.type === 'resize') {
     const height = Number(data.height);
-    if (Number.isFinite(height) && height > 0) { frame.element.style.height = Math.min(height, 100000) + 'px'; if (following) requestAnimationFrame(bottom); }
+    if (Number.isFinite(height) && height > 0) { frame.element.style.height = Math.min(height, 100000) + 'px'; if (following && !focusInFrame()) requestAnimationFrame(bottom); recordBottom(); }
   } else if (data.type === 'loaded') {
     frame.loaded = true;
     if (frame.kind === 'session') { post(frame, { type: 'snapshot', snapshot }); frame.onLoaded?.(); return; }
     if (frame.kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_ENDED, [frame.token]);
+    // 建帧到加载完成之间可能已经发生过视口变化（键盘、旋转、分屏），补发一次当前可见高度。
+    if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
     if (frame.kind !== 'script') lifecycle(snapshot.messages[frame.messageId]?.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
   } else if (data.type === 'notice') {
     if (data.level === 'buttons') {

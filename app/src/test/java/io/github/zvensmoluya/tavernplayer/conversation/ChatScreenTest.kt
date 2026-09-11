@@ -1,5 +1,14 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
@@ -119,6 +128,53 @@ class ChatScreenTest {
 
         assertEquals("", input)
         assertTrue(sent)
+    }
+
+    @Test
+    fun `composer keeps the send button beside the input when little vertical room remains`() {
+        compose.setContent {
+            TavernPlayerTheme {
+                Box(modifier = Modifier.size(width = 420.dp, height = 260.dp).testTag("compactChatWindow")) {
+                    ChatScreen(
+                        state = state(input = "第一行\n第二行\n第三行\n第四行\n第五行"),
+                        actions = actions(),
+                    )
+                }
+            }
+        }
+
+        val window = compose.onNodeWithTag("compactChatWindow").fetchSemanticsNode().boundsInRoot
+        val input = compose.onNodeWithTag("chatInput").fetchSemanticsNode().boundsInRoot
+        val send = compose.onNodeWithTag("sendMessage").fetchSemanticsNode().boundsInRoot
+
+        // 键盘占去高度后剩下的可视区很矮，发送按钮不能掉到输入框下面或可见区之外。
+        assertTrue("发送按钮应与输入框处在同一行", send.top < input.bottom && send.bottom > input.top)
+        assertTrue("发送按钮必须留在可见区内", send.top >= window.top - 0.5f && send.bottom <= window.bottom + 0.5f)
+        compose.onNodeWithTag("chatInput").assertIsDisplayed()
+        compose.onNodeWithTag("sendMessage").assertIsDisplayed()
+    }
+
+    @Config(sdk = [35], qualifiers = "w411dp-h891dp")
+    @Test
+    fun `keyboard insets lift the composer and hand the message area to the keyboard`() {
+        var insets by mutableStateOf(WindowInsets(0, 0, 0, 0))
+        compose.setContent {
+            TavernPlayerTheme {
+                Box(modifier = Modifier.size(width = 420.dp, height = 700.dp).testTag("insetChatWindow")) {
+                    ChatScreen(state = state(), actions = actions(), bottomBarInsets = insets)
+                }
+            }
+        }
+
+        val window = compose.onNodeWithTag("insetChatWindow").fetchSemanticsNode().boundsInRoot
+        val before = compose.onNodeWithTag("chatContent").fetchSemanticsNode().boundsInRoot
+        compose.runOnIdle { insets = WindowInsets(0, 0, 0, 300) }
+        val after = compose.onNodeWithTag("chatContent").fetchSemanticsNode().boundsInRoot
+        val send = compose.onNodeWithTag("sendMessage").fetchSemanticsNode().boundsInRoot
+
+        // 键盘高度由消息区让出，输入栏随之抬到键盘之上，而不是被压在下面。
+        assertEquals(300f, before.height - after.height, 1f)
+        assertTrue(send.top >= window.top - 0.5f && send.bottom <= window.bottom + 0.5f)
     }
 
     @Test

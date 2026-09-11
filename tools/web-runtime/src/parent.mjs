@@ -5,7 +5,7 @@ import { createSession } from './session.mjs';
 function main() {
   const config = JSON.parse(document.getElementById('configuration').textContent);
   const page = document.getElementById('page'), pending = new Map();
-  let sequence = 0, disposed = false;
+  let sequence = 0, disposed = false, viewportHeight = Number(config.viewportHeight) || 800;
   const send = data => window.parent.postMessage({ ...data, channel: 'player-frame', epoch: config.epoch }, config.rootOrigin);
   function notify(level, message) {
     if (level === 'error') { document.getElementById('error').textContent = String(message); measure(); }
@@ -95,6 +95,14 @@ function main() {
     } catch { notify('error', '页面导航超出兼容运行范围'); }
   }
 
+  // 作者页的视口高度折算改用 CSS 变量，随可见高度更新时不必重建 srcdoc。
+  function applyViewport(height) {
+    if (!Number.isFinite(height) || height <= 0 || height === viewportHeight) return;
+    viewportHeight = height;
+    page.contentDocument?.documentElement?.style.setProperty('--player-frame-vh', height / 100 + 'px');
+    measure();
+  }
+
   window.addEventListener('message', async event => {
     if (event.source !== window.parent || event.origin !== config.rootOrigin || event.data?.epoch !== config.epoch) return;
     const data = event.data;
@@ -107,6 +115,8 @@ function main() {
       pending.clear();
     } else if (data.type === 'dispose') {
       host.dispose();
+    } else if (data.type === 'viewport') {
+      applyViewport(Number(data.height));
     }
   });
 
@@ -117,14 +127,16 @@ function main() {
   }
   const origin = location.origin;
   const libraries = config.kind === 'static' ? '' : ['jquery', 'lodash', 'vue', 'libraries'].map(name => `<script src="${origin}/web/${name}.js"></script>`).join('');
-  const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + libraries +
+  const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries +
     '<script>parent.PlayerFrame.install(window);</script>' +
-    `<style>html{color-scheme:light dark}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
+    `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
   let html = config.html;
   if (config.kind === 'script') html = '<body><script type="module">' + html.replace(/<\/script/gi, '<\\/script') + '</script></body>';
   // Match the source renderer's viewport-height correction without touching JavaScript strings.
+  // 折算结果引用变量而不是固定 px，键盘改变可见高度后作者布局随之伸缩。
   html = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, style => style.replace(/min-height\s*:\s*([\d.]+)vh/gi,
-    (_, amount) => `min-height:${Number(amount) * (config.viewportHeight || 800) / 100}px`));
+    // 变量缺失时退回作者原本的 vh 语义（1vh 即 1% 帧高），避免折算整体失效。
+    (_, amount) => `min-height:calc(${amount} * var(--player-frame-vh, 1vh))`));
   page.srcdoc = inject(html, prefix);
   if (config.kind === 'script') page.hidden = true;
 }

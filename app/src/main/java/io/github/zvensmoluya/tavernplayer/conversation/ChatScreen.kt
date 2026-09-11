@@ -16,6 +16,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -150,6 +155,8 @@ fun ChatScreen(
     resolveAssetPath: (characterId: String, assetId: String) -> String? = { _, _ -> null },
     browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
     browserInvoke: suspend (BrowserActor, String, String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject = { _, _, _, _ -> error("网页宿主未连接") },
+    // 底部条自己让开系统栏与键盘，Scaffold 便以它的高度把消息区压到键盘之上；测试可注入固定值断言这一点。
+    bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     var presetPickerVisible by remember { mutableStateOf(false) }
@@ -230,7 +237,8 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            Column {
+            // 输入栏在这里自己让开底部系统栏与键盘：底部条被抬高，Scaffold 随之把消息区（WebView）压缩到键盘之上。
+            Column(modifier = Modifier.windowInsetsPadding(bottomBarInsets)) {
                 if (state.character.nativeAdaptation?.script != null || state.nativeStatus != null || state.nativeScenes.isNotEmpty() || state.nativeCollections.isNotEmpty() || state.nativeChoices.isNotEmpty() || hasNativeGuide || state.character.nativeAdaptation?.memories.orEmpty().isNotEmpty()) {
                     TextButton(
                         onClick = { nativeDetailsVisible = true },
@@ -585,16 +593,21 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        OutlinedTextField(
-            value = state.input,
-            onValueChange = actions.updateInput,
-            modifier = Modifier.fillMaxWidth().testTag("chatInput"),
-            enabled = !state.busy,
-            label = { Text("说点什么") },
-            minLines = 1,
-            maxLines = 5,
-        )
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        // 发送/停止与输入框同一行：输入区最多长到 5 行，键盘占去高度时按钮也不会被挤出可见区。
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            OutlinedTextField(
+                value = state.input,
+                onValueChange = actions.updateInput,
+                modifier = Modifier.weight(1f).testTag("chatInput"),
+                enabled = !state.busy,
+                label = { Text("说点什么") },
+                minLines = 1,
+                maxLines = 5,
+            )
             if (state.running || state.browserGenerating) {
                 OutlinedButton(
                     modifier = Modifier.testTag("cancelGeneration"),
