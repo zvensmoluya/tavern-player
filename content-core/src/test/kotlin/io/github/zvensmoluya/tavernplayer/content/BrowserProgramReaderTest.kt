@@ -38,4 +38,21 @@ class BrowserProgramReaderTest {
             BrowserProgramReader.preset(buildJsonObject { putJsonObject("extensions") { put("tavern_helper", "unsupported") } })
         }
     }
+    @Test fun authorRuntimeNeedsEnabledScriptsOrEjsTemplates() {
+        assertFalse(BrowserProgramReader.character(CharacterAsset("plain", name = "纯文字样本")).hasAuthorRuntime)
+        val disabled = BrowserProgramReader.character(CharacterAsset("off", name = "停用脚本",
+            rawCard = buildJsonObject { putJsonObject("data") { putJsonObject("extensions") {
+                putJsonArray("tavern_helper") { add(buildJsonArray { add("scripts"); add(buildJsonArray {
+                    add(buildJsonObject { put("enabled", false); put("content", "void 0;") }) }) }) }
+            } } }))
+        assertFalse(disabled.hasAuthorRuntime)
+        val viaScript = BrowserProgramReader.preset(buildJsonObject { putJsonObject("extensions") {
+            putJsonArray("tavern_helper") { add(buildJsonArray { add("scripts"); add(buildJsonArray {
+                add(buildJsonObject { put("content", "void 0;") }) }) }) }
+        } })
+        assertTrue(viaScript.hasAuthorRuntime)
+        val viaEjs = CharacterAsset("ejs", name = "模板样本", worldBooks = listOf(WorldBookDefinition("book",
+            entries = listOf(WorldBookEntryDefinition("entry", content = "血量：<%= 1 %>")))))
+        assertTrue(BrowserProgramReader.character(viaEjs).hasAuthorRuntime)
+    }
 }

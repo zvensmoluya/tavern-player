@@ -107,3 +107,11 @@ object BrowserProgramReader {
 val CharacterSnapshot.mvuProgram: NativeMvuProgram? get() = browserProgram?.mvu ?: nativeAdaptation?.mvu
 val CharacterSnapshot.ejsProgramTemplates: List<NativeWorldBookReference>
     get() = browserProgram?.ejsTemplates ?: nativeAdaptation?.ejsTemplates.orEmpty()
+
+/**
+ * 卡里是否存在只能由作者运行时执行的内容：启用的助手脚本或世界书 EJS 模板。
+ * 两条路线都默认可达，因此这个标记只用于在角色详情说明原生模式不会运行什么，不作为入口开关。
+ * MVU 程序必然来自启用的脚本，不需要再单独探测。
+ */
+val BrowserProgram.hasAuthorRuntime: Boolean
+    get() = sources.any { it.enabled } || ejsTemplates.isNotEmpty()
