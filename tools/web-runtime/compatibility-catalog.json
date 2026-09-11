@@ -7,7 +7,7 @@
     "src/host.mjs": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
     "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
     "src/parent.mjs": "cacdee4f7e03ec619959a25e700b39adf4f241e33b78dab9063cc8fa160dc1fc",
-    "src/shell.mjs": "a1a5b3a946df94e01e46c672870c9a0e8fb0f5d2eee5674609f0dbf527252c33"
+    "src/shell.mjs": "0af2d62aa86bc4564605e9809ba528286c9d2bdb8d6d94440b92ed96da797b19"
   },
   "sources": {
     "@types/function/audio.d.ts": "02c7ace1acbb1949037aca6f2156e4f109212dd6b9642a63d06934316b24c908",

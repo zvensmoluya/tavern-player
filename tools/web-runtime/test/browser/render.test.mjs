@@ -244,8 +244,14 @@ test('a static frame keeps the shell prose baseline while author styles still wi
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const prose = 'Ordinary paragraph.\n\n| Name | Value |\n| --- | --- |\n| Alpha | 1 |\n| Beta | 2 |';
-    // static 帧里作者可用的显式样式是内联声明：它必须压过基线，基线里也没有 !important。
-    const styled = 'Author paragraph.\n\n<div id="tint" style="color:rgb(1, 2, 3);font-size:30px">Author styled text</div>\n\n' +
+    // 段首的 <style> 会被整文档解析提升进 <head>，只序列化 body 会整块丢掉；内容中间的则留在 body。
+    // 两个位置都必须生效，并且都压过基线（基线里没有 !important）。
+    const styled = '<style>#lead-quote{border-left-width:7px;border-left-style:solid}</style>\n\n' +
+      'Author paragraph.\n\n' +
+      '<div id="tint" style="color:rgb(1, 2, 3);font-size:30px">Author styled text</div>\n\n' +
+      '<style>#inner-quote{border-left-width:9px;border-left-style:solid}</style>\n\n' +
+      '<blockquote id="lead-quote">Lead style block</blockquote>\n\n' +
+      '<blockquote id="inner-quote">Inner style block</blockquote>\n\n' +
       '<blockquote id="quote" style="border-left:0">Author blockquote</blockquote>\n\n' +
       '<blockquote id="baseline-quote">Baseline blockquote</blockquote>';
     const authorPage = 'Doc\n\n```html\n<body><p id="author-page">Author page</p></body>\n```';
@@ -272,8 +278,9 @@ test('a static frame keeps the shell prose baseline while author styles still wi
     assert.deepEqual(await styledFrame.evaluate(() => {
       const computed = id => getComputedStyle(document.getElementById(id));
       return { color: computed('tint').color, fontSize: computed('tint').fontSize,
-        quote: computed('quote').borderLeftWidth, baseline: computed('baseline-quote').borderLeftWidth };
-    }), { color: 'rgb(1, 2, 3)', fontSize: '30px', quote: '0px', baseline: '3px' });
+        quote: computed('quote').borderLeftWidth, baseline: computed('baseline-quote').borderLeftWidth,
+        lead: computed('lead-quote').borderLeftWidth, inner: computed('inner-quote').borderLeftWidth };
+    }), { color: 'rgb(1, 2, 3)', fontSize: '30px', quote: '0px', baseline: '3px', lead: '7px', inner: '9px' });
     // page 帧是作者自己的页面：只拿作者样式，不拿主壳的正文排版基线。
     const pageFrame = await authorFrame(page, '#author-page');
     assert.equal(await pageFrame.locator('link[href$="message.css"]').count(), 0);

@@ -114,9 +114,16 @@ const waitingLabels = { CANCELLED: '已停止生成，交互界面未装载', IN
 const WAITING = '回复完成后显示交互界面';
 const richText = text => /<(?:style|table|div|span|form|input|img|details|section|html|body)\b/i.test(text);
 // HTML styles never share the trusted player's document or controls.
+const SANITIZE = { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
+  FORBID_ATTR: ['srcdoc'] };
 function sanitize(text) {
-  return DOMPurify.sanitize(text, { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
-    FORBID_ATTR: ['srcdoc'], WHOLE_DOCUMENT: false });
+  return DOMPurify.sanitize(text, { ...SANITIZE, WHOLE_DOCUMENT: false });
+}
+// 作者的 <style> 会被整文档解析提升进 <head>，只序列化 body 就会连样式一起丢掉。
+// 取回 head 里的样式块与正文一起交给 static 帧：样式仍只作用于这个没有宿主能力的沙箱帧。
+function staticContent(text) {
+  const parsed = new DOMParser().parseFromString(DOMPurify.sanitize(text, { ...SANITIZE, WHOLE_DOCUMENT: true }), 'text/html');
+  return [...parsed.head.querySelectorAll('style')].map(node => node.outerHTML).join('') + parsed.body.innerHTML;
 }
 function newRow() {
   return { element: document.createElement('article'), frames: [], segments: [], headerKey: null, header: null, name: null,
@@ -165,7 +172,7 @@ async function buildSegment(row, message, part, kind, previous) {
   }
   const height = presetHeight(previous);
   const frame = kind === 'page' ? await createFrame('page', part.text, message)
-    : await createFrame('static', '<body>' + sanitize(part.text) + '</body>', message);
+    : await createFrame('static', '<body>' + staticContent(part.text) + '</body>', message);
   if (height) frame.element.style.height = height + 'px';
   frame.height = height;
   row.frames.push(frame); replaceSegment(row, previous, frame.element);
