@@ -7,6 +7,7 @@ import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
 import io.github.zvensmoluya.tavernplayer.content.PresetNamesBehavior
 import io.github.zvensmoluya.tavernplayer.content.WorldBookPosition
+import kotlinx.serialization.json.JsonObject
 import java.time.Instant
 import java.time.ZoneId
 
@@ -141,6 +142,8 @@ class PromptCompiler(
         depth: Int = 0,
         evaluationInstant: Instant = Instant.now(),
         evaluationZoneId: ZoneId = ZoneId.systemDefault(),
+        /** 与 [projectDisplayText] 相同：候选变量只参与本楼层的展示推导。 */
+        messageVariables: JsonObject? = null,
     ): TextExpansionResult {
         if (projection == RegexProjection.DISPLAY && !preset.controlSettings.showThoughts) {
             return TextExpansionResult.Success("", runtimeState)
@@ -161,6 +164,7 @@ class PromptCompiler(
                 depth = depth,
                 evaluationInstant = evaluationInstant,
                 evaluationZoneId = evaluationZoneId,
+                messageVariables = messageVariables,
             )
         } else null
         val sourceProjection = source as? TextExpansionResult.Success
@@ -179,6 +183,7 @@ class PromptCompiler(
             depth = depth,
             evaluationInstant = evaluationInstant,
             evaluationZoneId = evaluationZoneId,
+            messageVariables = messageVariables,
         )
         return if (sourceProjection != null && displayed is TextExpansionResult.Success) {
             displayed.copy(diagnostics = sourceProjection.diagnostics + displayed.diagnostics)
@@ -296,6 +301,11 @@ class PromptCompiler(
         evaluationZoneId: ZoneId = ZoneId.systemDefault(),
         sourceText: String = text,
         openingSourceIndex: Int? = null,
+        /**
+         * 该楼层选中候选自己的变量（与网页楼层 API 的 `data` 同源）。
+         * null 表示没有候选变量来源，消息变量宏继续沿用运行状态的旧路径。
+         */
+        messageVariables: JsonObject? = null,
     ): TextExpansionResult = projectConversationText(
         text = text,
         placement = if (role == MessageRole.USER) RegexPlacement.USER_INPUT else RegexPlacement.AI_OUTPUT,
@@ -313,6 +323,7 @@ class PromptCompiler(
         depth = depth,
         evaluationInstant = evaluationInstant,
         evaluationZoneId = evaluationZoneId,
+        messageVariables = messageVariables,
     )
 
     override fun compile(input: NormalGenerationInput): CompilationResult {
@@ -735,6 +746,7 @@ class PromptCompiler(
         depth: Int,
         evaluationInstant: Instant,
         evaluationZoneId: ZoneId,
+        messageVariables: JsonObject? = null,
     ): TextExpansionResult {
         val transaction = MacroTransaction(runtimeState.localVariables, generationId)
         val context = MacroContext(
@@ -746,7 +758,10 @@ class PromptCompiler(
             conversationId = conversationId,
             generationId = generationId,
             lastGenerationType = runtimeState.lastGenerationType,
-            legacyStateJson = runtimeState.mvuState?.data?.get("stat_data")?.toString() ?: LegacyStateReadProjection.project(character.nativeAdaptation, runtimeState.conversationState),
+            // 展示投影按楼层候选取消息变量；null 时保持提示词侧原有的运行状态语义。
+            legacyStateJson = messageVariables?.let(::messageStateJson)
+                ?: runtimeState.mvuState?.data?.get("stat_data")?.toString()
+                ?: LegacyStateReadProjection.project(character.nativeAdaptation, runtimeState.conversationState),
             now = evaluationInstant,
             zoneId = evaluationZoneId,
         )
@@ -769,6 +784,13 @@ class PromptCompiler(
             diagnostics = diagnostics,
         )
     }
+
+    /**
+     * 候选变量来源存在时按它自己的 `stat_data` 投影；缺失表示成空对象，
+     * 让宏按“缺失值输出 null”的既有约定处理，而不是回退到会话当前变量。
+     */
+    private fun messageStateJson(messageVariables: JsonObject): String =
+        (messageVariables["stat_data"] ?: JsonObject(emptyMap())).toString()
 
     private fun applyProjection(
         text: String,

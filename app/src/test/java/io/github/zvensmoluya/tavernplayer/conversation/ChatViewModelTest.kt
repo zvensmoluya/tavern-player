@@ -35,6 +35,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.double
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1225,6 +1226,177 @@ class ChatViewModelTest {
             val restarted = conversations.get(seeded.id)
             assertEquals(true, restarted?.worldBookState?.activation?.books?.get("book"))
             assertEquals(setOf("book"), restarted?.worldBookState?.forcedBooks)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `display message variables read each floor selected candidate checkpoint`() = runTest {
+        val directory = Files.createTempDirectory("tavern-chat-message-variables").toFile()
+        try {
+            val compiler = PromptCompiler()
+            var repositoryId = 0
+            val conversations = ConversationRepository(
+                directory,
+                compiler,
+                idFactory = { "message-variable-repository-${repositoryId++}" },
+                ioDispatcher = mainDispatcherRule.dispatcher,
+            )
+            val character = DemoConversationContent.character.copy(
+                firstMessage = "opening",
+                alternateFirstMessages = emptyList(),
+            )
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            fun checkpoint(days: Int) = MvuStateSnapshot(
+                bundleSha256 = "b".repeat(64),
+                programSha256 = "c".repeat(64),
+                data = JsonObject(mapOf("stat_data" to JsonObject(mapOf("days" to JsonPrimitive(days))))),
+            )
+            fun branch(days: Int) = created.runtimeState.copy(mvuState = checkpoint(days))
+            fun variant(id: String, messageId: String, role: MessageRole, days: Int, content: String) = MessageVariant(
+                id = id,
+                message = ConversationMessage(messageId, role, content, character.promptName),
+                runtimeStateBefore = branch(days),
+                projectionRuntimeStateBefore = branch(days),
+                runtimeStateAfter = branch(days),
+            )
+            fun turn(id: String, role: MessageRole, variants: List<MessageVariant>) = ConversationTurn(id, role, variants)
+            val seeded = conversations.save(
+                created.copy(
+                    turns = listOf(
+                        turn("opening-turn", MessageRole.ASSISTANT, listOf(
+                            variant("opening-variant", "opening-message", MessageRole.ASSISTANT, 1, "开场"))),
+                        turn("first-user-turn", MessageRole.USER, listOf(
+                            variant("first-user-variant", "first-user-message", MessageRole.USER, 1, "继续"))),
+                        turn("first-reply-turn", MessageRole.ASSISTANT, listOf(
+                            variant("first-reply-variant", "first-reply-message", MessageRole.ASSISTANT, 2, "Day {{get_message_variable::stat_data.days}}"))),
+                        turn("second-user-turn", MessageRole.USER, listOf(
+                            variant("second-user-variant", "second-user-message", MessageRole.USER, 2, "继续"))),
+                        turn("second-reply-turn", MessageRole.ASSISTANT, listOf(
+                            variant("third-reply-variant", "third-reply-message", MessageRole.ASSISTANT, 3, "Day {{get_message_variable::stat_data.days}}"),
+                            variant("fourth-reply-variant", "fourth-reply-message", MessageRole.ASSISTANT, 5, "Day {{format_message_variable::stat_data.days}}"))),
+                    ),
+                    // 会话当前 head 与任何候选都不同：广播最新检查点会立刻显示出差异。
+                    runtimeState = branch(99),
+                ),
+            )
+            var id = 0
+            fun newViewModel() = ChatViewModel(
+                repository = repository(),
+                compiler = compiler,
+                generator = FakeGenerator { _, _ -> error("No generation expected") },
+                conversationRepository = conversations,
+                presetSource = FixedPresetSource(),
+                characterAsset = character,
+                idGenerator = { "message-variable-${id++}" },
+                projectionDispatcher = mainDispatcherRule.dispatcher,
+            )
+            fun persisted() = requireNotNull(conversations.get(seeded.id))
+            // 网页楼层 API 的读取路径：取选中候选自己的变量（含候选最新检查点）。
+            fun candidateDays(turnIndex: Int, variantIndex: Int): String {
+                val selected = persisted().turns[turnIndex].variants[variantIndex]
+                return ((BrowserConversation.variables(selected)["stat_data"] as JsonObject)["days"] as JsonPrimitive).content
+            }
+            fun assertFloors(state: ChatUiState) {
+                assertEquals("Day ${candidateDays(2, state.messages[2].variantIndex)}", state.messages[2].displayContent)
+                assertEquals("Day ${candidateDays(4, state.messages[4].variantIndex)}", state.messages[4].displayContent)
+                assertEquals("2", candidateDays(2, 0))
+                assertEquals("3", candidateDays(4, 0))
+            }
+
+            val viewModel = newViewModel()
+            viewModel.loadConversation(seeded.id)
+            assertFloors(viewModel.uiState.value)
+
+            // 重开对话后，同一份候选变量仍是各楼层自己的值。
+            val reopened = newViewModel()
+            reopened.loadConversation(seeded.id)
+            assertFloors(reopened.uiState.value)
+
+            // 切候选只改该楼层：历史楼层与另一候选继续读各自检查点。
+            reopened.nextVariant()
+            assertEquals("5", candidateDays(4, 1))
+            assertFloors(reopened.uiState.value)
+            reopened.previousVariant()
+            assertFloors(reopened.uiState.value)
+
+            // 文本编辑后，历史楼层的宏仍按各自的选中候选取值。
+            reopened.editMessage("first-user-message", "继续（改）", MessageEditMode.TEXT_ONLY)
+            assertFloors(reopened.uiState.value)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `display message variables treat explicitly empty candidate data as a real value`() = runTest {
+        val directory = Files.createTempDirectory("tavern-chat-message-variables-empty").toFile()
+        try {
+            val compiler = PromptCompiler()
+            var repositoryId = 0
+            val conversations = ConversationRepository(
+                directory,
+                compiler,
+                idFactory = { "message-variable-empty-repository-${repositoryId++}" },
+                ioDispatcher = mainDispatcherRule.dispatcher,
+            )
+            val character = DemoConversationContent.character.copy(
+                firstMessage = "opening",
+                alternateFirstMessages = emptyList(),
+            )
+            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
+            val sessionRuntime = created.runtimeState.copy(mvuState = MvuStateSnapshot(
+                "b".repeat(64), "c".repeat(64),
+                JsonObject(mapOf("stat_data" to JsonObject(mapOf("days" to JsonPrimitive(99))))),
+            ))
+            // 作者新建的楼层显式保存空变量：即使候选带有运行状态，也不得回退到会话当前值。
+            val emptyData = MessageVariant(
+                id = "empty-data-variant",
+                message = ConversationMessage("empty-data-message", MessageRole.ASSISTANT,
+                    "Day {{get_message_variable::stat_data.days}}", character.promptName),
+                runtimeStateBefore = sessionRuntime,
+                projectionRuntimeStateBefore = sessionRuntime,
+                runtimeStateAfter = sessionRuntime,
+                browserVariables = JsonObject(emptyMap()),
+                browserOwnVariables = true,
+            )
+            // 检查点存在但缺少 stat_data：同样按空变量处理。
+            val missingStatData = MessageVariant(
+                id = "missing-stat-data-variant",
+                message = ConversationMessage("missing-stat-data-message", MessageRole.ASSISTANT,
+                    "Day {{get_message_variable::stat_data.days}}", character.promptName),
+                runtimeStateBefore = sessionRuntime,
+                projectionRuntimeStateBefore = sessionRuntime,
+                runtimeStateAfter = sessionRuntime.copy(mvuState = MvuStateSnapshot(
+                    "b".repeat(64), "c".repeat(64), JsonObject(mapOf("schema" to JsonPrimitive("opaque"))))),
+            )
+            val seeded = conversations.save(created.copy(
+                turns = listOf(
+                    ConversationTurn("empty-data-turn", MessageRole.ASSISTANT, listOf(emptyData)),
+                    ConversationTurn("missing-stat-data-turn", MessageRole.ASSISTANT, listOf(missingStatData)),
+                ),
+                runtimeState = sessionRuntime,
+            ))
+            var id = 0
+            val viewModel = ChatViewModel(
+                repository = repository(),
+                compiler = compiler,
+                generator = FakeGenerator { _, _ -> error("No generation expected") },
+                conversationRepository = conversations,
+                presetSource = FixedPresetSource(),
+                characterAsset = character,
+                idGenerator = { "message-variable-empty-${id++}" },
+                projectionDispatcher = mainDispatcherRule.dispatcher,
+            )
+            viewModel.loadConversation(seeded.id)
+
+            val state = viewModel.uiState.value
+            assertNull(BrowserConversation.variables(emptyData)["stat_data"])
+            assertNull(BrowserConversation.variables(missingStatData)["stat_data"])
+            // 会话当前检查点是 99；显式空变量必须输出 null 而不是回退成 99。
+            assertEquals("Day null", state.messages[0].displayContent)
+            assertEquals("Day null", state.messages[1].displayContent)
         } finally {
             directory.deleteRecursively()
         }

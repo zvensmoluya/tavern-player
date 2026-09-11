@@ -6,8 +6,8 @@
   "playerSources": {
     "src/host.mjs": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
     "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
-    "src/parent.mjs": "a223125055f2da315996c45a20033749ccde68438d6fdd63957ff20b35b12553",
-    "src/shell.mjs": "64c8e7f8e730494479e77768de69b7393caaac8a22a3ec51ac94cd8666af2754"
+    "src/parent.mjs": "cacdee4f7e03ec619959a25e700b39adf4f241e33b78dab9063cc8fa160dc1fc",
+    "src/shell.mjs": "a1a5b3a946df94e01e46c672870c9a0e8fb0f5d2eee5674609f0dbf527252c33"
   },
   "sources": {
     "@types/function/audio.d.ts": "02c7ace1acbb1949037aca6f2156e4f109212dd6b9642a63d06934316b24c908",

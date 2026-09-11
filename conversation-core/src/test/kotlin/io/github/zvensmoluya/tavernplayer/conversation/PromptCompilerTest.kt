@@ -683,6 +683,62 @@ class PromptCompilerTest {
     }
 
     @Test
+    fun `display projection reads message variables instead of the session checkpoint`() {
+        val character = baseAsset().snapshot()
+        fun statData(score: Int) = kotlinx.serialization.json.Json
+            .parseToJsonElement("""{"stat_data":{"score":$score}}""") as kotlinx.serialization.json.JsonObject
+        val sessionRuntime = ConversationRuntimeState(mvuState = MvuStateSnapshot("b".repeat(64), "c".repeat(64), statData(3)))
+        fun project(text: String, messageVariables: kotlinx.serialization.json.JsonObject?) = (compiler.projectDisplayText(
+            text = text,
+            role = MessageRole.ASSISTANT,
+            character = character,
+            persona = Persona("traveler", "旅人"),
+            preset = basePreset(),
+            runtimeState = sessionRuntime,
+            history = emptyList(),
+            conversationId = "chat",
+            generationId = "display",
+            modelId = "model",
+            messageVariables = messageVariables,
+        ) as TextExpansionResult.Success).text
+
+        // 楼层候选自己的检查点优先于会话当前状态。
+        assertEquals("own: 8", project("own: {{get_message_variable::stat_data.score}}", statData(8)))
+        // null 表示没有候选来源：仍按会话运行状态投影。
+        assertEquals("session: 3", project("session: {{get_message_variable::stat_data.score}}", null))
+        // 显式为空：缺少 stat_data 按空对象处理，输出 null 而不是回退到会话值。
+        assertEquals(
+            "empty: null",
+            project("empty: {{get_message_variable::stat_data.score}}", kotlinx.serialization.json.JsonObject(emptyMap())),
+        )
+        assertEquals(
+            "empty-yaml: null",
+            project("empty-yaml: {{format_message_variable::stat_data.score}}", kotlinx.serialization.json.JsonObject(emptyMap())),
+        )
+        assertEquals(
+            "missing: null",
+            project("missing: {{get_message_variable::stat_data.score}}",
+                kotlinx.serialization.json.JsonObject(mapOf("schema" to JsonPrimitive("opaque")))),
+        )
+
+        // 思考内容的展示推导走同一条候选变量路径。
+        val reasoning = (compiler.projectReasoningText(
+            text = "think {{get_message_variable::stat_data.score}}",
+            projection = RegexProjection.DISPLAY,
+            character = character,
+            persona = Persona("traveler", "旅人"),
+            preset = basePreset(),
+            runtimeState = sessionRuntime,
+            history = emptyList(),
+            conversationId = "chat",
+            generationId = "display",
+            modelId = "model",
+            messageVariables = statData(8),
+        ) as TextExpansionResult.Success).text
+        assertEquals("think 8", reasoning)
+    }
+
+    @Test
     fun `adaptation state meaning is projected as fixed data rather than an authored prompt`() {
         val input = baseInput().copy(
             character = baseInput().character.copy(

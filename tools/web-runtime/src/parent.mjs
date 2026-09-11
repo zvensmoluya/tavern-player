@@ -127,7 +127,9 @@ function main() {
   }
   const origin = location.origin;
   const libraries = config.kind === 'static' ? '' : ['jquery', 'lodash', 'vue', 'libraries'].map(name => `<script src="${origin}/web/${name}.js"></script>`).join('');
-  const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries +
+  // 正文排版基线由主壳与 static 帧共用；作者文档里更靠后的样式仍然覆盖它。
+  const baseline = config.kind === 'static' ? `<link rel="stylesheet" href="${origin}/web/message.css">` : '';
+  const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries + baseline +
     '<script>parent.PlayerFrame.install(window);</script>' +
     `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
   let html = config.html;

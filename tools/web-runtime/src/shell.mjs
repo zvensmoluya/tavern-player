@@ -88,10 +88,13 @@ async function createFrame(kind, html, target, sourceId) {
   element.src = result.url;
   return frame;
 }
-function dispose(frame) {
+// 段级重建在同一任务里把新帧换到旧帧的位置，此时 detach 为 false，节点由调用方接管。
+function dispose(frame, detach = true) {
   if (!frame) return;
   if (coordinator && frame !== coordinator) post(coordinator, { type: 'dispose-owner', token: frame.token });
-  post(frame, { type: 'dispose' }); frame.element.remove(); frames.delete(frame.token);
+  post(frame, { type: 'dispose' });
+  if (detach) frame.element.remove();
+  frames.delete(frame.token);
   for (const [id, item] of eventAcks) if (item.frame === frame) { eventAcks.delete(id); item.reject(new Error('Runtime disposed')); }
   rpc('frame.dispose', { token: frame.token }).catch(() => {});
 }
@@ -105,56 +108,143 @@ async function ensureCoordinator() {
     document.body.append(frame.element);
   });
 }
+const statusLabels = { STREAMING: '正在生成…', CANCELLED: '已停止', INTERRUPTED: '生成已中断', ERROR: '生成失败' };
+// 占位文案随状态分流，非 COMPLETE 的页面不再无限等待“回复完成后显示交互界面”。
+const waitingLabels = { CANCELLED: '已停止生成，交互界面未装载', INTERRUPTED: '生成已中断，交互界面未装载', ERROR: '生成失败，交互界面未装载' };
+const WAITING = '回复完成后显示交互界面';
+const richText = text => /<(?:style|table|div|span|form|input|img|details|section|html|body)\b/i.test(text);
+// HTML styles never share the trusted player's document or controls.
+function sanitize(text) {
+  return DOMPurify.sanitize(text, { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
+    FORBID_ATTR: ['srcdoc'], WHOLE_DOCUMENT: false });
+}
+function newRow() {
+  return { element: document.createElement('article'), frames: [], segments: [], headerKey: null, header: null, name: null,
+    reasoningKey: null, reasoning: null, reasoningText: null, status: null, statusText: null, reasoningOpen: false,
+    message: null, rendered: false, forced: false };
+}
+function clearRow(row) {
+  row.frames.forEach(dispose); row.frames = [];
+  row.segments = []; row.element.replaceChildren();
+  row.headerKey = null; row.header = null; row.name = null;
+  row.reasoningKey = null; row.reasoning = null; row.reasoningText = null;
+  row.status = null; row.statusText = null;
+}
+// 段的身份是序号 + kind：kind 与内容都没变的段一律不触碰，也不重发视口或高度。
+function segmentKey(kind, text, variantId) {
+  return JSON.stringify(kind === 'page' ? [kind, text, variantId] : [kind, text]);
+}
+// 重建的段在同一任务内原地换节点：旧帧先收到 dispose，新帧已带上旧帧最后实测的高度，
+// 浏览器只在任务结束后布局，读者看到的文档高度不会先掉再涨。
+function replaceSegment(row, previous, node) {
+  if (!previous) return;
+  if (previous.frame) { dispose(previous.frame, false); row.frames = row.frames.filter(item => item !== previous.frame); }
+  previous.node.replaceWith(node);
+}
+// resize 处理把每次实测高度记在帧上；重建该段时用它预置新 iframe 的高度。
+function presetHeight(segment) {
+  const height = segment?.frame?.height;
+  return Number.isFinite(height) ? height : null;
+}
+// 未变的段由调用方直接复用，新节点只接在段列表尾部，顺序不会被这段整理打乱。
+function placeRow(row) {
+  const order = [row.header, row.reasoning, ...row.segments.map(segment => segment.node), row.status].filter(Boolean);
+  let position = 0;
+  for (const node of order) {
+    if (row.element.children[position] !== node) row.element.insertBefore(node, row.element.children[position] ?? null);
+    position++;
+  }
+  while (row.element.children.length > position) row.element.children[position].remove();
+}
+async function buildSegment(row, message, part, kind, previous) {
+  if (kind === 'text') {
+    const node = document.createElement('div');
+    node.innerHTML = DOMPurify.sanitize(sanitize(part.text), { FORBID_TAGS: ['style'], FORBID_ATTR: ['style', 'id', 'name'] });
+    replaceSegment(row, previous, node);
+    return { kind, key: segmentKey(kind, part.text), node };
+  }
+  const height = presetHeight(previous);
+  const frame = kind === 'page' ? await createFrame('page', part.text, message)
+    : await createFrame('static', '<body>' + sanitize(part.text) + '</body>', message);
+  if (height) frame.element.style.height = height + 'px';
+  frame.height = height;
+  row.frames.push(frame); replaceSegment(row, previous, frame.element);
+  return { kind, key: segmentKey(kind, part.text, message.variantId), node: frame.element, frame };
+}
+async function renderRow(row, message) {
+  row.message = message;
+  if (row.forced) { row.forced = false; clearRow(row); }
+  const headerKey = JSON.stringify([message.name]);
+  if (row.headerKey !== headerKey) {
+    row.headerKey = headerKey;
+    if (!row.header) {
+      row.header = document.createElement('header'); row.name = document.createElement('span');
+      row.header.append(row.name, button('编辑', () => ui('edit', row.message.id), flags.busy));
+    }
+    row.name.textContent = message.name;
+  }
+  const reasoning = message.reasoning ?? [], reasoningKey = JSON.stringify(reasoning);
+  if (!reasoning.length) {
+    if (row.reasoning) { row.reasoning.remove(); row.reasoning = null; row.reasoningText = null; }
+    row.reasoningKey = null;
+  } else if (row.reasoningKey !== reasoningKey) {
+    row.reasoningKey = reasoningKey;
+    if (row.reasoning) row.reasoningText.textContent = reasoning.join('\n\n');
+    else {
+      const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('div');
+      summary.textContent = '思考过程'; text.textContent = reasoning.join('\n\n');
+      // 流式期间每次刷新都会原地改写内容；展开状态记在行上，读者打开后不会被折回去。
+      details.open = row.reasoningOpen;
+      details.addEventListener('toggle', () => { row.reasoningOpen = details.open; });
+      details.append(summary, text); row.reasoning = details; row.reasoningText = text;
+    }
+  }
+  const next = [];
+  for (const [index, part] of segments(message.display ?? message.message).entries()) {
+    const previous = row.segments[index];
+    if (part.kind === 'page' && message.status !== 'COMPLETE') {
+      // 非 COMPLETE 不建 page 帧；占位文案原地随状态改写，不再无限等待。
+      const text = waitingLabels[message.status] ?? WAITING;
+      if (previous?.kind === 'waiting') {
+        if (previous.key !== text) { previous.node.textContent = text; previous.key = text; }
+        next.push(previous); continue;
+      }
+      const node = document.createElement('p');
+      node.className = 'runtime-loading'; node.textContent = text;
+      replaceSegment(row, previous, node); next.push({ kind: 'waiting', key: text, node });
+      continue;
+    }
+    const kind = part.kind === 'page' ? 'page' : richText(part.text) ? 'static' : 'text';
+    const key = segmentKey(kind, part.text, message.variantId);
+    if (previous?.kind === kind && previous.key === key) { next.push(previous); continue; }
+    next.push(await buildSegment(row, message, part, kind, previous));
+  }
+  for (const segment of row.segments.slice(next.length)) {
+    if (segment.frame) { dispose(segment.frame); row.frames = row.frames.filter(item => item !== segment.frame); }
+    segment.node.remove();
+  }
+  row.segments = next;
+  const statusText = message.status === 'COMPLETE' ? null : statusLabels[message.status] ?? '';
+  if (statusText === null) { if (row.status) row.status.remove(); row.status = null; row.statusText = null; }
+  else if (row.status) { if (row.statusText !== statusText) { row.status.textContent = statusText; row.statusText = statusText; } }
+  else { row.status = document.createElement('p'); row.status.className = 'status'; row.status.textContent = statusText; row.statusText = statusText; }
+  placeRow(row);
+  // 行级标记：内容变化只重建变化的段，渲染事件仍按消息只发一次。
+  if (!row.rendered && message.status === 'COMPLETE' && row.frames.length === 0) {
+    row.rendered = true;
+    lifecycle(message.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [message.message_id]);
+  }
+}
 async function render() {
   if (!snapshot) return;
   const visible = snapshot.messages.slice(-shown), ids = new Set(visible.map(m => m.turnId));
   for (const [id, row] of rows) if (!ids.has(id)) { row.frames.forEach(dispose); row.element.remove(); rows.delete(id); }
   for (const [position, message] of visible.entries()) {
     let row = rows.get(message.turnId);
-    if (!row) {
-      row = { element: document.createElement('article'), frames: [], contentKey: null, reasoningOpen: false };
-      rows.set(message.turnId, row);
-    }
+    if (!row) { row = newRow(); rows.set(message.turnId, row); }
     row.frames.forEach(frame => { frame.messageId = message.message_id; });
     row.element.dataset.role = message.role;
-    const key = JSON.stringify([message.variantId, message.display, message.reasoning, message.status === 'COMPLETE']);
-    if (row.contentKey !== key) {
-      row.contentKey = key; row.frames.forEach(dispose); row.frames = []; row.element.replaceChildren();
-      const header = document.createElement('header'), name = document.createElement('span');
-      name.textContent = message.name; header.append(name, button('编辑', () => ui('edit', message.id), flags.busy));
-      row.element.append(header);
-      if (message.reasoning?.length) {
-        const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('div');
-        summary.textContent = '思考过程'; text.textContent = message.reasoning.join('\n\n');
-        // 流式期间每次刷新都会重建气泡；展开状态记在行上，读者打开后不会被折回去。
-        details.open = row.reasoningOpen;
-        details.addEventListener('toggle', () => { row.reasoningOpen = details.open; });
-        details.append(summary, text); row.element.append(details);
-      }
-      const source = message.display ?? message.message;
-      for (const part of segments(source)) {
-        if (part.kind === 'page') {
-          if (message.status !== 'COMPLETE') { const wait = document.createElement('p'); wait.className = 'runtime-loading'; wait.textContent = '回复完成后显示交互界面'; row.element.append(wait); continue; }
-          const frame = await createFrame('page', part.text, message);
-          row.frames.push(frame); row.element.append(frame.element);
-        } else {
-          // HTML styles never share the trusted player's document or controls.
-          const rich = /<(?:style|table|div|span|form|input|img|details|section|html|body)\b/i.test(part.text);
-          const clean = DOMPurify.sanitize(part.text, { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
-            FORBID_ATTR: ['srcdoc'], WHOLE_DOCUMENT: false });
-          if (rich) {
-            const frame = await createFrame('static', '<body>' + clean + '</body>', message);
-            row.frames.push(frame); row.element.append(frame.element);
-          } else {
-            const text = document.createElement('div');
-            text.innerHTML = DOMPurify.sanitize(clean, { FORBID_TAGS: ['style'], FORBID_ATTR: ['style', 'id', 'name'] });
-            row.element.append(text);
-          }
-        }
-      }
-      if (message.status !== 'COMPLETE') { const status = document.createElement('p'); status.className = 'status'; status.textContent = ({ STREAMING: '正在生成…', CANCELLED: '已停止', INTERRUPTED: '生成已中断', ERROR: '生成失败' })[message.status] ?? ''; row.element.append(status); }
-      if (row.frames.length === 0 && message.status === 'COMPLETE') lifecycle(message.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [message.message_id]);
-    }
+    await renderRow(row, message);
     row.element.querySelector('header button').disabled = flags.busy;
     if (messagesNode.children[position] !== row.element) messagesNode.insertBefore(row.element, messagesNode.children[position] ?? null);
   }
@@ -216,14 +306,23 @@ window.addEventListener('message', async event => {
   const data = event.data;
   if (data.type === 'resize') {
     const height = Number(data.height);
-    if (Number.isFinite(height) && height > 0) { frame.element.style.height = Math.min(height, 100000) + 'px'; if (following && !focusInFrame()) requestAnimationFrame(bottom); recordBottom(); }
+    if (Number.isFinite(height) && height > 0) {
+      // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
+      frame.height = Math.min(height, 100000); frame.element.style.height = frame.height + 'px';
+      if (following && !focusInFrame()) requestAnimationFrame(bottom); recordBottom();
+    }
   } else if (data.type === 'loaded') {
     frame.loaded = true;
     if (frame.kind === 'session') { post(frame, { type: 'snapshot', snapshot }); frame.onLoaded?.(); return; }
     if (frame.kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_ENDED, [frame.token]);
     // 建帧到加载完成之间可能已经发生过视口变化（键盘、旋转、分屏），补发一次当前可见高度。
     if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
-    if (frame.kind !== 'script') lifecycle(snapshot.messages[frame.messageId]?.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
+    if (frame.kind !== 'script') {
+      const message = snapshot.messages[frame.messageId];
+      // 行级标记：渲染事件按消息只发一次，段级更新不再补发。
+      const row = rows.get(message?.turnId); if (row) row.rendered = true;
+      lifecycle(message?.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
+    }
   } else if (data.type === 'notice') {
     if (data.level === 'buttons') {
       const item = [...scriptFrames.values()].find(item => item.frame === frame); if (item && Array.isArray(data.message)) scriptButtons(item, data.message);
@@ -242,7 +341,7 @@ window.addEventListener('message', async event => {
         const refresh = result.refresh;
         renderQueue = renderQueue.then(async () => {
           for (const message of snapshot.messages) if (refresh.mode === 'all' || refresh.messageIds.includes(message.message_id)) {
-            const row = rows.get(message.turnId); if (row) row.contentKey = null;
+            const row = rows.get(message.turnId); if (row) row.forced = true;
           }
           await render();
           if (refresh.mode === 'all') lifecycle(tavernEvents.CHAT_CHANGED, [snapshot.conversationId]);
@@ -259,7 +358,12 @@ window.addEventListener('message', async event => {
 
 async function apply(packet) {
   const previous = snapshot, oldFlags = flags;
-  if (packet.epoch !== epoch) { epoch = packet.epoch; shown = 50; programKey = ''; }
+  if (packet.epoch !== epoch) {
+    epoch = packet.epoch; shown = 50; programKey = '';
+    // 换 epoch 后旧行不再属于当前会话，整行移除，不能只留下悬挂的帧与节点。
+    for (const row of rows.values()) { row.frames.forEach(dispose); row.element.remove(); }
+    rows.clear();
+  }
   if (packet.type === 'delta') {
     if (!snapshot) throw new Error('Missing initial conversation snapshot');
     const messages = new Map(snapshot.messages.map(m => [m.turnId, m]));

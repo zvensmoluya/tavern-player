@@ -1763,6 +1763,8 @@ class ChatViewModel(
         val modelId = _uiState.value.selectedConnection?.selectedModel.orEmpty()
         val rendered = withContext(projectionDispatcher) {
             messages.mapIndexed { index, message ->
+                // 消息变量宏按当前楼层选中候选自己的变量取值；没有来源时沿用原路径。
+                val messageVariables = snapshot.turns[index].selected.displayVariables()
                 val content = compiler.projectDisplayText(
                     text = message.content,
                     role = message.role,
@@ -1777,6 +1779,7 @@ class ChatViewModel(
                     depth = messages.lastIndex - index,
                     sourceText = message.sourceText,
                     openingSourceIndex = snapshot.turns[index].selected.openingSourceIndex,
+                    messageVariables = messageVariables,
                 ) as TextExpansionResult.Success
                 val reasoning = message.reasoning.map { block ->
                     (compiler.projectReasoningText(
@@ -1791,6 +1794,7 @@ class ChatViewModel(
                         generationId = "${snapshot.id}-display",
                         modelId = modelId,
                         depth = messages.lastIndex - index,
+                        messageVariables = messageVariables,
                     ) as TextExpansionResult.Success).text
                 }
                 RenderedMessage(message.id, content.text, reasoning)
@@ -1923,6 +1927,13 @@ class ChatViewModel(
 }
 
 private fun ConversationRecord.selectedMessages(): List<ConversationMessage> = turns.map(ConversationTurn::selected).map(MessageVariant::message)
+
+/**
+ * 候选自己的变量来源：显式变量或该候选的最新 MVU 检查点。
+ * 没有来源（MVU-less / 只有 legacy state read）时返回 null，展示投影保持旧路径。
+ */
+private fun MessageVariant.displayVariables(): JsonObject? =
+    if (browserOwnVariables || nativeHead()?.mvuState != null) BrowserConversation.variables(this) else null
 
 private fun ConversationRecord.findVariant(id: String): MessageVariant? = turns.asSequence()
     .flatMap { it.variants.asSequence() }
