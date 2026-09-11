@@ -1,6 +1,8 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.zvensmoluya.modelgateway.AuthScheme
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
@@ -54,7 +56,7 @@ class JsonConnectionDataStoreTest {
             java.io.File(temporaryFolder.root, "connections.preferences_pb")
         }
         try {
-            val store = JsonConnectionDataStore(dataStore)
+            val store = JsonConnectionDataStore(dataStore, scope)
             val template = ConnectionTemplates.openAiChat
             val connection = StoredConnection(
                 id = "one",
@@ -77,6 +79,23 @@ class JsonConnectionDataStoreTest {
             store.update { it.copy(connections = listOf(connection), recentConnectionId = connection.id) }
 
             assertEquals(GatewayAppState(connections = listOf(connection), recentConnectionId = "one"), store.state.first())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `malformed state falls back without hanging`() = runBlocking {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) {
+            java.io.File(temporaryFolder.root, "malformed.preferences_pb")
+        }
+        try {
+            val key = stringPreferencesKey("gateway_state_json_v1")
+            dataStore.edit { it[key] = "not-json" }
+            val store = JsonConnectionDataStore(dataStore, scope)
+
+            assertEquals(GatewayAppState(), store.state.first())
         } finally {
             scope.cancel()
         }

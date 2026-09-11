@@ -12,6 +12,8 @@ import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -91,6 +93,43 @@ class CharacterLibraryViewModelTest {
         assertEquals("喜欢雨夜。", conversation.persona.description)
     }
 
+    @Test
+    fun `detail repositories are created only when their features are opened`() = runTest {
+        val root = temporary.newFolder("lazy-detail")
+        val characters = CharacterRepository(root)
+        val saved = characters.import(
+            """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Deferred"}}""".encodeToByteArray(),
+            "deferred.json",
+        ) as CharacterSaveResult.Saved
+        val conversations = ConversationRepository(root, PromptCompiler())
+        val presets = PresetRepository(root, ioDispatcher = mainDispatcher.dispatcher)
+        var conversationCalls = 0
+        var presetCalls = 0
+        val viewModel = CharacterLibraryViewModel(
+            characters,
+            conversationRepository = { conversationCalls += 1; conversations },
+            defaultPersonaSource = MutablePersonaSource(Persona("default-persona", "旅人")),
+            presetRepository = { presetCalls += 1; presets },
+            shelfTransferReceiver = ShelfTransferReceiver { error("unused") },
+        )
+
+        try {
+            assertEquals(0, conversationCalls)
+            assertEquals(0, presetCalls)
+
+            viewModel.selectCharacter(saved.character.id)
+            withTimeout(5_000) { while (conversationCalls == 0) yield() }
+            assertEquals(1, conversationCalls)
+            assertEquals(0, presetCalls)
+
+            viewModel.createConversation(saved.character.id)
+            conversations.conversations.first { it.isNotEmpty() }
+            assertEquals(1, presetCalls)
+        } finally {
+            clear(viewModel)
+        }
+    }
+
     private fun harness(transfer: ShelfTransfer): Harness {
         val root = temporary.newFolder()
         val characters = CharacterRepository(root)
@@ -147,6 +186,9 @@ class CharacterLibraryViewModelTest {
         }
     }
 
+
+    private fun clear(viewModel: androidx.lifecycle.ViewModel) =
+        androidx.lifecycle.ViewModelStore().apply { put("test", viewModel); clear() }
     private class MutablePersonaSource(initial: Persona) : DefaultPersonaSource {
         override val persona = MutableStateFlow(initial)
     }

@@ -223,6 +223,7 @@ class NativeCompilationServiceTest {
                 override val persona = MutableStateFlow(Persona("user", "旅人"))
                 override fun captureDefault() = persona.value
             }, presets, ShelfTransferReceiver { error("not used") }, NativeCompilationService(generator), connections)
+            .also { it.selectCharacter(character.id) }
     }
 
     private class FakeGenerator(

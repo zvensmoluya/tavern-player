@@ -22,11 +22,11 @@ import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
 @Composable
 fun TavernPlayerApp(
-    chatViewModel: ChatViewModel,
-    connectionsViewModel: ModelConnectionsViewModel,
+    chatViewModel: () -> ChatViewModel,
+    connectionsViewModel: () -> ModelConnectionsViewModel,
     characterLibraryViewModel: CharacterLibraryViewModel,
-    presetViewModel: PresetViewModel,
-    personaViewModel: PersonaViewModel,
+    presetViewModel: () -> PresetViewModel,
+    personaViewModel: () -> PersonaViewModel,
 ) {
     val libraryState by characterLibraryViewModel.uiState.collectAsState()
     var surface by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
@@ -46,13 +46,13 @@ fun TavernPlayerApp(
 
     fun openPersona() {
         returnFromPersona = surface
-        personaViewModel.startEditing()
+        personaViewModel().startEditing()
         surface = AppSurface.PERSONA
     }
 
     LaunchedEffect(libraryState.openConversationId) {
         libraryState.openConversationId?.let { conversationId ->
-            chatViewModel.loadConversation(conversationId)
+            chatViewModel().loadConversation(conversationId)
             characterLibraryViewModel.consumeOpenConversation()
             surface = AppSurface.CHAT
         }
@@ -131,28 +131,28 @@ fun TavernPlayerApp(
             )
         }
         AppSurface.CHAT -> ChatRoute(
-            viewModel = chatViewModel,
-            presetViewModel = presetViewModel,
+            viewModel = chatViewModel(),
+            presetViewModel = presetViewModel(),
             resolveAssetPath = characterLibraryViewModel::assetPath,
             onBack = { surface = AppSurface.CHARACTER_DETAIL },
             onOpenModels = ::openModels,
             onOpenPresets = ::openPresets,
         )
         AppSurface.MODEL_CONFIGURATION -> ModelConnectionsRoute(
-            viewModel = connectionsViewModel,
+            viewModel = connectionsViewModel(),
             onBackToChat = { surface = returnFromModels },
         )
         AppSurface.PRESET_CENTER -> PresetRoute(
-            viewModel = presetViewModel,
+            viewModel = presetViewModel(),
             onBack = {
-                presetViewModel.cancelEditor()
+                presetViewModel().cancelEditor()
                 surface = returnFromPresets
             },
         )
         AppSurface.PERSONA -> PersonaRoute(
-            viewModel = personaViewModel,
+            viewModel = personaViewModel(),
             onBack = {
-                personaViewModel.cancelEditing()
+                personaViewModel().cancelEditing()
                 surface = returnFromPersona
             },
         )

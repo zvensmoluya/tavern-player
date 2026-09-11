@@ -82,6 +82,8 @@ class CharacterRepository internal constructor(
     private val adaptationValidator: NativeAdaptationValidator = NativeAdaptationValidator(),
     private val now: () -> Long = System::currentTimeMillis,
     private val imageInspector: StaticImageInspector = AndroidStaticImageInspector,
+    private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
+    loadOnInit: Boolean = true,
 ) {
     private val root = File(filesDir, "tavern/characters")
     private val mutex = Mutex()
@@ -89,17 +91,26 @@ class CharacterRepository internal constructor(
         encodeDefaults = true
         ignoreUnknownKeys = true
     }
+    @Volatile
+    private var initialized = false
+    @Volatile
+    private var manifestsById: Map<String, CharacterManifest> = emptyMap()
     private val _characters = MutableStateFlow<List<CharacterAsset>>(emptyList())
     val characters: StateFlow<List<CharacterAsset>> = _characters.asStateFlow()
     val imageResources = CharacterImageRepository(filesDir, ::get, ::assetFile)
 
     init {
-        root.mkdirs()
-        cleanupIncompleteImports()
-        _characters.value = loadAll()
+        if (loadOnInit) loadStorage()
     }
 
-    suspend fun import(bytes: ByteArray, originalFileName: String): CharacterSaveResult = withContext(Dispatchers.IO) {
+    suspend fun initialize() = withContext(ioDispatcher) {
+        mutex.withLock {
+            if (!initialized) loadStorage()
+        }
+    }
+
+    suspend fun import(bytes: ByteArray, originalFileName: String): CharacterSaveResult = withContext(ioDispatcher) {
+        initialize()
         mutex.withLock {
             when (val decoded = importer.import(bytes, originalFileName)) {
                 is CharacterImportResult.Rejected -> CharacterSaveResult.Rejected(decoded.diagnostics)
@@ -113,25 +124,27 @@ class CharacterRepository internal constructor(
                     val destination = File(root, character.id)
                     if (temporary.exists()) temporary.deleteRecursivelySafely(root)
                     check(temporary.mkdirs()) { "无法创建角色导入目录" }
-                    try {
+                    val manifest = try {
                         val sourceName = if (character.sourceFormat == CharacterSourceFormat.PNG) "source.png" else "source.json"
                         File(temporary, sourceName).writeBytes(decoded.sourceBytes)
                         val avatarName = createAvatar(temporary, character, decoded.sourceBytes)
                         val localAssets = materializeAssets(temporary, character, decoded.sourceBytes, sourceName)
-                        val manifest = CharacterManifest(
+                        CharacterManifest(
                             character = character,
                             originalFileName = originalFileName,
                             sourceFileName = sourceName,
                             avatarFileName = avatarName,
                             localAssets = localAssets,
                             importedAtEpochMillis = now(),
-                        )
-                        writeAtomic(File(temporary, MANIFEST_FILE), json.encodeToString(manifest))
-                        if (!temporary.renameTo(destination)) error("无法完成角色卡原子导入")
+                        ).also { value ->
+                            writeAtomic(File(temporary, MANIFEST_FILE), json.encodeToString(value))
+                            if (!temporary.renameTo(destination)) error("无法完成角色卡原子导入")
+                        }
                     } catch (error: Exception) {
                         temporary.deleteRecursivelySafely(root)
                         throw error
                     }
+                    manifestsById = manifestsById + (character.id to manifest)
                     _characters.value = (_characters.value + character).sortedWith(CHARACTER_ORDER)
                     CharacterSaveResult.Saved(character, false, decoded.diagnostics)
                 }
@@ -141,26 +154,25 @@ class CharacterRepository internal constructor(
 
     fun get(characterId: String): CharacterAsset? = _characters.value.firstOrNull { it.id == characterId }
 
-    fun avatarFile(characterId: String): File? {
-        val manifest = readManifest(File(root, characterId)) ?: return null
-        return manifest.avatarFileName?.let { name -> File(File(root, characterId), name).takeIf(File::isFile) }
+    fun avatarFile(characterId: String): File? = manifestsById[characterId]?.avatarFileName?.let { name ->
+        File(File(root, characterId), name).takeIf(File::isFile)
     }
 
-    fun sourceFile(characterId: String): File? {
-        val manifest = readManifest(File(root, characterId)) ?: return null
-        return File(File(root, characterId), manifest.sourceFileName).takeIf(File::isFile)
+    fun sourceFile(characterId: String): File? = manifestsById[characterId]?.sourceFileName?.let { name ->
+        File(File(root, characterId), name).takeIf(File::isFile)
     }
 
     fun availableAssetIds(characterId: String): Set<String> =
-        readManifest(File(root, characterId))?.localAssets?.mapTo(mutableSetOf(), LocalCharacterAsset::assetId).orEmpty()
+        manifestsById[characterId]?.localAssets?.mapTo(mutableSetOf(), LocalCharacterAsset::assetId).orEmpty()
 
     suspend fun installNativeAdaptation(
         characterId: String,
         adaptation: NativeAdaptation,
-    ): NativeAdaptationInstallResult = withContext(Dispatchers.IO) {
+    ): NativeAdaptationInstallResult = withContext(ioDispatcher) {
+        initialize()
         mutex.withLock {
             val directory = File(root, characterId)
-            val manifest = readManifest(directory)
+            val manifest = manifestsById[characterId]
                 ?: return@withLock NativeAdaptationInstallResult.Rejected(
                     listOf(NativeAdaptationValidationIssue("characterId", "UNKNOWN_CHARACTER", "角色不存在")),
                 )
@@ -184,7 +196,9 @@ class CharacterRepository internal constructor(
                 }
             }
             val updated = manifest.character.copy(nativeAdaptation = adaptation)
-            writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(manifest.copy(character = updated)))
+            val updatedManifest = manifest.copy(character = updated)
+            writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(updatedManifest))
+            manifestsById = manifestsById + (characterId to updatedManifest)
             _characters.value = _characters.value.map { if (it.id == characterId) updated else it }.sortedWith(CHARACTER_ORDER)
             NativeAdaptationInstallResult.Installed(updated)
         }
@@ -192,7 +206,7 @@ class CharacterRepository internal constructor(
 
     fun assetFile(characterId: String, assetId: String): File? {
         val directory = File(root, characterId)
-        val manifest = readManifest(directory) ?: return null
+        val manifest = manifestsById[characterId] ?: return null
         val fileName = manifest.localAssets.firstOrNull { it.assetId == assetId }?.fileName ?: return null
         val file = File(directory, fileName)
         val rootPath = directory.canonicalFile.toPath()
@@ -200,12 +214,17 @@ class CharacterRepository internal constructor(
         return file.takeIf { filePath.startsWith(rootPath) && filePath != rootPath && it.isFile }
     }
 
-    private fun loadAll(): List<CharacterAsset> = root.listFiles()
-        .orEmpty()
-        .filter { it.isDirectory && !it.name.endsWith(".importing") }
-        .mapNotNull(::readManifest)
-        .map(CharacterManifest::character)
-        .sortedWith(CHARACTER_ORDER)
+    private fun loadStorage() {
+        root.mkdirs()
+        cleanupIncompleteImports()
+        val manifests = root.listFiles()
+            .orEmpty()
+            .filter { it.isDirectory && !it.name.endsWith(".importing") }
+            .mapNotNull(::readManifest)
+        manifestsById = manifests.associateBy { it.character.id }
+        _characters.value = manifests.map(CharacterManifest::character).sortedWith(CHARACTER_ORDER)
+        initialized = true
+    }
 
     private fun readManifest(directory: File): CharacterManifest? {
         val file = File(directory, MANIFEST_FILE)

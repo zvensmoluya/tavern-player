@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 
 interface DefaultPersonaSource {
     val persona: StateFlow<Persona>
+    suspend fun initialize() = Unit
 
     fun captureDefault(): Persona = persona.value.copy()
 }
@@ -23,6 +24,7 @@ interface DefaultPersonaSource {
 class PersonaRepository(
     filesDir: File,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    loadOnInit: Boolean = true,
 ) : DefaultPersonaSource {
     private val root = File(filesDir, "tavern/persona")
     private val stateFile = File(root, STATE_FILE)
@@ -31,10 +33,23 @@ class PersonaRepository(
         encodeDefaults = true
         ignoreUnknownKeys = true
     }
-    private val _persona = MutableStateFlow(load())
+    @Volatile
+    private var initialized = false
+    private val _persona = MutableStateFlow(defaultPersona())
     override val persona: StateFlow<Persona> = _persona.asStateFlow()
 
+    init {
+        if (loadOnInit) loadStorage()
+    }
+
+    override suspend fun initialize() = withContext(ioDispatcher) {
+        mutex.withLock {
+            if (!initialized) loadStorage()
+        }
+    }
+
     suspend fun save(name: String, description: String, avatar: String?): Persona = withContext(ioDispatcher) {
+        initialize()
         mutex.withLock {
             val normalizedName = name.trim().takeIf(String::isNotEmpty)
                 ?: throw IllegalArgumentException("身份名称不能为空")
@@ -51,13 +66,14 @@ class PersonaRepository(
         }
     }
 
-    private fun load(): Persona {
+    private fun loadStorage() {
         root.mkdirs()
         AtomicFileStore.cleanupTemporaryFiles(root)
-        return stateFile.takeIf(File::isFile)
+        _persona.value = stateFile.takeIf(File::isFile)
             ?.let { file -> runCatching { json.decodeFromString<Persona>(file.readText()) }.getOrNull() }
             ?.copy(id = DEFAULT_ID)
             ?: defaultPersona()
+        initialized = true
     }
 
     companion object {

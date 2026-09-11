@@ -7,9 +7,14 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.ModelProtocol
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +37,7 @@ interface ConnectionStateStore {
 
 class JsonConnectionDataStore(
     private val dataStore: DataStore<Preferences>,
+    scope: CoroutineScope,
 ) : ConnectionStateStore {
     override val state: Flow<GatewayAppState> = dataStore.data
         .catch { error ->
@@ -39,12 +45,16 @@ class JsonConnectionDataStore(
             else throw error
         }
         .map { preferences ->
-            preferences[STATE_JSON]?.let(::decodeState) ?: GatewayAppState()
+            preferences[STATE_JSON]
+                ?.let { value -> runCatching { decodeState(value) }.getOrNull() }
+                ?: GatewayAppState()
         }
+        .flowOn(Dispatchers.Default)
+        .shareIn(scope, SharingStarted.Lazily, replay = 1)
 
     override suspend fun update(transform: (GatewayAppState) -> GatewayAppState) {
         dataStore.edit { preferences ->
-            val current = preferences[STATE_JSON]?.let(::decodeState) ?: GatewayAppState()
+            val current = preferences[STATE_JSON]?.let { runCatching { decodeState(it) }.getOrNull() } ?: GatewayAppState()
             preferences[STATE_JSON] = encodeState(transform(current))
         }
     }

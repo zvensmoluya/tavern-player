@@ -77,6 +77,39 @@ class CharacterAndConversationRepositoryTest {
     }
 
     @Test
+    fun `character storage can initialize after construction`() = runTest {
+        val root = temporary.newFolder("lazy-characters")
+        val writer = CharacterRepository(root)
+        val saved = writer.import(cardJson("Deferred", "loaded later"), "deferred.json") as CharacterSaveResult.Saved
+
+        val deferred = CharacterRepository(root, loadOnInit = false)
+        assertTrue(deferred.characters.value.isEmpty())
+
+        deferred.initialize()
+
+        assertEquals(listOf(saved.character.id), deferred.characters.value.map(CharacterAsset::id))
+    }
+
+    @Test
+    fun `avatar lookup uses loaded manifest index`() = runTest {
+        val root = temporary.newFolder("avatar-index")
+        val png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        val bytes = """
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Avatar","assets":[
+              {"type":"icon","uri":"data:image/png;base64,$png","name":"main","ext":"png"}
+            ]}}
+        """.trimIndent().encodeToByteArray()
+        val repository = CharacterRepository(root)
+        val saved = repository.import(bytes, "avatar.json") as CharacterSaveResult.Saved
+        val avatar = repository.avatarFile(saved.character.id)
+        assertTrue(avatar?.isFile == true)
+
+        File(root, "tavern/characters/${saved.character.id}/manifest.json").writeText("invalid")
+
+        assertEquals(avatar, repository.avatarFile(saved.character.id))
+    }
+
+    @Test
     fun `safe inline image assets are materialized behind stable ids`() = runTest {
         val root = temporary.newFolder("character-assets")
         val inspector = StaticImageInspector { StaticImageInfo(2, 2, "image/png") }

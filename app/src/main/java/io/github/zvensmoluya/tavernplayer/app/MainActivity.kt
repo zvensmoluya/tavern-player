@@ -35,12 +35,12 @@ class MainActivity : ComponentActivity() {
     private val characterLibraryViewModel by viewModels<CharacterLibraryViewModel> {
         CharacterLibraryViewModel.Factory(
             graph.characterRepository,
-            graph.conversationRepository,
+            { graph.conversationRepository },
             graph.personaRepository,
-            graph.presetRepository,
+            { graph.presetRepository },
             graph.shelfTransferClient,
-            graph.nativeCompilationService,
-            graph.connectionRepository,
+            { graph.nativeCompilationService },
+            { graph.connectionRepository },
         )
     }
     private val presetViewModel by viewModels<PresetViewModel> {
@@ -62,11 +62,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             TavernPlayerTheme {
                 TavernPlayerApp(
-                    chatViewModel,
-                    modelConnectionsViewModel,
+                    { chatViewModel },
+                    { modelConnectionsViewModel },
                     characterLibraryViewModel,
-                    presetViewModel,
-                    personaViewModel,
+                    { presetViewModel },
+                    { personaViewModel },
                 )
             }
         }

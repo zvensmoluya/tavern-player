@@ -57,26 +57,75 @@ data class CharacterLibraryUiState(
 
 class CharacterLibraryViewModel(
     private val characterRepository: CharacterRepository,
-    private val conversationRepository: ConversationRepository,
+    private val conversationRepository: () -> ConversationRepository,
     private val defaultPersonaSource: DefaultPersonaSource,
-    private val presetRepository: PresetRepository,
+    private val presetRepository: () -> PresetRepository,
     private val shelfTransferReceiver: ShelfTransferReceiver,
-    private val compilationService: NativeCompilationService? = null,
-    private val connectionRepository: ConnectionRepository? = null,
+    private val compilationService: (() -> NativeCompilationService)? = null,
+    private val connectionRepository: (() -> ConnectionRepository)? = null,
 ) : ViewModel() {
+    constructor(
+        characterRepository: CharacterRepository,
+        conversationRepository: ConversationRepository,
+        defaultPersonaSource: DefaultPersonaSource,
+        presetRepository: PresetRepository,
+        shelfTransferReceiver: ShelfTransferReceiver,
+        compilationService: NativeCompilationService? = null,
+        connectionRepository: ConnectionRepository? = null,
+    ) : this(
+        characterRepository,
+        { conversationRepository },
+        defaultPersonaSource,
+        { presetRepository },
+        shelfTransferReceiver,
+        compilationService?.let { service -> { service } },
+        connectionRepository?.let { repository -> { repository } },
+    )
     private var compilationJob: Job? = null
+    private var conversationJob: Job? = null
+    private var connectionJob: Job? = null
     private val imageJobs = mutableMapOf<String, Job>()
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
 
     init {
         viewModelScope.launch {
+            characterRepository.initialize()
+            defaultPersonaSource.initialize()
+        }
+        viewModelScope.launch {
             characterRepository.imageResources.states.collect { states ->
                 _uiState.update { it.copy(imageStates = states) }
             }
         }
-        if (connectionRepository != null) viewModelScope.launch {
-            connectionRepository.state.collect { state ->
+        viewModelScope.launch {
+            combine(characterRepository.characters, defaultPersonaSource.persona) { characters, persona ->
+                characters to persona
+            }.collect { (characters, persona) ->
+                _uiState.update { current ->
+                    current.copy(
+                        characters = characters,
+                        persona = persona,
+                        selectedCharacterId = current.selectedCharacterId.takeIf { id ->
+                            characters.any { it.id == id }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun loadDetailDependencies() {
+        if (conversationJob == null) conversationJob = viewModelScope.launch {
+            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
+            repository.conversations.collect { conversations ->
+                _uiState.update { it.copy(conversations = conversations) }
+            }
+        }
+        val connectionSource = connectionRepository
+        if (connectionSource != null && connectionJob == null) connectionJob = viewModelScope.launch {
+            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { connectionSource() }
+            repository.state.collect { state ->
                 val choices = state.connections.filter { it.selectedModel.isNotBlank() }
                 _uiState.update { current -> current.copy(
                     compilationConnections = choices,
@@ -84,25 +133,6 @@ class CharacterLibraryViewModel(
                         ?: state.recentConnectionId?.takeIf { id -> choices.any { it.id == id } } ?: choices.firstOrNull()?.id,
                 ) }
             }
-        }
-        viewModelScope.launch {
-            combine(
-                characterRepository.characters,
-                conversationRepository.conversations,
-                defaultPersonaSource.persona,
-            ) { characters, conversations, persona -> Triple(characters, conversations, persona) }
-                .collect { (characters, conversations, persona) ->
-                    _uiState.update { current ->
-                        current.copy(
-                            characters = characters,
-                            conversations = conversations,
-                            persona = persona,
-                            selectedCharacterId = current.selectedCharacterId.takeIf { id ->
-                                characters.any { it.id == id }
-                            },
-                        )
-                    }
-                }
         }
     }
 
@@ -113,13 +143,16 @@ class CharacterLibraryViewModel(
             runCatching { characterRepository.import(bytes, fileName) }
                 .onSuccess { result ->
                     when (result) {
-                        is CharacterSaveResult.Saved -> _uiState.update {
-                            it.copy(
-                                importing = false,
-                                selectedCharacterId = result.character.id,
-                                importDiagnostics = result.diagnostics,
-                                message = if (result.duplicate) "这张角色卡已经导入" else "已导入 ${result.character.name}",
-                            )
+                        is CharacterSaveResult.Saved -> {
+                            loadDetailDependencies()
+                            _uiState.update {
+                                it.copy(
+                                    importing = false,
+                                    selectedCharacterId = result.character.id,
+                                    importDiagnostics = result.diagnostics,
+                                    message = if (result.duplicate) "这张角色卡已经导入" else "已导入 ${result.character.name}",
+                                )
+                            }
                         }
                         is CharacterSaveResult.Rejected -> _uiState.update {
                             it.copy(
@@ -162,6 +195,7 @@ class CharacterLibraryViewModel(
     private suspend fun importShelfCharacter(bytes: ByteArray, fileName: String) {
         when (val result = characterRepository.import(bytes, fileName)) {
             is CharacterSaveResult.Saved -> {
+                loadDetailDependencies()
                 _uiState.update {
                     it.copy(
                         importing = false,
@@ -208,7 +242,7 @@ class CharacterLibraryViewModel(
     }
 
     private suspend fun importShelfPreset(bytes: ByteArray, fileName: String) {
-        when (val result = presetRepository.importPreset(bytes, fileName)) {
+        when (val result = withContext(kotlinx.coroutines.Dispatchers.IO) { presetRepository().importPreset(bytes, fileName) }) {
             is PresetLibraryImportResult.Saved -> _uiState.update {
                 it.copy(
                     importing = false,
@@ -231,6 +265,7 @@ class CharacterLibraryViewModel(
     }
 
     fun selectCharacter(characterId: String?) {
+        if (characterId != null) loadDetailDependencies()
         _uiState.update { it.copy(selectedCharacterId = characterId, message = null) }
     }
 
@@ -265,7 +300,7 @@ class CharacterLibraryViewModel(
 
     fun compileNativeAdaptation(characterId: String) {
         if (_uiState.value.busy) return
-        val service = compilationService ?: return reportMessage("自动适配尚未配置")
+        val serviceSource = compilationService ?: return reportMessage("自动适配尚未配置")
         val character = characterRepository.get(characterId) ?: return
         val connection = _uiState.value.compilationConnections.singleOrNull { it.id == _uiState.value.compilationConnectionId }
             ?: return reportMessage("请先配置并选择用于适配的模型")
@@ -273,6 +308,7 @@ class CharacterLibraryViewModel(
         compilationJob = viewModelScope.launch {
             var installed = false
             try {
+                val service = withContext(kotlinx.coroutines.Dispatchers.IO) { serviceSource() }
                 val attempt = service.compile(character, characterRepository.availableAssetIds(characterId), connection,
                     onProgress = { progress -> _uiState.update { it.copy(message = progress) } })
                 currentCoroutineContext().ensureActive()
@@ -320,20 +356,27 @@ class CharacterLibraryViewModel(
     fun createConversation(characterId: String, native: Boolean = false) {
         if (_uiState.value.busy) return
         val character = characterRepository.get(characterId) ?: return
-        val preset = presetRepository.captureActive()
         viewModelScope.launch {
             val persona = defaultPersonaSource.captureDefault()
-            runCatching { conversationRepository.create(character, persona, preset,
-                if (native) io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.LEGACY_NATIVE
-                else io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.BROWSER) }
+            runCatching {
+                val dependencies = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    conversationRepository() to presetRepository().captureActive()
+                }
+                dependencies.first.create(character, persona, dependencies.second,
+                    if (native) io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.LEGACY_NATIVE
+                    else io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.BROWSER)
+            }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "无法创建对话") } }
         }
     }
 
     fun openConversation(conversationId: String) {
-        if (conversationRepository.get(conversationId) != null) {
-            _uiState.update { it.copy(openConversationId = conversationId) }
+        viewModelScope.launch {
+            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
+            if (repository.get(conversationId) != null) {
+                _uiState.update { it.copy(openConversationId = conversationId) }
+            }
         }
     }
 
@@ -348,12 +391,12 @@ class CharacterLibraryViewModel(
 
     class Factory(
         private val characterRepository: CharacterRepository,
-        private val conversationRepository: ConversationRepository,
+        private val conversationRepository: () -> ConversationRepository,
         private val defaultPersonaSource: DefaultPersonaSource,
-        private val presetRepository: PresetRepository,
+        private val presetRepository: () -> PresetRepository,
         private val shelfTransferReceiver: ShelfTransferReceiver,
-        private val compilationService: NativeCompilationService? = null,
-        private val connectionRepository: ConnectionRepository? = null,
+        private val compilationService: (() -> NativeCompilationService)? = null,
+        private val connectionRepository: (() -> ConnectionRepository)? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
