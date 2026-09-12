@@ -25,7 +25,7 @@ class PresetImporterTest {
         assertTrue(preset.builtIn)
         assertEquals("默认", preset.name)
         assertNull(preset.generationSettings.maxContextTokens)
-        assertEquals(1_024, preset.generationSettings.maxOutputTokens)
+        assertEquals(32_768, preset.generationSettings.maxOutputTokens)
         assertTrue(preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT))
         assertFalse(preset.generationSettings.isEnabled(PresetGenerationParameter.TEMPERATURE))
         assertFalse(preset.generationSettings.isEnabled(PresetGenerationParameter.TOP_P))

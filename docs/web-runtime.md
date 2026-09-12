@@ -10,9 +10,17 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 
 `BrowserProgramReader` 直接读取角色与当前预设的 `extensions.tavern_helper` 对象或键值对数组，遍历 `scripts` 目录，保留原文、来源 JSON pointer、启用状态和 SHA-256。它不经过 Native 编译器、模型筛选或裁剪。程序语法由 Acorn 解析，解析不执行源码。
 
+角色卡缺少新容器时，也读取历史 `TavernHelper_scripts`（脚本包装项、文件夹和直接脚本项）及
+`TavernHelper_characterScriptVariables`。遵循上游迁移优先级：新容器即使为空也不与旧数据合并；
+旧脚本未声明启用状态时默认为停用，文件夹本身不提供启停。读取不重写原件，来源位置仍指向旧字段。
+
 页面和后台脚本由 WebView 执行。后台脚本归属当前对话页面，不依附滚动可见性。切换预设后，已开始的生成使用捕获配置；生成结束后撤销旧预设脚本并加载新脚本。后台脚本可以提供按钮，不提供任意扩展设置界面或完整 ST DOM。
 
 独立的 MVU 加载语句与登记的 `mvu_zod` Schema 模块由已有 QuickJS MVU 宿主处理。原加载器不再进入 WebView，避免同一回复执行两次 MVU 更新。混合 MVU 加载器与其他副作用的脚本明确停用；多份 Schema 或不能在无 DOM 宿主装载的 Schema 不自动拆分。世界书中的 EJS 原模板按来源哈希登记，使用已有只读 QuickJS EJS 引擎；触发、Regex/Macro、求值缓存与预算继续走 PromptCompiler，无需模型适配产物。
+
+已登记的 MagVarUpdate jsDelivr 加载地址同时接受无 ref 和 `@master`；2026-09-12 核实后者返回的发布文件
+与锁定提交相同，见 [C-08 依赖核查与接入验证](archive/legacy-mvu-dependency-audit-20260912.md)。
+执行仍使用随应用打包的固定 MVU，不运行期跟随 master，也不把任意 ref 视为相同版本。
 
 ## 接口范围
 

@@ -37,6 +37,7 @@
 
 ## 样本审计、实验与设备验证
 
+- [C-08 旧格式 MVU 依赖核查（2026-09-12）](legacy-mvu-dependency-audit-20260912.md)
 - [模拟器聊天实测与修复（2026-09-12）](device-chat-verification-20260912.md)
 - [角色库修复收尾与实测续接（2026-09-12）](library-startup-resume-20260912.md)
 - [设备与真实 Provider 验证（2026-09-10）](device-live-verification-20260910.md)

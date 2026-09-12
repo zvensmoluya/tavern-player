@@ -15,7 +15,7 @@ object BuiltInPresets {
             promptOrder = defaultPromptOrder(),
             generationSettings = PresetGenerationSettings(
                 maxContextTokens = null,
-                maxOutputTokens = 1_024,
+                maxOutputTokens = 32_768,
                 temperature = 1.0,
                 topP = 1.0,
                 topK = 0,

@@ -52,7 +52,7 @@ class PresetScreenTest {
 
         compose.onNodeWithTag("preset-custom").assertIsDisplayed().performClick()
         compose.onNodeWithText("使用中").assertIsDisplayed()
-        compose.onNodeWithText("4 个快速项 · 1 Regex · 回复 1024").assertIsDisplayed()
+        compose.onNodeWithText("4 个快速项 · 1 Regex · 回复 32768").assertIsDisplayed()
         assertEquals("custom", opened)
     }
 
@@ -182,7 +182,7 @@ class PresetScreenTest {
         compose.onNodeWithTag("parameter-enabled-output_limit").performClick()
 
         assertFalse(state.draft!!.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT))
-        compose.onNodeWithText("已关闭 · 保留值 1024").assertIsDisplayed()
+        compose.onNodeWithText("已关闭 · 保留值 32768").assertIsDisplayed()
     }
 
     @Test

@@ -24,7 +24,8 @@ export function cssResources(source, replacements = {}) {
   return JSON.stringify({ urls, text: root.toString() });
 }
 
-const loader = /^https:\/\/(?:cdn|testingcf|fastly)\.jsdelivr\.net\/gh\/MagicalAstrogy\/MagVarUpdate\/artifact\/bundle\.js$/;
+// @master was audited against our pinned MVU source; arbitrary refs are not equivalent.
+const loader = /^https:\/\/(?:cdn|testingcf|fastly)\.jsdelivr\.net\/gh\/MagicalAstrogy\/MagVarUpdate(?:@master)?\/artifact\/bundle\.js$/;
 const schemaHelper = /^https:\/\/(?:cdn|testingcf)\.jsdelivr\.net\/gh\/StageDog\/tavern_resource\/dist\/util\/mvu_zod\.js$/;
 
 export function inspect(source) {

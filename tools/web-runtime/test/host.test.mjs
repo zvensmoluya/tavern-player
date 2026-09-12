@@ -151,6 +151,10 @@ test('once and removal apply before reentrant delivery', async () => {
 test('only an exact dependency-only loader can be consumed by QuickJS', () => {
   const loader = "import 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js';";
   assert.equal(inspect(loader), 'mvu-loader');
+  const legacyLoader = loader.replace('MagVarUpdate/', 'MagVarUpdate@master/');
+  assert.equal(inspect(legacyLoader), 'mvu-loader');
+  assert.throws(() => inspect(legacyLoader + 'window.counter++'), /cannot be split/);
+  assert.equal(inspect(legacyLoader.replace('@master', '@unknown-version')), 'browser');
   assert.throws(() => inspect(loader + 'window.counter++'), /cannot be split/);
   assert.equal(inspect("const source = " + JSON.stringify(loader)), 'browser');
   assert.equal(inspect("import {registerMvuSchema} from 'https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js'; registerMvuSchema(z.object({}));"), 'mvu-schema');

@@ -17,6 +17,44 @@ class BrowserProgramPreparerTest {
     @get:Rule val folder = TemporaryFolder()
     private val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))
     private val preparer = BrowserProgramPreparer { File(System.getProperty("webRuntimeAssets"), "programs.js").readText() }
+    @Test fun legacyOriginalInitializesAndUpdatesThroughThePinnedMvuHost() = runBlocking {
+        val hash = "5191b0bcb615e2abe1fa6fef20212e64d6df483f0f453dc929d4bf15d3ef07d4"
+        val source = assets.toPath().resolve("../../../..").normalize().resolve("source").toFile()
+        val original = source.listFiles().orEmpty().firstOrNull { file ->
+            file.isFile && file.extension == "png" && java.security.MessageDigest.getInstance("SHA-256")
+                .digest(file.readBytes()).joinToString("") { "%02x".format(it) } == hash
+        }
+        assumeTrue("Optional C-08 original is unavailable", original != null)
+        val card = (CharacterCardImporter().import(original!!.readBytes(), "sample.png") as CharacterImportResult.Ready).character
+        val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
+        val root = folder.newFolder()
+        val repository = ConversationRepository(root, PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
+        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+        val program = requireNotNull(record.character.browserProgram)
+        assertEquals(1, program.sources.size)
+        assertEquals(setOf(program.sources.single().id), program.mvuSourceIds)
+        assertTrue(program.blockedSourceIds.isEmpty())
+        assertTrue(program.sources.single().pointer.contains("TavernHelper_scripts/0/value/content"))
+        fun day(state: ConversationRuntimeState) = state.mvuState!!.data.getValue("stat_data").jsonObject
+            .getValue("世界").jsonObject.getValue("日期").jsonArray[0].jsonPrimitive.int
+        assertEquals(1, day(record.runtimeState))
+        val evaluation = requireNotNull(runtime.update(record.character,
+            "A quiet day passes.\n<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>", record.runtimeState, persona = record.persona))
+        assertTrue(evaluation.diagnostics.toString(), evaluation.diagnostics.none { it.level == "error" })
+        val next = evaluation.messages.single().applyTo(record.runtimeState)
+        assertEquals(2, day(next))
+        assertEquals(1, day(record.runtimeState))
+        val saved = repository.save(BrowserConversation.withRuntime(record, next))
+        val restored = Json.decodeFromString<ConversationRecord>(Json.encodeToString(ConversationRecord.serializer(), saved))
+        runtime.validateCheckpoint(restored.character, restored.runtimeState)
+        assertEquals(next.mvuState, restored.runtimeState.mvuState)
+        val ejs = QuickJsEjsRuntime(loadBundle = { File(assets.parentFile, "app-assets/ejs/runtime.js").readText() })
+        val input = NormalGenerationInput(record.character, record.persona,
+            record.turns.map { it.selected.message } + ConversationMessage("u", MessageRole.USER, "Continue.", "User"),
+            BuiltInPresets.default, runtimeState = next, modelContextTokens = 131072)
+        val compiled = ejs.compile(PromptCompiler(), input, mutableMapOf())
+        assertTrue("Following prompt must compile: $compiled", compiled is CompilationResult.Success)
+    }
     @Test fun localComplexOriginalsPrepareCompileAndAcceptACompletedReply() = runBlocking {
         val hashes = setOf(
             "7df0b58b2a46ac9ae2169c45f715a58760ebdad63017c5a860222d808beabe32",

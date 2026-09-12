@@ -65,7 +65,7 @@ app ───────────────> model-gateway
 
 完整当前对象保存在 `PresetAsset.source`，不可变恢复点由 `PresetAsset.initialState` 保存完整初始 source；恢复设置时保留当前资产名称。未知字段、Provider / 模型选择、endpoint、自定义 headers/body 和凭据形字段都是惰性内容：可以落盘和重新导出，但不会自动改变 Player 连接、发起网络请求或获得脚本执行权。`PresetExporter` 把编辑后的正式字段合并回完整 current source；内容指纹基于合并后的规范化 JSON。
 
-`BuiltInPresets.default` 是内置恢复基线：ST 默认 Prompt 骨架、中性 main prompt、无额外文风限制、context 不设人为上限、回复上限 1024。仓库可以持久化同 ID 的当前调整版本，但删除和恢复基线仍由代码内置版本约束。
+`BuiltInPresets.default` 是内置恢复基线：ST 默认 Prompt 骨架、中性 main prompt、无额外文风限制、context 不设人为上限、回复上限 32768。为完整正文、思考及变量更新保留充足输出空间，不用过低预算作为常规聊天或实测配置。仓库可以持久化同 ID 的当前调整版本，但删除和恢复基线仍由代码内置版本约束；已有保存的预设参数保留，需调整回复上限或恢复默认基线才使用新值。
 
 `PresetGenerationSettings.disabledParameters` 保存请求控制的显式拔插状态。关闭不会清空最后编辑值；导出会移除对应 ST 顶层字段，重新导入时也由字段是否存在恢复开关。内置默认只开启回复上限，避免无意义的 sampler 默认值进入不同 Provider。
 
