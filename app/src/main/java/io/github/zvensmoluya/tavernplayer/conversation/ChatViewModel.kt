@@ -100,6 +100,8 @@ data class ChatUiState(
     val conversationId: String? = null,
     val character: CharacterSnapshot = EMPTY_CHARACTER,
     val worldBookState: ConversationWorldBookState = ConversationWorldBookState(),
+    val worldBookSaving: Boolean = false,
+    val worldBookMessage: String? = null,
     val persona: Persona = Persona("traveler", "旅人"),
     val messages: List<ChatMessageState> = emptyList(),
     val input: String = "",
@@ -128,7 +130,7 @@ data class ChatUiState(
     val nativeScenes: List<NativeSceneView> = emptyList(),
     val nativeCollections: List<NativeCollectionView> = emptyList(),
 ) {
-    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || nativeActionRunning || loadingConversation || browserOperationRunning
+    val busy: Boolean get() = running || setupSaving || choiceSaving || memorySaving || worldBookSaving || nativeActionRunning || loadingConversation || browserOperationRunning
     val openingChoices: List<NativeOpeningChoice> get() {
         val opening = messages.singleOrNull()?.takeIf { !it.setupClosed } ?: return emptyList()
         return character.nativeAdaptation?.forms.orEmpty().mapNotNull { form ->
@@ -286,47 +288,39 @@ class ChatViewModel(
     }
 
     /**
-     * 会话内世界书操作：书级三态、条目启停、正文改写与恢复。
+     * 玩家对单项世界书的使用方式与正文调整，单独保存到本对话。
      *
      * 结果落在会话级的 `worldBookState` 上——不改角色资产，也不随消息候选回退。
      * 一次保存成功后才发布，失败保留原状态并给出提示。
      */
-    fun setWorldBookMode(bookId: String, mode: WorldBookBookMode) = commitWorldBook {
-        ConversationWorldBookEditor.setBookMode(it, bookId, mode)
+    fun setWorldBookEntryMode(bookId: String, entryId: String, mode: WorldBookEntryMode?) = commitWorldBook {
+        ConversationWorldBookController.setMode(it, bookId, entryId, mode)
     }
 
-    fun setWorldBookEntryEnabled(bookId: String, entryId: String, enabled: Boolean) = commitWorldBook {
-        ConversationWorldBookEditor.setEntryEnabled(it, bookId, entryId, enabled)
+    fun setWorldBookEntryContent(bookId: String, entryId: String, content: String, onSaved: () -> Unit = {}) = commitWorldBook(onSaved) {
+        ConversationWorldBookController.setContent(it, bookId, entryId, content)
     }
 
-    fun setWorldBookEntryContent(bookId: String, entryId: String, content: String) = commitWorldBook {
-        ConversationWorldBookEditor.setEntryContent(it, bookId, entryId, content)
-    }
-
-    fun restoreWorldBookContent(bookId: String, entryId: String? = null) = commitWorldBook {
-        ConversationWorldBookEditor.restoreContent(it, bookId, entryId)
-    }
-
-    /** 清除这场对话的全部世界书调整，回到原卡默认。 */
-    fun resetWorldBookState() = commitWorldBook { ConversationWorldBookEditor.reset(it) }
-
-    private fun commitWorldBook(edit: (ConversationRecord) -> ConversationRecord) {
-        if (_uiState.value.busy) return
+    private fun commitWorldBook(onSaved: () -> Unit = {}, edit: (ConversationRecord) -> ConversationRecord) {
+        if (_uiState.value.busy || _uiState.value.browserGenerating) return
         val proposed = try {
             edit(record)
         } catch (error: Exception) {
-            _uiState.update { it.copy(message = "世界书设置失败：${error.userMessage()}") }
+            _uiState.update { it.copy(worldBookMessage = error.message ?: "世界书调整失败") }
             return
         }
-        if (proposed == record) return
+        if (proposed == record) { onSaved(); return }
+        _uiState.update { it.copy(worldBookSaving = true, worldBookMessage = null) }
         viewModelScope.launch {
             try {
                 record = conversationRepository?.save(proposed) ?: proposed
-                _uiState.update { it.copy(message = null) }
                 syncRecord()
-                refreshNativeSurfaces()
+                onSaved()
             } catch (error: Exception) {
-                _uiState.update { it.copy(message = "世界书设置未能保存：${error.userMessage()}") }
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                _uiState.update { it.copy(worldBookMessage = "世界书调整未能保存，请重试") }
+            } finally {
+                _uiState.update { it.copy(worldBookSaving = false) }
             }
         }
     }
@@ -1025,6 +1019,7 @@ class ChatViewModel(
             if (input.isNotBlank()) history = history + ConversationMessage(idGenerator(), MessageRole.USER, input, record.persona.name)
             val compiled = ejsRuntime.compile(compiler, NormalGenerationInput(
                 character = record.character, persona = record.persona, history = history, preset = preset,
+                worldBookState = record.worldBookState,
                 runtimeState = record.runtimeState, conversationId = record.id, generationId = browserGenerationId.orEmpty(),
                 modelId = connection.selectedModel, modelContextTokens = limits.contextTokens?.toIntSafe(),
                 modelOutputTokens = limits.outputTokens?.toIntSafe(),
@@ -1142,6 +1137,7 @@ class ChatViewModel(
         val lastVisibleTurn = record.turns.lastOrNull()
         val baseInput = NormalGenerationInput(
             character = record.character,
+            worldBookState = record.worldBookState,
             persona = record.persona,
             history = history,
             preset = preset,
@@ -1736,6 +1732,7 @@ class ChatViewModel(
             displayReasoning = displayReasoningCache,
         ).copy(loadingConversation = current.loadingConversation, choicePreview = current.choicePreview, choiceSaving = current.choiceSaving,
             memorySaving = current.memorySaving, nativeActionRunning = current.nativeActionRunning,
+            worldBookSaving = current.worldBookSaving, worldBookMessage = current.worldBookMessage,
             nativeSurfaces = current.nativeSurfaces, nativeSurfaceError = current.nativeSurfaceError,
             browserOperationRunning = current.browserOperationRunning, browserGenerating = current.browserGenerating, browserGeneration = current.browserGeneration)
         refreshNativeSurfaces()

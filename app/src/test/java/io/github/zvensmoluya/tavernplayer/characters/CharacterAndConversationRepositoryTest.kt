@@ -278,6 +278,8 @@ class CharacterAndConversationRepositoryTest {
                     ),
                     forcedBooks = setOf("book"),
                     editedContent = mapOf("entry" to "original lore"),
+                    playerOverrides = mapOf("book" to mapOf("entry" to io.github.zvensmoluya.tavernplayer.conversation.WorldBookEntryOverride(
+                        mode = io.github.zvensmoluya.tavernplayer.conversation.WorldBookEntryMode.FORCED, content = "player lore"))),
                 ),
             ),
         )
@@ -297,6 +299,8 @@ class CharacterAndConversationRepositoryTest {
         assertEquals(true, loaded.worldBookState.activation.entries["book"]?.get("entry"))
         assertEquals(setOf("book"), loaded.worldBookState.forcedBooks)
         assertEquals(mapOf("entry" to "original lore"), loaded.worldBookState.editedContent)
+        assertEquals("player lore", loaded.worldBookState.playerOverrides["book"]?.get("entry")?.content)
+        assertEquals(io.github.zvensmoluya.tavernplayer.conversation.WorldBookEntryMode.FORCED, loaded.worldBookState.playerOverrides["book"]?.get("entry")?.mode)
         assertEquals(JsonPrimitive(30), loaded.runtimeState.conversationState.values["affection"])
         assertEquals("lore", loaded.character.worldBooks.single().entries.single().content)
         assertEquals("regex", loaded.character.regexScripts.single().id)

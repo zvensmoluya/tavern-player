@@ -53,6 +53,20 @@ class ChatScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Test fun `world book opens as a full reader during generation and returns to chat`() {
+        val screen = state().copy(running = true, character = state().character.copy(worldBooks = listOf(
+            WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", comment = "中性内容", content = "阅读正文"))))))
+        compose.setContent { TavernPlayerTheme { ChatScreen(state = screen, actions = actions()) } }
+        compose.onNodeWithTag("openWorldBook").performClick()
+        compose.onNodeWithTag("worldBookEntry-0-0").performClick()
+        compose.onNodeWithTag("worldBookText-0").assertTextEquals("阅读正文")
+        compose.onNodeWithTag("worldBookUsage").assertIsNotEnabled()
+        compose.onNodeWithTag("worldBookBack").performClick()
+        compose.onNodeWithTag("worldBookEntry-0-0").assertIsDisplayed()
+        compose.onNodeWithTag("worldBookBack").performClick()
+        compose.onNodeWithTag("openWorldBook").assertIsDisplayed()
+    }
+
     @Test fun `historical status reads the chosen message snapshot rather than current state`() {
         val older = ChatMessageState(message = message(id = "past", content = "昨日抵达。"), nativeStateAfter = io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(mapOf("day" to JsonPrimitive(2))))
         val later = ChatMessageState(message = message(id = "now", content = "今天启程。"), nativeStateAfter = io.github.zvensmoluya.tavernplayer.content.PlayerStateReader(mapOf("day" to JsonPrimitive(5))))

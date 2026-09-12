@@ -71,7 +71,7 @@ class NativeMemoryControllerTest {
         val committed = NativeMemoryController.commit(checkNotNull(NativeMemoryController.prepare(record, definition.id)), record, literal, "model")
         val result = PromptCompiler().compile(NormalGenerationInput(character = character.snapshot(), persona = record.persona,
             history = record.turns.map { it.selected.message }, preset = BuiltInPresets.default, runtimeState = committed.runtimeState,
-            conversationId = "r", generationId = "g", modelId = "test", modelContextTokens = 32768))
+            conversationId = "r", generationId = "g", modelId = "test", modelContextTokens = 32768, modelOutputTokens = 512))
         assertTrue(result.toString(), result is CompilationResult.Success)
         val plan = (result as CompilationResult.Success).plan
         val text = plan.messages.joinToString("\n") { it.content }

@@ -129,22 +129,24 @@ data class ConversationWorldBookState(
     val forcedBooks: Set<String> = emptySet(),
     /** 被改写过正文的条目 id → 改写前的原文，用于标明"已改过"并提供恢复。 */
     val editedContent: Map<String, String> = emptyMap(),
+    /** 玩家手动调整独立于作者程序；不修改角色资产或会话中的作者原文。 */
+    val playerOverrides: Map<String, Map<String, WorldBookEntryOverride>> = emptyMap(),
 ) {
-    /** 书级三态由 `books` 与 `forcedBooks` 组合表达，这里给出统一读法。 */
-    fun modeOf(bookId: String): WorldBookBookMode = when {
-        bookId in forcedBooks -> WorldBookBookMode.FORCED
-        !activation.isBookEnabled(bookId) -> WorldBookBookMode.DISABLED
-        else -> WorldBookBookMode.AUTO
-    }
-
     fun isEdited(entryId: String): Boolean = entryId in editedContent
 
     fun hasChanges(): Boolean = forcedBooks.isNotEmpty() || activation.books.isNotEmpty() ||
-        activation.entries.values.any { it.isNotEmpty() } || editedContent.isNotEmpty()
+        activation.entries.values.any { it.isNotEmpty() } || editedContent.isNotEmpty() || playerOverrides.isNotEmpty()
 }
 
-/** 一条世界书在会话内的参与方式。 */
-enum class WorldBookBookMode { DISABLED, AUTO, FORCED }
+@Serializable
+enum class WorldBookEntryMode { DISABLED, AUTO, FORCED }
+
+@Serializable
+data class WorldBookEntryOverride(
+    val mode: WorldBookEntryMode? = null,
+    /** null 为使用作者内容；空字符串是玩家明确清空正文。 */
+    val content: String? = null,
+)
 
 @Serializable
 data class ConversationStateSnapshot(
@@ -232,6 +234,8 @@ data class PreparedMessage(
     val authorName: String? = null,
     val reasoning: List<ReasoningBlock> = emptyList(),
     val adapterId: String? = null,
+    /** 玩家要求始终注入的内容不能在最终上下文预算中被裁掉。 */
+    val required: Boolean = false,
 )
 
 @Serializable
@@ -284,8 +288,13 @@ data class GenerationPlan(
     val runtimeState: ConversationRuntimeState = ConversationRuntimeState(),
     val tokenAccounting: TokenAccountingReport? = null,
     val activatedWorldBookEntries: List<String> = emptyList(),
+    /** 基于最终请求正文核对的内容；null 表示旧记录没有这项证据。 */
+    val worldBookInjections: Map<String, Map<String, WorldBookInjectionStatus>>? = null,
     @Transient val nativeAdaptation: NativeAdaptation? = null,
 )
+
+@Serializable
+enum class WorldBookInjectionStatus { INCLUDED, NOT_INCLUDED, UNCONFIRMED }
 
 sealed interface CompilationResult {
     data class Success(val plan: GenerationPlan) : CompilationResult

@@ -20,7 +20,7 @@ class EjsPromptIntegrationTest {
             preset = BuiltInPresets.default,
             runtimeState = ConversationRuntimeState(mvuState = MvuStateSnapshot(hash, hash,
                 buildJsonObject { putJsonObject("stat_data") { put("score", 2) } })),
-            modelContextTokens = 32768, generationId = "ejs-test",
+            modelContextTokens = 32768, modelOutputTokens = 512, generationId = "ejs-test",
         )
     }
 

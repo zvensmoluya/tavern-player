@@ -531,6 +531,9 @@ internal object BrowserWorldBook {
             ),
             forcedBooks = record.worldBookState.forcedBooks.filter { it !in managed || it in liveBooks }.toSet(),
             editedContent = editedContent.toMap(),
+            playerOverrides = record.worldBookState.playerOverrides.filterKeys { it in liveBooks }
+                .mapValues { (bookId, entries) -> entries.filterKeys { it in liveEntries[bookId].orEmpty() } }
+                .filterValues { it.isNotEmpty() },
         )
         // 剧情派生状态：只回收这场对话自己管理的书的跨轮计时。
         val runtime = record.runtimeState.copy(

@@ -384,12 +384,12 @@ class PromptCompiler(
         val declaredTemplates = input.character.ejsProgramTemplates
         val staleTemplates = declaredTemplates.filterNot { ref ->
             input.character.worldBooks.find { it.id == ref.bookId }?.entries?.find { it.id == ref.entryId }
-                ?.let { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.sha256(it.content) == ref.sourceContentSha256 } == true
+                ?.let { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.sha256(input.worldBookState.entryContent(ref.bookId, it)) == ref.sourceContentSha256 } == true
         }
         staleTemplates.forEach { ref ->
             val entry = input.character.worldBooks.find { it.id == ref.bookId }?.entries?.find { it.id == ref.entryId }
             // 内容仍是模板时既不执行也不注入源码；作者把它改成普通文字后，按普通条目正常参与编排。
-            val message = if (entry?.content?.contains("<%") == true)
+            val message = if (entry?.let { input.worldBookState.entryContent(ref.bookId, it).contains("<%") } == true)
                 "世界书条目内容已变化，已跳过它的 EJS 模板注入"
             else "世界书条目内容已变化，不再作为模板执行，按普通文本参与"
             diagnostics += warning("STALE_EJS_TEMPLATE", message, ref.entryId)
@@ -423,9 +423,9 @@ class PromptCompiler(
         val ejsLiterals = linkedMapOf<String, String>()
         val ejsBlocks = Regex("<%[\\s\\S]*?%>")
         val activation = worldBookEngine.activate(
-            books = if (memoryEntries.isEmpty()) worldBookText.books else listOf(
+            books = if (memoryEntries.isEmpty()) input.worldBookState.projectContent(worldBookText.books) else listOf(
                 io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition(NativeMemoryController.BOOK_ID, entries = memoryEntries)
-            ) + worldBookText.books,
+            ) + input.worldBookState.projectContent(worldBookText.books),
             characterScan = characterScan,
             additionalScanText = memoryEntries.joinToString("\n") { it.content },
             projectedHistory = projectedHistory.map { message ->
@@ -440,8 +440,9 @@ class PromptCompiler(
             macroContext = baseContext,
             transaction = transaction,
             previousState = input.runtimeState.worldBookEntries,
-            activationOverrides = input.worldBookState.activation,
+            activationOverrides = input.worldBookState.effectiveActivation(input.character.worldBooks),
             forcedBooks = input.worldBookState.forcedBooks,
+            forcedEntries = input.worldBookState.forcedEntries(),
             turnIndex = input.runtimeState.generationIndex,
             messageCount = input.history.size,
             inputBudgetTokens = contextLimit?.let { (it - outputLimit).coerceAtLeast(0) },
@@ -484,7 +485,18 @@ class PromptCompiler(
             sourceIds = activation.activatedEntryIds,
             decision = "used=${activation.usedBudgetTokens} budget=${activation.budgetTokens ?: "undeclared"}",
         )
-        val outlets = activation.injections.filter { it.position == WorldBookPosition.OUTLET }
+        // 强制内容先沿原位置编排，但不再被后续 Macro 当作程序处理。
+        // 即使预设关闭了目标 marker / outlet，也补入必选消息，不能静默丢失。
+        val requiredPrefix = "\uE000required-world-${java.util.UUID.randomUUID()}-"
+        val requiredInjections = linkedMapOf<String, WorldBookInjection>()
+        val injections = activation.injections.map { injection ->
+            if (!injection.required) injection else {
+                val marker = "$requiredPrefix${requiredInjections.size}\uE001"
+                requiredInjections[marker] = injection
+                injection.copy(content = marker)
+            }
+        }
+        val outlets = injections.filter { it.position == WorldBookPosition.OUTLET }
             .filter { it.outletName.isNotBlank() }
             .groupBy(WorldBookInjection::outletName)
             .mapValues { (_, injections) -> injections.joinToString("\n") { it.content } }
@@ -508,7 +520,7 @@ class PromptCompiler(
                     prompt,
                     enabledIds,
                     input,
-                    activation.injections,
+                    injections,
                     macroContext,
                     transaction,
                     diagnostics,
@@ -516,7 +528,7 @@ class PromptCompiler(
                 )?.let { ordinary ->
                     resolved += ordinary
                     if (prompt.identifier == WORLD_INFO_BEFORE_MARKER) {
-                        activation.injections.filter { it.literal }.forEach { memory ->
+                        injections.filter { it.literal }.forEach { memory ->
                             resolved += ResolvedPrompt(
                                 definition = prompt.copy(identifier = "native-memory-${memory.entryIds.joinToString("-")}"),
                                 content = memory.content,
@@ -543,7 +555,7 @@ class PromptCompiler(
                 content = expanded.text,
             )
         }
-        activation.injections.filter { it.position in DEPTH_POSITIONS }.forEach { injection ->
+        injections.filter { it.position in DEPTH_POSITIONS }.forEach { injection ->
             resolved += ResolvedPrompt(
                 definition = PromptDefinition(
                     identifier = "world-depth-${injection.entryIds.joinToString("-")}",
@@ -562,7 +574,7 @@ class PromptCompiler(
         }
         if (diagnostics.hasErrors()) return CompilationResult.Failure(diagnostics, trace)
 
-        val examples = projectExamples(input, activation.injections, macroContext, transaction, diagnostics, trace)
+        val examples = projectExamples(input, injections, macroContext, transaction, diagnostics, trace)
         val absolute = resolved.filter { it.definition.injectionPosition == InjectionPosition.ABSOLUTE }
         val injectedHistory = injectAbsolute(projectedHistory, absolute, trace)
         val historyCollection = buildList {
@@ -645,14 +657,31 @@ class PromptCompiler(
                 content = content,
             )
         }
+        compiled.indices.forEach { index ->
+            val message = compiled[index]
+            val requiredIds = requiredInjections.filterKeys { it in message.content }.values.flatMap { it.entryIds }
+            if (requiredIds.isNotEmpty()) compiled[index] = message.copy(required = true,
+                origin = message.origin.copy(sourceIds = (message.origin.sourceIds + requiredIds).distinct()))
+        }
+        val missingRequired = requiredInjections.filterKeys { marker -> compiled.none { marker in it.content } }
+        if (missingRequired.isNotEmpty()) {
+            val index = compiled.indexOfFirst { it.origin.stage == "chat-history" }.takeIf { it >= 0 } ?: compiled.size
+            compiled.addAll(index, missingRequired.map { (marker, injection) ->
+                trace += CompilationTraceEntry("world-book-required", injection.entryIds,
+                    "original slot absent; inserted required content before history")
+                PreparedMessage(injection.role, marker, PromptOrigin("world-book", injection.entryIds), required = true)
+            })
+        }
         val literalPattern = Regex(Regex.escape(ejsLiteralPrefix) + "[0-9]+\uE001")
         fun restoreEjs(text: String): String = literalPattern.replace(text) { ejsLiterals.getValue(it.value) }
-        val literalCompiled = compiled.map { it.copy(content = restoreEjs(it.content)) }
+        val requiredPattern = Regex(Regex.escape(requiredPrefix) + "[0-9]+\uE001")
+        fun restoreContent(text: String): String = restoreEjs(requiredPattern.replace(text) { requiredInjections.getValue(it.value).content })
+        val literalCompiled = compiled.map { it.copy(content = restoreContent(it.content)) }
         val preparedForTransport = applyNamesBehavior(literalCompiled, input.preset.controlSettings.namesBehavior, trace)
             .let { messages ->
                 if (input.preset.controlSettings.squashSystemMessages) squashSystemMessages(messages, trace) else messages
             }
-        val prefill = restoreEjs(expand(
+        val prefill = restoreContent(expand(
             input.preset.controlSettings.assistantPrefill,
             ASSISTANT_PREFILL_SOURCE,
             macroContext,
@@ -722,10 +751,21 @@ class PromptCompiler(
                 presetContentSha256 = input.preset.contentSha256,
                 generationSettings = input.preset.generationSettings.copy(),
                 diagnostics = diagnostics.distinctBy { Triple(it.code, it.sourceId, it.message) },
-                trace = trace.map { it.copy(content = it.content?.let(::restoreEjs)) },
+                trace = trace.map { it.copy(content = it.content?.let(::restoreContent)) },
                 runtimeState = nextRuntime,
                 tokenAccounting = budget.report,
                 activatedWorldBookEntries = activation.activatedEntryIds,
+                worldBookInjections = input.character.worldBooks.associate { book -> book.id to book.entries.associate { entry ->
+                    val text = activation.entryTexts.find { it.bookId == book.id && it.entryId == entry.id }?.content?.let(::restoreEjs)
+                    val candidates = if (entry.position == WorldBookPosition.OUTLET) budget.messages.filter { it.origin.stage != "chat-history" }
+                        else budget.messages.filter { entry.id in it.origin.sourceIds }
+                    entry.id to when {
+                        text.isNullOrBlank() -> WorldBookInjectionStatus.NOT_INCLUDED
+                        candidates.any { text in it.content } -> WorldBookInjectionStatus.INCLUDED
+                        candidates.isEmpty() && entry.position != WorldBookPosition.OUTLET -> WorldBookInjectionStatus.NOT_INCLUDED
+                        else -> WorldBookInjectionStatus.UNCONFIRMED
+                    }
+                } },
                 nativeAdaptation = input.character.nativeAdaptation,
             ),
         )
@@ -1103,6 +1143,7 @@ class PromptCompiler(
         val previous = result.lastOrNull()
         if (previous?.role == MessageRole.SYSTEM && message.role == MessageRole.SYSTEM) {
             result[result.lastIndex] = previous.copy(
+                required = previous.required || message.required,
                 content = listOf(previous.content, message.content).filter(String::isNotBlank).joinToString("\n\n"),
                 origin = PromptOrigin(
                     stage = "system-squash",

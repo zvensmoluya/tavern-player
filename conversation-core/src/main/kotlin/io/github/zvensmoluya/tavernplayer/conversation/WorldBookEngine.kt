@@ -46,7 +46,10 @@ data class WorldBookInjection(
     val content: String,
     val entryIds: List<String>,
     val literal: Boolean = false,
+    val required: Boolean = false,
 )
+
+data class WorldBookEntryText(val bookId: String, val entryId: String, val content: String)
 
 data class WorldBookActivationResult(
     val injections: List<WorldBookInjection>,
@@ -56,6 +59,7 @@ data class WorldBookActivationResult(
     val trace: List<CompilationTraceEntry>,
     val usedBudgetTokens: Int,
     val budgetTokens: Int?,
+    val entryTexts: List<WorldBookEntryText> = emptyList(),
 )
 
 class WorldBookEngine(
@@ -75,6 +79,7 @@ class WorldBookEngine(
         previousState: Map<String, WorldBookEntryRuntimeState>,
         activationOverrides: WorldBookActivationOverrides = WorldBookActivationOverrides(),
         forcedBooks: Set<String> = emptySet(),
+        forcedEntries: Map<String, Set<String>> = emptyMap(),
         turnIndex: Int,
         inputBudgetTokens: Int?,
         messageCount: Int = projectedHistory.size,
@@ -94,6 +99,7 @@ class WorldBookEngine(
         val activated = mutableListOf<WorldBookEntryDefinition>()
 
         val preparedContent = java.util.IdentityHashMap<WorldBookEntryDefinition, String>()
+        val sourceBooks = java.util.IdentityHashMap<WorldBookEntryDefinition, String>()
         books.forEach { book ->
             activationOverrides.books[book.id]?.let { enabled ->
                 trace += CompilationTraceEntry(
@@ -102,7 +108,7 @@ class WorldBookEngine(
                     decision = "book ${if (enabled) "enabled" else "disabled"} by conversation override",
                 )
             }
-            if (!activationOverrides.isBookEnabled(book.id)) {
+            if (!activationOverrides.isBookEnabled(book.id) && forcedEntries[book.id].isNullOrEmpty()) {
                 return@forEach
             }
             val bookBudget = (book.tokenBudget ?: remainingGlobal).coerceAtMost(remainingGlobal).coerceAtLeast(0)
@@ -120,6 +126,7 @@ class WorldBookEngine(
                 trace,
                 activationOverrides,
                 forcedBooks,
+                forcedEntries[book.id].orEmpty(),
                 hasBudgetOverflowed = { budgetOverflowed },
             ) { originalEntry ->
                 val preparationTransaction = transaction.fork()
@@ -130,8 +137,10 @@ class WorldBookEngine(
                     }.text
                 }
                 val entry = originalEntry.copy(content = content)
+                sourceBooks[entry] = book.id
                 val cost = estimateTokens(entry.content, macroContext.modelId)
-                if (entry.ignoreBudget || cost <= remainingBook) {
+                val required = entry.id in forcedEntries[book.id].orEmpty()
+                if (required || entry.ignoreBudget || cost <= remainingBook) {
                     transaction.commitFrom(preparationTransaction)
                     if (prepared != null) {
                         preparedContent[entry] = prepared.promptText
@@ -184,8 +193,13 @@ class WorldBookEngine(
             diagnostics += regexed.diagnostics
             regexed.text.takeIf(String::isNotBlank)?.let { entry to it }
         }
+        fun required(entry: WorldBookEntryDefinition): Boolean = entry.id in forcedEntries[sourceBooks[entry]].orEmpty()
+        activated.filter(::required).filter { target -> evaluated.none { it.first === target && it.second.isNotBlank() } }.forEach { entry ->
+            diagnostics += CompilationDiagnostic(DiagnosticSeverity.ERROR, "FORCED_WORLD_BOOK_EMPTY",
+                "“${entry.comment.ifBlank { entry.name }.ifBlank { "世界书内容" }}”设为始终注入，但处理后没有正文；请恢复内容或修改使用方式", entry.id)
+        }
         val injections = evaluated
-            .groupBy { (entry, _) -> InjectionKey(entry.position, entry.depth, entry.role, entry.outletName, entry.id in literalEntryIds) }
+            .groupBy { (entry, _) -> InjectionKey(entry.position, entry.depth, entry.role, entry.outletName, entry.id in literalEntryIds, required(entry)) }
             .map { (key, values) ->
                 WorldBookInjection(
                     position = key.position,
@@ -195,6 +209,7 @@ class WorldBookEngine(
                     content = values.sortedBy { it.first.insertionOrder }.joinToString("\n") { it.second },
                     entryIds = values.map { it.first.id },
                     literal = key.literal,
+                    required = key.required,
                 )
             }
 
@@ -206,6 +221,7 @@ class WorldBookEngine(
             trace = trace,
             usedBudgetTokens = accountingBudget - remainingGlobal,
             budgetTokens = globalBudget,
+            entryTexts = evaluated.map { (entry, text) -> WorldBookEntryText(sourceBooks.getValue(entry), entry.id, text) },
         )
     }
 
@@ -221,6 +237,7 @@ class WorldBookEngine(
         trace: MutableList<CompilationTraceEntry>,
         activationOverrides: WorldBookActivationOverrides,
         forcedBooks: Set<String>,
+        forcedEntries: Set<String>,
         hasBudgetOverflowed: () -> Boolean,
         acceptEntry: (WorldBookEntryDefinition) -> String?,
     ) {
@@ -243,6 +260,8 @@ class WorldBookEngine(
                         decision = "entry ${if (entryOverride) "enabled" else "disabled"} by conversation override",
                     )
                 }
+                // 手动“始终注入”本身就启用这项内容，作者默认停用也不能拦截。
+                if (entry.id in forcedEntries) return@filter true
                 if (!activationOverrides.isEntryEnabled(book.id, entry.id, entry.enabled)) {
                     if (recursion == 0 && entryOverride == null) {
                         trace += CompilationTraceEntry(
@@ -283,15 +302,20 @@ class WorldBookEngine(
                 compareByDescending<WorldBookEntryDefinition> { it.id in stickyIds }
                     .thenByDescending { it.priority ?: it.insertionOrder },
             )
-            val grouped = selectGroups(BookActivationCandidates(ordered, scores), stickyIds, result.values, transaction, trace)
+            val required = ordered.filter { it.id in forcedEntries }
+            val requiredGroups = required.flatMap { it.group.split(GROUP_SEPARATOR).map(String::trim).filter(String::isNotEmpty) }.toSet()
+            val automatic = ordered.filter { entry ->
+                entry.id !in forcedEntries && entry.group.split(GROUP_SEPARATOR).map(String::trim).none { it in requiredGroups }
+            }
+            val grouped = required + selectGroups(BookActivationCandidates(automatic, scores), stickyIds, result.values, transaction, trace)
             val recursiveTexts = mutableListOf<String>()
             grouped.forEach { entry ->
-                if (hasBudgetOverflowed() && !entry.ignoreBudget) {
+                if (hasBudgetOverflowed() && !entry.ignoreBudget && entry.id !in forcedEntries) {
                     trace += trace(entry, "dropped after world-book budget overflow")
                     return@forEach
                 }
                 // 「必定生效」跳过概率；其余条目照常判定。
-                if (entry.id !in stickyIds && book.id !in forcedBooks && entry.useProbability && entry.probability < 100 &&
+                if (entry.id !in forcedEntries && entry.id !in stickyIds && book.id !in forcedBooks && entry.useProbability && entry.probability < 100 &&
                     transaction.nextInt(100) >= entry.probability) {
                     failedProbability += entry.id
                     trace += trace(entry, "failed probability=${entry.probability}; not rerolled in this generation")
@@ -561,6 +585,7 @@ class WorldBookEngine(
         val role: ContentRole,
         val outletName: String,
         val literal: Boolean,
+        val required: Boolean,
     )
 
     private data class BookActivationCandidates(

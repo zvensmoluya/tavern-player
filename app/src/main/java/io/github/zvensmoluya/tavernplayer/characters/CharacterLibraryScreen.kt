@@ -441,7 +441,7 @@ fun CharacterDetailScreen(
                             Text("世界书", style = MaterialTheme.typography.titleMedium)
                             Text(
                                 if (character.worldBooks.isEmpty()) "这张角色卡没有附带世界书"
-                                else "${character.worldBooks.size} 本 · ${character.worldBooks.sumOf { it.entries.size }} 个条目",
+                                else "${character.worldBooks.sumOf { it.entries.size }} 项内容",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -562,7 +562,7 @@ fun CharacterDetailScreen(
             }
             item("contents") {
                 DetailSection("卡片内容") {
-                    Text("${character.worldBooks.size} 本世界书 · ${character.worldBooks.sumOf { it.entries.size }} 个条目")
+                    Text("${character.worldBooks.sumOf { it.entries.size }} 项世界书内容")
                     Text("${character.regexScripts.size} 个角色 Regex · ${character.alternateFirstMessages.size + 1} 个开场候选")
                     if (character.tags.isNotEmpty()) {
                         Text(character.tags.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant)

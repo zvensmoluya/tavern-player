@@ -214,7 +214,8 @@ class ContextBudgeter(
             CompilationDiagnostic(
                 DiagnosticSeverity.ERROR,
                 "MANDATORY_CONTEXT_OVERFLOW",
-                "必选 Prompt（${count.tokens} tokens）超过本轮输入预算 $inputLimit（context $contextLimit，回复预留 $outputTokens）",
+                if (working.any { it.required }) "始终注入的世界书内容与必选提示合计超过本轮容量，无法发送；请减少始终注入的内容或增加上下文容量"
+                else "必选 Prompt（${count.tokens} tokens）超过本轮输入预算 $inputLimit（context $contextLimit，回复预留 $outputTokens）",
             )
         } else {
             null
@@ -223,11 +224,11 @@ class ContextBudgeter(
     }
 
     private fun oldestRemovableIndex(messages: List<PreparedMessage>): Int {
-        val history = messages.indexOfFirst { it.origin.stage == "chat-history" && !it.isLastUserMessage(messages) }
+        val history = messages.indexOfFirst { !it.required && it.origin.stage == "chat-history" && !it.isLastUserMessage(messages) }
         if (history >= 0) return history
-        val examples = messages.indexOfFirst { it.origin.stage == "dialogue-example" }
+        val examples = messages.indexOfFirst { !it.required && it.origin.stage == "dialogue-example" }
         if (examples >= 0) return examples
-        val world = messages.indexOfFirst { it.origin.stage == "world-book" }
+        val world = messages.indexOfFirst { !it.required && it.origin.stage == "world-book" }
         return world
     }
 

@@ -54,7 +54,7 @@ class NativeWorldBookTextProjectorTest {
             history = listOf(ConversationMessage("u", MessageRole.USER, "继续", "旅人")), preset = BuiltInPresets.default,
             runtimeState = state(value),
             worldBookState = ConversationWorldBookState(activation = overrides),
-            conversationId = "test", generationId = "generation", modelId = "test", modelContextTokens = contextTokens))
+            conversationId = "test", generationId = "generation", modelId = "test", modelContextTokens = contextTokens, modelOutputTokens = 512))
 
     @Test fun `selects only current source before recursion and leaves original snapshot unchanged`() {
         listOf("day", "night", "day").forEach { value ->

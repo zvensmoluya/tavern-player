@@ -1105,9 +1105,9 @@ class ChatViewModelTest {
             )
             viewModel.loadConversation(seeded.id)
 
-            // 玩家在会话级把这本书设为停用：意图不属于任何候选检查点。
-            viewModel.setWorldBookMode("book", WorldBookBookMode.DISABLED)
-            assertEquals(false, conversations.get(seeded.id)?.worldBookState?.activation?.books?.get("book"))
+            // 玩家只停用本对话中的这一项，不随候选回退。
+            viewModel.setWorldBookEntryMode("book", "entry", WorldBookEntryMode.DISABLED)
+            assertEquals(WorldBookEntryMode.DISABLED, conversations.get(seeded.id)?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode)
 
             viewModel.regenerate()
             viewModel.previousVariant()
@@ -1117,9 +1117,10 @@ class ChatViewModelTest {
 
             // 切候选与再次生成都不回退会话级意图。
             assertEquals(2, plans.size)
+            assertTrue(plans.all { plan -> plan.messages.none { "constant lore" in it.content } })
             assertEquals(
-                false,
-                conversations.get(seeded.id)?.worldBookState?.activation?.books?.get("book"),
+                WorldBookEntryMode.DISABLED,
+                conversations.get(seeded.id)?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode,
             )
         } finally {
             directory.deleteRecursively()
@@ -1233,17 +1234,19 @@ class ChatViewModelTest {
             )
             viewModel.loadConversation(seeded.id)
 
-            // 玩家在会话级把这本书设为「必定生效」：历史重启属于候选历史，不得丢掉会话级意图。
-            viewModel.setWorldBookMode("book", WorldBookBookMode.FORCED)
-            assertEquals(setOf("book"), conversations.get(seeded.id)?.worldBookState?.forcedBooks)
+            viewModel.setWorldBookEntryMode("book", "entry", WorldBookEntryMode.FORCED)
+            viewModel.setWorldBookEntryContent("book", "entry", "revised lore")
+            assertEquals(WorldBookEntryMode.FORCED, conversations.get(seeded.id)?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode)
 
             viewModel.editMessage("first-user", "changed first", MessageEditMode.RESTART)
 
             assertEquals(3, viewModel.uiState.value.messages.size)
             assertEquals(listOf("entry"), plans.single().activatedWorldBookEntries)
+            assertTrue(plans.single().messages.any { it.required && "revised lore" in it.content })
             val restarted = conversations.get(seeded.id)
-            assertEquals(true, restarted?.worldBookState?.activation?.books?.get("book"))
-            assertEquals(setOf("book"), restarted?.worldBookState?.forcedBooks)
+            assertEquals("constant lore", restarted?.character?.worldBooks?.single()?.entries?.single()?.content)
+            assertEquals(WorldBookEntryMode.FORCED, restarted?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode)
+            assertEquals("revised lore", restarted?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.content)
         } finally {
             directory.deleteRecursively()
         }

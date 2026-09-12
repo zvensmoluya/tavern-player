@@ -47,6 +47,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +55,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import io.github.zvensmoluya.tavernplayer.characters.WorldBookReaderScreen
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.NativeGuideReader
@@ -101,11 +105,8 @@ fun ChatRoute(
             confirmPlayerChoice = viewModel::confirmPlayerChoice,
             cancelPlayerChoice = viewModel::cancelPlayerChoice,
             refreshMemories = viewModel::refreshMemories,
-            onWorldBookMode = viewModel::setWorldBookMode,
-            onWorldBookEntryEnabled = viewModel::setWorldBookEntryEnabled,
+            onWorldBookEntryMode = viewModel::setWorldBookEntryMode,
             onWorldBookEntryContent = viewModel::setWorldBookEntryContent,
-            onWorldBookRestore = viewModel::restoreWorldBookContent,
-            onWorldBookReset = viewModel::resetWorldBookState,
         ),
     )
 }
@@ -133,11 +134,8 @@ data class ChatScreenActions(
     val confirmPlayerChoice: () -> Unit = {},
     val cancelPlayerChoice: () -> Unit = {},
     val refreshMemories: () -> Unit = {},
-    val onWorldBookMode: (String, WorldBookBookMode) -> Unit = { _, _ -> },
-    val onWorldBookEntryEnabled: (String, String, Boolean) -> Unit = { _, _, _ -> },
-    val onWorldBookEntryContent: (String, String, String) -> Unit = { _, _, _ -> },
-    val onWorldBookRestore: (String, String?) -> Unit = { _, _ -> },
-    val onWorldBookReset: () -> Unit = {},
+    val onWorldBookEntryMode: (String, String, WorldBookEntryMode?) -> Unit = { _, _, _ -> },
+    val onWorldBookEntryContent: (String, String, String, () -> Unit) -> Unit = { _, _, _, _ -> },
 )
 
 private data class PendingMessageEdit(
@@ -166,7 +164,7 @@ fun ChatScreen(
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
     var nativeGuideVisible by remember(state.conversationId) { mutableStateOf(false) }
-    var worldBookVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var historicalStateMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val hasNativeGuide = state.character.nativeAdaptation?.guide != null
     val nativeGuide = remember(state.character) {
@@ -215,7 +213,6 @@ fun ChatScreen(
                     if (state.character.worldBooks.isNotEmpty()) {
                         TextButton(
                             modifier = Modifier.testTag("openWorldBook"),
-                            enabled = !state.busy,
                             onClick = { worldBookVisible = true },
                         ) { Text("世界书", maxLines = 1) }
                     }
@@ -542,18 +539,18 @@ fun ChatScreen(
         }
     }
     if (worldBookVisible) {
-        WorldBookSessionDialog(
-            characterName = state.character.name,
-            books = state.character.worldBooks,
-            state = state.worldBookState,
-            busy = state.busy,
-            onDismiss = { worldBookVisible = false },
-            onBookMode = actions.onWorldBookMode,
-            onEntryEnabled = actions.onWorldBookEntryEnabled,
-            onEntryContent = actions.onWorldBookEntryContent,
-            onRestore = actions.onWorldBookRestore,
-            onResetAll = actions.onWorldBookReset,
-        )
+        // 全屏阅读保留底下的会话 WebView，避免打开资料时销毁作者运行环境。
+        Dialog(onDismissRequest = { worldBookVisible = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            WorldBookReaderScreen(
+                readerId = "conversation-${state.conversationId}", characterName = state.character.name,
+                books = state.character.worldBooks, sessionState = state.worldBookState,
+                busy = state.busy || state.browserGenerating, message = state.worldBookMessage,
+                lastInjections = state.lastTrace?.plan?.worldBookInjections,
+                onBack = { worldBookVisible = false }, onEntryMode = actions.onWorldBookEntryMode,
+                onEntryContent = actions.onWorldBookEntryContent,
+            )
+        }
     }
     pendingMessageEdit?.let { edit ->
         val consequences = buildList {

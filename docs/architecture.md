@@ -96,7 +96,13 @@ Regex 来源顺序为 Preset 后 Character。canonical storage、Provider prompt
 
 每次新建 Conversation、发送、重试或 regenerate 都先深拷贝当前 active Preset。该不可变快照贯穿编排、Provider 请求和流式 output projection；运行期间的全局切换不改变已开始事务，下一次生成立即使用新资产。Generation plan 与 MessageVariant 保存名称、内容指纹和参数诊断，不保存可供运行时反查的 Preset 引用；历史 display 使用当前 active Preset 重投影。
 
-World Book 的 sticky / cooldown 状态以 `bookId:entryId` 保存；delay 根据当前选中分支的消息数判断，不再保存首次命中的倒计时。角色描述、性格、场景、深度提示与作者备注只按条目的匹配开关参与扫描。分组、概率和预算在每轮递归前完成，已入选分组排除后续同组候选，概率失败不会在本轮生成中重掷；普通正文展开 Macro 后计入预算并参与递归，WORLD_INFO Regex 在入选后处理。Conversation 另存书本级和条目级 activation override；缺失覆盖时继承 Character Snapshot 默认值，临时停用不冻结 sticky / cooldown。玩家意图（条目启停、书级参与方式、正文改写）与剧情派生状态（sticky / cooldown / delay）分开归属：前者存在 `ConversationRecord.worldBookState`（会话级，`activation` + `forcedBooks` + `editedContent`），不随候选回退；后者继续跟随候选检查点。书级三态由 `activation.books` 与 `forcedBooks` 组合表达，「必定生效」使该书已启用条目按常开处理并跳过概率，其余规则照常。正文改写时记录改写前的原文，用于"已改过"标记与恢复。默认 scan depth 为 2、总预算为有效输入预算的 25%、递归关闭，保留 placement、at-depth 与 outlet。修正范围和剩余边界见[世界书阅读与编排修正](archive/world-book-reader-and-semantics-20260908.md)，不据此宣称完整 ST 语义等价。
+World Book 的 sticky / cooldown 状态以 `bookId:entryId` 保存；delay 根据当前选中分支的消息数判断。自动模式保留角色字段扫描开关、分组、概率、递归、WORLD_INFO Regex 与预算行为，默认 scan depth 为 2、世界书预算为有效输入预算的 25%、递归关闭。历史修正与语义范围见[世界书阅读与编排修正](archive/world-book-reader-and-semantics-20260908.md)。
+
+`ConversationRecord.worldBookState.playerOverrides` 按书 id / 条目 id 保存玩家的 `mode` 和 `content`，与作者程序使用的 `activation`、`forcedBooks`、`editedContent` 分开。`ConversationWorldBookController` 只修改玩家覆盖，不改 `CharacterSnapshot` 或角色资产；恢复使用方式与恢复正文分别处理。读取展示和编排时合成覆盖，玩家明确选择的模式优先于作者启停，正文在 Native 原文选择后覆盖，避免原文范围失效或选文覆盖玩家文字。作者删除条目时回收对应玩家覆盖。旧作者书级 force 接口仍只绕过关键词和概率，不暴露为玩家“始终注入”。
+
+普通生成、重新生成及带预设的网页辅助生成显式传入会话世界书状态。玩家强制项在 `WorldBookEngine` 绕过自动条件及世界书预算，仍做正文 Macro / Regex / EJS 处理；空输出或失效模板不能满足强制要求。强制文字以本轮临时标记沿原位置编排，缺失的 marker / outlet 补到历史前；文字在最终编排时恢复为字面量。`PreparedMessage.required` 贯穿名字处理、system squash、上下文预算及 Provider 重裁剪，无法容纳时返回明确错误。`GenerationPlan.worldBookInjections` 对逐项实际处理文字和最终消息做核对，区分已注入、未注入与未确认，不把 `activatedWorldBookEntries` 作为最终注入证据。结果随消息候选持久化。
+
+玩家覆盖在会话级保存，不随候选回退；sticky / cooldown 继续使用剧情检查点。世界书保存期间占用 `worldBookSaving`，先落盘再发布，正文编辑器仅在成功后退出。
 
 ## Token 与 Provider
 
@@ -120,7 +126,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 角色详情提供独立“角色资源”入口。`CharacterImageDiscovery` 只提取原卡中的静态图片引用；`CharacterImageRepository` 在用户点击准备后，通过独立 HTTP 客户端下载并校验，保存到 `filesDir/tavern/characters/{id}/resources/images`，按内容哈希在角色内去重。页面仅从本地文件预览，下载完成项跨进程复用，不进入相册，也不自动淘汰。普通导入仍不抓取远程资源；该入口不调用模型、不修改原卡或 Native 编译协议。支持范围和限制见[角色图片资源](archive/character-image-resources-20260909.md)。
 
-角色详情提供世界书阅读入口；`WorldBookReaderScreen` 按书展示全部条目并支持标题、关键词及正文搜索。正文以可选择的原始文字分块呈现，保留 Macro、EJS 与 HTML 字面内容，不运行程序、不修改启用状态，也不创建独立世界书资产。阅读页保留搜索与列表滚动位置，支持返回条目列表及角色详情。
+角色详情和对话共用 `WorldBookReaderScreen`，`WorldBookReaderComponents` 提供本模块的纸面阅读样式、目录摘录、翻页栏和使用方式面板，无搜索或书级控制。`display_index` 存在时沿用作者展示顺序，否则按原数组顺序。多书只标明内容来源；目录对模板显示占位提示，正文以可选择的原始文字分块呈现。详情的上一项、下一项沿目录顺序导航；使用方式常驻底部，选项和恢复操作按需展开，正文编辑从右上角进入独立页面。角色详情只读；对话详情另显示最近生成的注入结果。编辑草稿、选中内容及列表位置可恢复。对话内使用全屏窗口保留下层 WebView，阅读不会销毁作者运行环境；生成中可读和翻页，调整锁定。
 
 `QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。MVU 的事务结果同时包含状态与 `processedText`：开场初始化、完整回复和重启式编辑消费两者，处理后正文经过 Macro / STORAGE / DISPLAY 投影，模型或编辑原文仍保存为 `sourceText`。生成结束后的重投影复用同一次 MVU 结果，不重复执行变量命令；取消、截断与缺少完成事件不提交 MVU 结果。仅保存文字的编辑不执行 MVU。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](archive/mvu-chat-integration-20260907.md)。
 

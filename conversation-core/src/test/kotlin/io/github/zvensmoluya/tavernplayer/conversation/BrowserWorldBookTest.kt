@@ -40,7 +40,7 @@ class BrowserWorldBookTest {
             character = record.character, persona = record.persona, history = history,
             preset = BuiltInPresets.default, runtimeState = record.runtimeState,
             worldBookState = record.worldBookState,
-            modelContextTokens = 32768, generationId = "world-book-test", ejsRenderer = renderer,
+            modelContextTokens = 32768, modelOutputTokens = 512, generationId = "world-book-test", ejsRenderer = renderer,
         )) as CompilationResult.Success
     }
 
@@ -170,7 +170,7 @@ class BrowserWorldBookTest {
             character = changed.character, persona = changed.persona,
             history = listOf(ConversationMessage("u", MessageRole.USER, "anything", "Traveler")),
             preset = BuiltInPresets.default, runtimeState = changed.runtimeState,
-            modelContextTokens = 32768, generationId = "stale-template", ejsRenderer = { error("失效模板不得执行") },
+            modelContextTokens = 32768, modelOutputTokens = 512, generationId = "stale-template", ejsRenderer = { error("失效模板不得执行") },
         )) as CompilationResult.Success
         assertTrue(success.plan.diagnostics.any { it.code == "STALE_EJS_TEMPLATE" })
         // 既不执行模板，也不把模板源码注入提示词。
