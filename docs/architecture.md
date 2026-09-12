@@ -134,7 +134,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state、World Book activation overrides、`ConversationStateSnapshot` 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。Conversation record schema v3 不兼容旧的 `adaptationState` 存储名。
 
-应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。Conversation、Preset、模型连接与 Chat ViewModel 按进入详情或对应页面后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。
+应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。角色库首屏会在后台 I/O 创建 Conversation 仓库并持续订阅已有对话，以显示每张卡的对话数量，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
 
 Conversation State 属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`UpdateVariableSetV1Adapter` 与 `UpdateVariableJsonPatchV1Adapter` 只把唯一、完整 assistant update envelope 中白名单路径的 scalar 更新解码为 `ConversationStatePatch`，`NativeAdaptationRuntime` 在消息候选完成时一次应用；完整空块是已确认的 no-op，缺块不是状态事实，缺失内层或外层闭合标签的畸形块不会被宽松修复。原始 `sourceText` 保留机器块用于摄入与诊断；声明对应 Adapter 后，Player 在聊天 storage/display 的 Macro / Regex 投影前剥离已识别的完整机器块，并在流式阶段暂时隐藏未闭合块。畸形块不直接写入状态；单个畸形块只有在独立确认成功后才从 canonical 展示移除，歧义的多个块保持可见。Adapter 不负责 UI 或 Prompt。`PromptCompiler` 把适配声明的 label/type/description 与当前值按稳定顺序编码为固定 JSON system projection；该投影不经过卡片模板、Macro 或 Regex，也不允许 Adaptation 指定 role、位置或格式。声明 Adapter 时，Player 另生成固定 dialect 与白名单回写契约，并要求每轮以完整块确认更新或 no-op。
 
@@ -148,7 +148,7 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库可进入单一默认身份编辑器；角色库和 Chat 都可以进入 Preset 中心，Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出；选择列表项会先激活再编辑。详情默认只展示实际 order 中的普通 Prompt 与 Regex 快速开关，Prompt 开关只改 `enabled`，不会改变成员关系或相对顺序；单项内容、兼容字段、结构设置和请求参数使用独立全屏次级页面。全部修改显式保存，带未保存修改返回时提供保存、放弃和继续编辑；不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。聊天气泡直接提供“保存文字”和“从这里重新生成 / 继续”；只有后者会在存在后续消息或其他 swipe 时确认将被丢弃的事实。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
-网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。
+网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。聊天页的系统返回与顶部返回按钮共用导航操作，回到角色详情；忙碌时消费系统返回而不离开，保持与顶部返回按钮禁用状态一致。键盘在场时先由输入法处理返回。
 
 ## EJS 提示词执行
 

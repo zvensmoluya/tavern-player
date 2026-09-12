@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
@@ -159,6 +161,7 @@ fun ChatScreen(
     bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
+    BackHandler { if (!state.busy) actions.back() }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }

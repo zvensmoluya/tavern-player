@@ -113,17 +113,23 @@ class CharacterLibraryViewModel(
                 }
             }
         }
+        loadConversations()
     }
 
-    private fun loadDetailDependencies() {
+    // The library surface shows a conversation count on every card, so conversations belong to the
+    // first screen even though the repository behind them is still created on demand.
+    private fun loadConversations() {
         if (conversationJob == null) conversationJob = viewModelScope.launch {
             val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
             repository.conversations.collect { conversations ->
                 _uiState.update { it.copy(conversations = conversations) }
             }
         }
-        val connectionSource = connectionRepository
-        if (connectionSource != null && connectionJob == null) connectionJob = viewModelScope.launch {
+    }
+
+    private fun loadCompilationConnections() {
+        val connectionSource = connectionRepository ?: return
+        if (connectionJob == null) connectionJob = viewModelScope.launch {
             val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { connectionSource() }
             repository.state.collect { state ->
                 val choices = state.connections.filter { it.selectedModel.isNotBlank() }
@@ -134,6 +140,11 @@ class CharacterLibraryViewModel(
                 ) }
             }
         }
+    }
+
+    private fun loadDetailDependencies() {
+        loadConversations()
+        loadCompilationConnections()
     }
 
     fun import(bytes: ByteArray, fileName: String) {

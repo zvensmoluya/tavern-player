@@ -80,10 +80,10 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 键盘弹出时消息区会被真正压缩，而不只是把输入栏盖住的界面效果：底部输入栏消费一次 `WindowInsets.safeDrawing` 的底部与水平方向 inset（键盘在场取 IME 高度，键盘不在让开导航栏与显示缺口），底部条因此变高，Scaffold 随之把消息区（WebView）压到键盘之上。原生侧不再对键盘另加 padding，避免同一方向上重复让开。这样浏览器一侧的视口高度与可见高度一致，聚焦在作者页面里的输入框由浏览器自己的滚入可视区处理。
 
 - 窗口策略：API 30 起调用 `enableEdgeToEdge()`，系统栏图标固定为深色（应用只有浅色配色，默认样式会跟随系统深色模式切白图标），避让统一交给 Compose 的 WindowInsets；API 26–29 保留系统 `adjustResize` 收缩窗口的旧路径，因为关闭 decor 适配后更低版本无法可靠上报 IME inset，反而会让输入栏被键盘盖住。manifest 显式声明 `android:windowSoftInputMode="adjustResize"`。
-- 输入栏：发送／停止与输入框同一行，输入区最多 5 行，键盘占去高度时按钮不会被挤出可见区；WebView 获得焦点时收掉原生输入框焦点，避免两边抢同一个输入法。
+- 输入栏：发送／停止与输入框同一行，输入区最多 5 行，键盘占去高度时按钮不会被挤出可见区。原生输入栏与 WebView 的焦点切换交给 Compose 的 AndroidView 互操作处理；不要在 WebView 获得焦点的回调中调用全局 `clearFocus()`，它会连 WebView 自身的焦点一起清掉，导致作者字段无法接收键盘输入。
 - 网页侧：WebView 变矮触发 `resize`，主壳用变化前的底部偏移判断读者是否本来贴底（直接按新几何重算会把原本贴底的读者判成已上滚），再把新的可见高度广播给所有作者帧；作者帧把 CSS 的 `min-height:<n>vh` 折算成 `calc(<n> * var(--player-frame-vh))`，收到广播只更新该变量，纯 CSS 生效、不重建页面。焦点位于作者帧内时暂停自动贴底，把滚入可视区让给浏览器；焦点离开后下一次渲染恢复跟随。三处 viewport meta 加 `interactive-widget=resizes-content`。
 
-未验证：这套行为只在桌面浏览器里用视口变矮做过等价模拟，当前没有连接设备。真机输入法（展开／收起／多行）、Android WebView 中 `window.innerHeight` 是否随 WebView 变矮、`interactive-widget` 是否被当前 WebView 版本识别、以及作者页聚焦输入框时浏览器是否跨 iframe 自动滚入可视区，都仍需真机验收。
+2026-09-12 已在 Android 15 / API 35 模拟器、WebView 151.0.7922.202 和 Gboard 完整键盘上复验：原生输入栏与发送按钮让开键盘，网页可见高度从 646 CSS px 缩到 334 CSS px；移除上述清焦点回调后，C-03 作者字段可接收真实键盘输入，并随焦点滚入可见区；原生输入栏与作者字段来回切换时各自保留文字。详见[模拟器聊天实测](archive/device-chat-verification-20260912.md)。实体设备、其他 Android/WebView 版本仍需验收，未单独证明 `interactive-widget` 对该结果的贡献。
 
 ## 消息与角色规则操作（2026-09-10）
 

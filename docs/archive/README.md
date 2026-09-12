@@ -37,6 +37,9 @@
 
 ## 样本审计、实验与设备验证
 
+- [模拟器聊天实测与修复（2026-09-12）](device-chat-verification-20260912.md)
+- [角色库修复收尾与实测续接（2026-09-12）](library-startup-resume-20260912.md)
+- [设备与真实 Provider 验证（2026-09-10）](device-live-verification-20260910.md)
 - [社区 Preset 真实链路验收](community-preset-live-test.md)
 - [MVU 公共变量能力接入实验](mvu-integration-probe-20260907.md)
 - [导入期自动适配实验](native-compilation.md)

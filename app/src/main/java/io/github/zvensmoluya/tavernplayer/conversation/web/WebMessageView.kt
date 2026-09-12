@@ -8,7 +8,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -31,7 +30,6 @@ fun WebMessageView(
 ) {
     if (environment == null) { Text("当前运行环境未提供网页资源", modifier); return }
 
-    val focusManager = LocalFocusManager.current
     var restart by remember(state.conversationId) { mutableIntStateOf(0) }
     key(state.conversationId, restart) {
         var session by remember { mutableStateOf<BrowserSession?>(null) }
@@ -76,8 +74,6 @@ fun WebMessageView(
                 factory = { context ->
                     WebView(context).also { web ->
                         view = web; web.setBackgroundColor(Color.TRANSPARENT)
-                        // 焦点二选一：作者页面接管输入时收掉原生输入框的焦点，避免两边抢同一个输入法。
-                        web.setOnFocusChangeListener { _, hasFocus -> if (hasFocus) focusManager.clearFocus() }
                         val runtime = BrowserSession(web, environment, state,
                             invoke = { actor, revision, method, args -> currentInvoke(actor, revision, method, args) },
                             uiAction = { action, id -> currentAction(action, id) }, onFailure = { failure = it })

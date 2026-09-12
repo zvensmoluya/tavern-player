@@ -9,13 +9,17 @@ import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransfer
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferManifest
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferReceiver
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -94,37 +98,53 @@ class CharacterLibraryViewModelTest {
     }
 
     @Test
-    fun `detail repositories are created only when their features are opened`() = runTest {
+    fun `first screen shows saved conversations while presets stay deferred`() = runTest {
         val root = temporary.newFolder("lazy-detail")
         val characters = CharacterRepository(root)
         val saved = characters.import(
             """{"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Deferred"}}""".encodeToByteArray(),
             "deferred.json",
         ) as CharacterSaveResult.Saved
-        val conversations = ConversationRepository(root, PromptCompiler())
         val presets = PresetRepository(root, ioDispatcher = mainDispatcher.dispatcher)
-        var conversationCalls = 0
-        var presetCalls = 0
+        val persona = Persona("default-persona", "旅人")
+        val writer = ConversationRepository(root, PromptCompiler())
+        val existing = writer.create(saved.character, persona, presets.activePreset.value)
+        writer.create(saved.character.copy(id = "other-character"), persona, presets.activePreset.value)
+        val conversations by lazy { ConversationRepository(root, PromptCompiler()) }
+        val conversationCalls = AtomicInteger()
+        val presetCalls = AtomicInteger()
         val viewModel = CharacterLibraryViewModel(
             characters,
-            conversationRepository = { conversationCalls += 1; conversations },
-            defaultPersonaSource = MutablePersonaSource(Persona("default-persona", "旅人")),
-            presetRepository = { presetCalls += 1; presets },
+            conversationRepository = { conversationCalls.incrementAndGet(); conversations },
+            defaultPersonaSource = MutablePersonaSource(persona),
+            presetRepository = { presetCalls.incrementAndGet(); presets },
             shelfTransferReceiver = ShelfTransferReceiver { error("unused") },
         )
 
         try {
-            assertEquals(0, conversationCalls)
-            assertEquals(0, presetCalls)
+            // A fresh library must publish saved conversations before any detail page is opened.
+            // Repository loading uses real I/O, so its deadline must not advance with virtual time.
+            val initial = withContext(Dispatchers.Default) {
+                withTimeout(5_000) { viewModel.uiState.first { it.conversations.size == 2 } }
+            }
+            assertNull(initial.selectedCharacterId)
+            assertEquals(listOf(existing.id), initial.conversationsFor(saved.character.id).map { it.id })
+            assertEquals(0, presetCalls.get())
 
             viewModel.selectCharacter(saved.character.id)
-            withTimeout(5_000) { while (conversationCalls == 0) yield() }
-            assertEquals(1, conversationCalls)
-            assertEquals(0, presetCalls)
+            viewModel.selectCharacter(null)
+            viewModel.selectCharacter(saved.character.id)
+            yield()
+            assertEquals(1, conversationCalls.get())
 
+            // Detail browsing does not need presets; creating a conversation does.
+            assertEquals(0, presetCalls.get())
             viewModel.createConversation(saved.character.id)
-            conversations.conversations.first { it.isNotEmpty() }
-            assertEquals(1, presetCalls)
+            val updated = withContext(Dispatchers.Default) {
+                withTimeout(5_000) { viewModel.uiState.first { it.conversations.size == 3 } }
+            }
+            assertEquals(2, updated.conversationsFor(saved.character.id).size)
+            assertEquals(1, presetCalls.get())
         } finally {
             clear(viewModel)
         }

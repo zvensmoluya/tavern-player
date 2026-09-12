@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -345,6 +346,7 @@ fun CharacterDetailScreen(
     onOpenResources: () -> Unit = {},
     onNewNativeConversation: () -> Unit = {},
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val adaptationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
