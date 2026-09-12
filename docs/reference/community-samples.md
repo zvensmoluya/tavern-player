@@ -12,6 +12,7 @@
 | C-06 | 开局选择与状态重读的复杂交互样本 | 原件 SHA-256：`8f24972a97e9cb357e105e5d7d101a7ec3b7ff5c6cc0f98a4024ac94a895583f`；见[HTML Surface 探针](../archive/html-surface-probe-20260909.md)中的 S-02 |
 | C-07 | 状态栏与变量事件驱动的界面样本 | 原件 SHA-256：`0166ea69a6bdfa0e7559cc98e877d3d5b6b106bc12e1c712a45ba96585f359f0`；见[HTML Surface 探针](../archive/html-surface-probe-20260909.md)中的 S-03 |
 | C-08 | 旧助手脚本格式与 MVU 状态初始化样本 | 原件 SHA-256：`5191b0bcb615e2abe1fa6fef20212e64d6df483f0f453dc929d4bf15d3ef07d4`；见[依赖核查](../archive/legacy-mvu-dependency-audit-20260912.md) |
+| C-09 | MVU 处理后正文与跨轮状态栏样本 | 原件 SHA-256：`33285b1a5505a1d8200258483eb4f76c7d9a0dbd5b579943dbda285bc3c78c9e`；见[正文回写修复](../archive/mvu-processed-message-fix-20260912.md) |
 | P-01 | 本轮原生玩法与关系分析实验使用的社区预设 | 本机生成的测试资产 `community-preset.json`，原始文件 SHA-256 见下方 |
 
 C-05 曾同时被用于指代一个 JSON 原件（SHA-256 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61dda961a9`，见 [web-runtime 记录](../web-runtime.md)）。该 JSON 与 C-03 的 PNG 解出同一份卡数据，不是独立样本；正确编号以本表为准。HTML Surface 探针的历史编号 S-01/S-02/S-03 分别对应当前 C-05/C-06/C-07 的原件。复杂原件的 Player API 依赖核查见[样本依赖核查](sample-dependency-audit.md)。

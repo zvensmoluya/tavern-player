@@ -115,7 +115,7 @@ class ConversationRepository(
                 createdAtEpochMillis = timestamp,
                 updatedAtEpochMillis = timestamp,
                 executionMode = executionMode,
-            ))
+            ), capturedPreset, compiler)
             writeRecord(record)
             publish(record)
             record

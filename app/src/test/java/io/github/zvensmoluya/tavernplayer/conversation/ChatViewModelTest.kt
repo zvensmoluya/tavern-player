@@ -287,6 +287,10 @@ class ChatViewModelTest {
         val template = "EJS_DAY=<%= getvar('stat_data.days') %>; EJS_USER=<%= getChatMessage(-1, 'user') %>;"
         val original = DemoConversationContent.character
         val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = listOf("<initvar>\ndays: 3\n</initvar>"),
+            regexScripts = listOf(RegexDefinition(
+                id = "mvu-panel", name = "MVU panel", findRegex = "<StatusPlaceHolderImpl/>",
+                replaceString = "WORLD_STATE_PANEL", placements = setOf(RegexPlacement.AI_OUTPUT), markdownOnly = true,
+            )),
             description = "Current variables: {{get_message_variable::stat_data}}",
             nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
                 mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content),
@@ -303,6 +307,11 @@ class ChatViewModelTest {
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
             fun text(delta: Int) = "Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":$delta}]</JSONPatch></UpdateVariable>"
+            fun assertProcessed(message: ConversationMessage, raw: String) {
+                assertEquals(raw, message.sourceText)
+                assertFalse(message.sourceText.contains("<StatusPlaceHolderImpl/>"))
+                assertEquals(1, Regex("<StatusPlaceHolderImpl/>").findAll(message.content).count())
+            }
             var delta = 2
             var prompt = ""
             val generator = FakeGenerator { _, plan -> flow {
@@ -332,6 +341,8 @@ class ChatViewModelTest {
             // Candidate navigation persists on a debounce; sending must nevertheless use the selected checkpoint.
             vm.updateInput("Go."); vm.send(); awaitMvuIdle(vm)
             assertSavedDays(5)
+            assertProcessed(vm.uiState.value.messages.last().message, text(2))
+            assertTrue(vm.uiState.value.messages.last().displayContent.contains("WORLD_STATE_PANEL"))
             assertEquals(JsonPrimitive(5), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(5), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -342,6 +353,7 @@ class ChatViewModelTest {
             delta = 4
             vm.regenerate(); awaitMvuIdle(vm)
             assertSavedDays(7)
+            assertProcessed(vm.uiState.value.messages.last().message, text(4))
             assertEquals(JsonPrimitive(7), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(7), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -349,6 +361,7 @@ class ChatViewModelTest {
             vm.previousVariant()
             vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
             assertSavedDays(9)
+            assertProcessed(vm.uiState.value.messages.last().message, text(4))
             assertEquals(JsonPrimitive(9), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(9), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -366,6 +379,7 @@ class ChatViewModelTest {
             assertEquals(saved.id, vm.uiState.value.conversationId)
             assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
             assertSavedDays(13)
+            assertProcessed(vm.uiState.value.messages.last().message, text(10))
             assertEquals(JsonPrimitive(13), vm.uiState.value.nativeState["day"])
             assertEquals(JsonPrimitive(13), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
@@ -373,6 +387,7 @@ class ChatViewModelTest {
             assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
                 .data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt())
             val restored = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            assertProcessed(restored.turns.last().selected.message, text(10))
             val restoredPlan = ejs.compile(PromptCompiler(), NormalGenerationInput(restored.character, restored.persona,
                 restored.turns.map { it.selected.message }, DemoConversationContent.preset, runtimeState = restored.runtimeState), mutableMapOf()) as CompilationResult.Success
             assertTrue(restoredPlan.plan.messages.any { "EJS_DAY=13; EJS_USER=Go.;" in it.content })
@@ -415,12 +430,15 @@ class ChatViewModelTest {
             vm.cancel(); awaitMvuIdle(vm)
             assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
             assertEquals(ChatMessageStatus.CANCELLED, vm.uiState.value.messages.last().status)
+            assertFalse(vm.uiState.value.messages.last().message.content.contains("<StatusPlaceHolderImpl/>"))
             mode = "truncated"; vm.regenerate(); awaitMvuIdle(vm)
             assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
             assertEquals(ChatMessageStatus.ERROR, vm.uiState.value.messages.last().status)
+            assertFalse(vm.uiState.value.messages.last().message.content.contains("<StatusPlaceHolderImpl/>"))
             mode = "no-finish"; vm.regenerate(); awaitMvuIdle(vm)
             assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
             assertEquals(ChatMessageStatus.ERROR, vm.uiState.value.messages.last().status)
+            assertFalse(vm.uiState.value.messages.last().message.content.contains("<StatusPlaceHolderImpl/>"))
         } finally { directory.deleteRecursively() }
     }
 

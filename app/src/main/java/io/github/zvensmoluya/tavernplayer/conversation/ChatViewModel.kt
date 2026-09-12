@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuMessageResult
 import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime
 import io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime
 import io.github.zvensmoluya.modelgateway.GatewayException
@@ -183,6 +184,7 @@ class ChatViewModel(
     private var generationJob: Job? = null
     private var persistenceJob: Job? = null
     private var persistenceDirty = false
+    private var completedMvuResult: MvuMessageResult? = null
     private var rawAssistant = ""
     private var rawStateConfirmation: String? = null
     private val rawReasoning = mutableListOf<ReasoningBlock>()
@@ -194,7 +196,7 @@ class ChatViewModel(
             _uiState.update { it.copy(loadingConversation = true) }
             viewModelScope.launch {
                 try {
-                    record = mvuRuntime.initialize(record)
+                    record = mvuRuntime.initialize(record, currentPreset, compiler)
                     syncRecord()
                 } catch (error: Exception) {
                     _uiState.update { it.copy(message = "MVU 初始化失败：${error.userMessage()}") }
@@ -579,7 +581,7 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 val generationId = idGenerator()
-                record = mvuRuntime.initialize(record)
+                record = mvuRuntime.initialize(record, capturedPreset, compiler)
                 val historyBefore = record.promptMessages()
                 val runtimeBeforeInput = record.runtimeState
                 val projected = compiler.projectUserInput(
@@ -748,12 +750,11 @@ class ChatViewModel(
                     }
                     MessageRole.ASSISTANT -> {
                         val adaptation = record.character.nativeAdaptation
-                        val narrativeSource = adaptationRuntime.projectAssistantMessage(adaptation, sourceText).narrativeText
                         val projectionRuntime = selected.projectionRuntimeStateBefore
                             ?: selected.generationPlan?.runtimeState
                             ?: runtimeBefore
-                        val projected = compiler.projectAssistantOutput(
-                            rawText = narrativeSource,
+                        fun project(text: String) = compiler.projectAssistantOutput(
+                            rawText = adaptationRuntime.projectAssistantMessage(adaptation, text).narrativeText,
                             rawReasoning = emptyList(),
                             character = record.character,
                             persona = record.persona,
@@ -764,11 +765,18 @@ class ChatViewModel(
                             generationId = generationId,
                             modelId = modelId,
                         )
+                        var projected = project(sourceText)
                         var projectedRuntime = adaptation?.let {
                             adaptationRuntime.ingestAssistantMessage(adaptation, sourceText, projected.runtimeState).runtimeState
                         } ?: projected.runtimeState
                         if (mode == MessageEditMode.RESTART) {
-                            projectedRuntime = applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)
+                            applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)?.let { result ->
+                                projected = project(result.processedText)
+                                val runtime = adaptation?.let {
+                                    adaptationRuntime.ingestAssistantMessage(it, sourceText, projected.runtimeState).runtimeState
+                                } ?: projected.runtimeState
+                                projectedRuntime = result.applyTo(runtime)
+                            }
                         }
                         if (mode == MessageEditMode.TEXT_ONLY) {
                             selected.copy(
@@ -1092,7 +1100,7 @@ class ChatViewModel(
                     record.persona,
                     presetSource.captureActive(),
                 ).copy(id = previous.id, createdAtEpochMillis = previous.createdAtEpochMillis, character = previous.character, executionMode = previous.executionMode)
-                record = mvuRuntime.initialize(reset)
+                record = mvuRuntime.initialize(reset, currentPreset, compiler)
                 displayCache.clear()
                 displayReasoningCache.clear()
                 val state = _uiState.value
@@ -1120,7 +1128,7 @@ class ChatViewModel(
         appendAssistantTurn: Boolean,
         preset: PresetAsset,
     ) {
-        record = mvuRuntime.initialize(record)
+        record = mvuRuntime.initialize(record, preset, compiler)
         val evaluationInstant = Instant.ofEpochMilli(now())
         val evaluationZoneId = ZoneId.systemDefault()
         val history = if (appendAssistantTurn) record.promptMessages() else record.copy(turns = record.turns.dropLast(1)).promptMessages()
@@ -1259,6 +1267,7 @@ class ChatViewModel(
                 ),
             )
         }
+        completedMvuResult = null
         rawAssistant = ""
         rawStateConfirmation = null
         rawReasoning.clear()
@@ -1305,6 +1314,7 @@ class ChatViewModel(
                 }
             } catch (cancelled: CancellationException) {
                 if (!replyCompleted) {
+                    completedMvuResult = null
                     withContext(NonCancellable) {
                         reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                     }
@@ -1315,6 +1325,7 @@ class ChatViewModel(
                 throw cancelled
             } catch (error: Exception) {
                 if (!replyCompleted) {
+                    completedMvuResult = null
                     reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
                     finishFailure(variant.id, cancelled = false, error = error)
                 } else _uiState.update { it.copy(message = "正文后的保存或记忆更新失败：${error.userMessage()}") }
@@ -1476,7 +1487,10 @@ class ChatViewModel(
                     error("回复被截断或未正常结束，MVU 变量未更新")
                 }
                 reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
-                pendingAssistantRuntime = applyMvuUpdate(rawAssistant, pendingAssistantRuntime ?: record.runtimeState)
+                completedMvuResult = applyMvuUpdate(rawAssistant, pendingAssistantRuntime ?: record.runtimeState)
+                if (completedMvuResult != null) {
+                    reprojectAssistantOutput(variantId, generationId, connection, preset, evaluationInstant, evaluationZoneId, streaming = false)
+                }
                 pendingAssistantRuntime?.let { runtime -> record = record.copy(runtimeState = runtime) }
                 pendingAssistantRuntime = null
                 updateVariant(variantId) {
@@ -1496,14 +1510,14 @@ class ChatViewModel(
 
     private suspend fun applyMvuUpdate(
         source: String, previous: ConversationRuntimeState, opening: Boolean = false,
-    ): ConversationRuntimeState {
-        val result = mvuRuntime.update(record.character, source, previous, opening, record.persona) ?: return previous
+    ): MvuMessageResult? {
+        val result = mvuRuntime.update(record.character, source, previous, opening, record.persona) ?: return null
         val diagnostics = result.diagnostics.filter { it.level in setOf("error", "warn", "warning") }
             .map { "MVU: ${it.text}" }
         if (diagnostics.isNotEmpty()) updateTrace {
             copy(streamDiagnostics = (streamDiagnostics + diagnostics).takeLast(30))
         }
-        return result.messages.single().applyTo(previous)
+        return result.messages.single()
     }
 
     private suspend fun commitPreparedRuntime() {
@@ -1528,7 +1542,7 @@ class ChatViewModel(
         val projectionRuntime = record.findVariant(variantId)?.projectionRuntimeStateBefore ?: record.runtimeState
         val narrativeSource = adaptationRuntime.projectAssistantMessage(
             adaptation = adaptation,
-            sourceText = rawAssistant,
+            sourceText = completedMvuResult?.processedText ?: rawAssistant,
             stateConfirmedSeparately = rawStateConfirmation != null,
             streaming = streaming,
         ).narrativeText
@@ -1553,8 +1567,9 @@ class ChatViewModel(
             adaptationRuntime.ingestAssistantMessage(adaptation, stateSource, projection.runtimeState).runtimeState
         } ?: projection.runtimeState
         // Display reprojection (including cleanup after Finished) must preserve the committed MVU checkpoint.
-        val finalRuntime = projectedRuntime.copy(mvuState = record.findVariant(variantId)?.runtimeStateAfter?.mvuState
-            ?: projectedRuntime.mvuState)
+        val finalRuntime = completedMvuResult?.applyTo(projectedRuntime)
+            ?: projectedRuntime.copy(mvuState = record.findVariant(variantId)?.runtimeStateAfter?.mvuState
+                ?: projectedRuntime.mvuState)
         pendingAssistantRuntime = finalRuntime
         val messageId = record.findVariant(variantId)?.message?.id
         if (messageId != null) {

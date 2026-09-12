@@ -122,7 +122,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 角色详情提供世界书阅读入口；`WorldBookReaderScreen` 按书展示全部条目并支持标题、关键词及正文搜索。正文以可选择的原始文字分块呈现，保留 Macro、EJS 与 HTML 字面内容，不运行程序、不修改启用状态，也不创建独立世界书资产。阅读页保留搜索与列表滚动位置，支持返回条目列表及角色详情。
 
-`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](archive/mvu-chat-integration-20260907.md)。
+`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。MVU 的事务结果同时包含状态与 `processedText`：开场初始化、完整回复和重启式编辑消费两者，处理后正文经过 Macro / STORAGE / DISPLAY 投影，模型或编辑原文仍保存为 `sourceText`。生成结束后的重投影复用同一次 MVU 结果，不重复执行变量命令；取消、截断与缺少完成事件不提交 MVU 结果。仅保存文字的编辑不执行 MVU。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](archive/mvu-chat-integration-20260907.md)。
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
 

@@ -2,6 +2,7 @@ package io.github.zvensmoluya.tavernplayer.conversation.mvu
 
 import io.github.zvensmoluya.tavernplayer.conversation.*
 import io.github.zvensmoluya.tavernplayer.content.mvuProgram
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -23,7 +24,7 @@ class MvuConversationRuntime(
         }
     }
 
-    suspend fun initialize(record: ConversationRecord): ConversationRecord {
+    suspend fun initialize(record: ConversationRecord, preset: PresetAsset, compiler: PromptCompiler): ConversationRecord {
         if (record.character.mvuProgram == null || record.runtimeState.mvuState != null) return record
         require(record.turns.size <= 1 && record.turns.all { turn ->
             turn.variants.all { it.openingSourceIndex != null }
@@ -36,10 +37,29 @@ class MvuConversationRuntime(
                 runtime.initialize(variants.map { it.message.sourceText }).messages
             require(initialized.size == variants.size)
             val next = variants.mapIndexed { index, variant ->
+                val result = initialized[index]
+                val projected = if (result.processedText == variant.message.sourceText) null else compiler.projectAssistantText(
+                    text = NativeAdaptationRuntime().projectAssistantMessage(record.character.nativeAdaptation, result.processedText).narrativeText,
+                    projection = RegexProjection.STORAGE,
+                    character = record.character,
+                    persona = record.persona,
+                    preset = preset,
+                    runtimeState = variant.projectionRuntimeStateBefore ?: record.runtimeState,
+                    history = emptyList(),
+                    conversationId = record.id,
+                    generationId = "${record.id}-opening-${variant.openingSourceIndex}",
+                    modelId = "",
+                    depth = 0,
+                ) as TextExpansionResult.Success
+                val projectedRuntime = if (projected == null) variant.runtimeStateAfter ?: record.runtimeState else
+                    record.character.nativeAdaptation?.let {
+                        NativeAdaptationRuntime().ingestAssistantMessage(it, variant.message.sourceText, projected.runtimeState).runtimeState
+                    } ?: projected.runtimeState
                 variant.copy(
+                    message = variant.message.copy(content = projected?.text ?: variant.message.content),
                     runtimeStateBefore = base.applyTo(variant.runtimeStateBefore ?: record.runtimeState),
                     projectionRuntimeStateBefore = base.applyTo(variant.projectionRuntimeStateBefore ?: record.runtimeState),
-                    runtimeStateAfter = initialized[index].applyTo(variant.runtimeStateAfter ?: record.runtimeState),
+                    runtimeStateAfter = result.applyTo(projectedRuntime),
                 )
             }
             record.copy(
