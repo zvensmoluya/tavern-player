@@ -44,7 +44,7 @@ class BrowserSession(
     private val handled = LinkedHashMap<String, JsonObject>()
     private val inFlight = mutableSetOf<String>()
     private val frameOperations = mutableMapOf<String, MutableSet<Job>>()
-    private data class Frame(val actor: BrowserActor, val html: String, val kind: String, val snapshot: JsonObject, val viewportHeight: Int)
+    private data class Frame(val actor: BrowserActor, val html: String, val kind: String, val snapshot: JsonObject?, val viewportHeight: Int)
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
@@ -166,7 +166,10 @@ class BrowserSession(
                 val before = previous["messages"]!!.jsonArray.associateBy { it.jsonObject["turnId"] }
                 val messages = next["messages"]!!.jsonArray
                 put("messages", JsonArray(messages.filter { before[it.jsonObject["turnId"]] != it }))
-                put("order", JsonArray(messages.map { it.jsonObject.getValue("turnId") }))
+                val order = messages.map { it.jsonObject.getValue("turnId") }
+                if (order != previous["messages"]!!.jsonArray.map { it.jsonObject.getValue("turnId") }) {
+                    put("order", JsonArray(order))
+                }
             }
             putJsonObject("flags") {
                 put("busy", state.busy); put("running", state.running); put("browserGenerating", state.browserGenerating)
@@ -253,7 +256,8 @@ class BrowserSession(
         val actor = BrowserActor(token, message?.get("turnId")?.jsonPrimitive?.content, message?.get("variantId")?.jsonPrimitive?.content, sourceId)
         val html = source?.get("content")?.jsonPrimitive?.content ?: args["html"]?.jsonPrimitive?.content ?: error("缺少网页内容")
         require(html.length <= 2 * 1024 * 1024) { "网页超过 2 MiB" }
-        frames[token] = Frame(actor, html, kind!!, snapshot(), args["viewportHeight"]?.jsonPrimitive?.intOrNull?.coerceIn(100, 5000) ?: 800)
+        frames[token] = Frame(actor, html, kind!!, if (kind == "session") snapshot() else null,
+            args["viewportHeight"]?.jsonPrimitive?.intOrNull?.coerceIn(100, 5000) ?: 800)
         return buildJsonObject { put("token", token); put("url", "$authorOrigin/frame/$token") }
     }
 
@@ -273,7 +277,9 @@ class BrowserSession(
                 val frame = frames[uri.lastPathSegment] ?: error("网页实例已失效")
                 val configuration = buildJsonObject {
                     put("epoch", epoch); put("rootOrigin", ROOT_ORIGIN); put("html", frame.html); put("kind", frame.kind)
-                    put("actor", json.encodeToJsonElement(frame.actor)); put("snapshot", frame.snapshot); put("viewportHeight", frame.viewportHeight)
+                    put("actor", json.encodeToJsonElement(frame.actor))
+                    frame.snapshot?.let { put("snapshot", it) }
+                    put("viewportHeight", frame.viewportHeight)
                 }.toString().replace("<", "\\u003c")
                 val body = environment.asset("parent.html").toString(Charsets.UTF_8).replace("__PLAYER_CONFIGURATION__", configuration)
                 return result("text/html", body.toByteArray(), csp = authorCsp())

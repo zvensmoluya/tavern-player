@@ -4,6 +4,53 @@ import { createSession } from '../src/session.mjs';
 import { createHost } from '../src/host.mjs';
 
 const initial = () => ({ revision: 'r0', chatVariables: {}, scriptVariables: {}, messages: [], worldbooks: [], mvu: null });
+
+test('draft deltas preserve historical payloads and message deltas isolate incoming objects', () => {
+  const session = createSession({ ...initial(), messages: [
+    { turnId: 'a', variantId: 'a1', data: { score: 1 } },
+    { turnId: 'b', variantId: 'b1', data: { score: 2 } },
+  ] });
+  const history = session.state.messages, first = history[0];
+  session.receiveDelta({ changes: { draft: 'typing', revision: 'r1' } });
+  assert.equal(session.state.messages, history);
+  assert.equal(session.state.draft, 'typing');
+  const updated = { turnId: 'b', variantId: 'b1', data: { score: 3 } };
+  session.receiveDelta({ messages: [updated], changes: { revision: 'r2' } });
+  updated.data.score = 99;
+  assert.equal(session.state.messages[0], first);
+  assert.equal(session.state.messages[1].data.score, 3);
+  session.state.messages[1].data.score = 100;
+  session.stop(new Error('failed'));
+  assert.equal(session.state.messages[1].data.score, 3);
+});
+
+test('deltas retain pending writes and restore the latest committed state on failure', async () => {
+  const { session, a, b } = pair(async () => { throw new Error('disk full'); });
+  a.api.replaceVariables({ pending: true });
+  session.receiveDelta({ changes: { revision: 'r1', draft: 'new draft', chatVariables: { saved: true } } });
+  assert.deepEqual(b.api.getVariables(), { pending: true });
+  await assert.rejects(b.flush(), /disk full/);
+  assert.deepEqual(b.api.getVariables(), { saved: true });
+  assert.equal(session.state.draft, 'new draft');
+});
+
+test('candidate and order deltas retire stale owners before replaying pending writes', async () => {
+  const state = { ...initial(), messages: [{ turnId: 'turn', variantId: 'old', data: {} }] };
+  const session = createSession(state); let calls = 0;
+  const host = createHost({ initial: state, actor: { id: 'page', turnId: 'turn', variantId: 'old' }, session,
+    request: async () => { calls++; return {}; } });
+  host.api.replaceVariables({ old: true });
+  session.receiveDelta({ messages: [{ turnId: 'turn', variantId: 'new', data: {} }], changes: { revision: 'r1' } });
+  await assert.rejects(host.flush(), /disposed/);
+  assert.equal(calls, 0);
+  assert.deepEqual(session.state.chatVariables, {});
+  session.receiveDelta({ messages: [{ turnId: 'second', variantId: 'v', data: {} }], order: ['second', 'turn'] });
+  assert.deepEqual(session.state.messages.map(message => message.turnId), ['second', 'turn']);
+  session.receiveDelta({ order: ['turn'] });
+  assert.equal(session.state.messages.length, 1);
+  assert.throws(() => session.receiveDelta({ order: ['missing'] }), /Missing message/);
+  assert.equal(session.state.messages[0].turnId, 'turn');
+});
 function pair(request = async () => ({})) {
   const state = initial(), session = createSession(state), notices = [];
   const host = id => createHost({ initial: state, actor: { id, scriptId: id }, request, session, notify: (...args) => notices.push(args) });

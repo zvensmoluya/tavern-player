@@ -143,6 +143,12 @@ C-05 JSON SHA-256 为 `68c9429e69a9c38d8e8b79cace03675c99ca48830ed25a49ac89ce61d
 
 ## 验证入口
 
+### 2026-09-15 更新范围
+
+可信外壳按消息对象变化处理行，正文按 display 文本复用解析结果；只有 reasoning、状态或草稿变化时不重跑正文 Markdown。原生桥在顺序未变时省略 `order`，外壳将变化字段与变化消息直接传给作者协调器；协调器在没有待确认写入时只复制变化内容，草稿增量保留历史消息数组。有待确认写入时仍保守重建 overlay，作者操作结果仍可携带完整权威快照，因此这还不是设计中的全链路 `player-bridge-2`。
+
+只有协调器启动配置携带完整作者快照，普通 page/static/script 配置仅保留身份、源码和视口，并连接现有协调器。已挂载页面的生命周期和事件顺序保持原契约。自动贴底回调在真正执行时再次检查阅读位置与 iframe 焦点，避免排队期间玩家上滚后又被拉到底部。完整验证与尚未覆盖范围见[性能改进记录](performance-improvements-20260915.md)。
+
 - `:content-core:test` 与 `:conversation-core:test`：原文读取、旧执行模式反序列化、字面消息修改、原子失败、过期候选和候选检查点。
 - `:app:testDebugUnitTest`：实际保存失败、图片复用/动态索引、离线资源/哈希/版本固定、原卡 MVU/EJS 免编译装载和现有聊天回归。
 - `tools/web-runtime` 的 `npm test` 与 `npm run test:browser`：同步视图、队列、事件、CSS/import 解析，以及真实 Edge 的作者页面、父输入/发送、来源隔离和页面保留。

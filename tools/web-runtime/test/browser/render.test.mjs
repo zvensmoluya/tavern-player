@@ -24,7 +24,7 @@ async function open(browser, viewport, displays) {
       const target = snapshot.messages.find(value => value.id === req.args.messageId);
       created.push({ token, kind: req.args.kind });
       frames.set(token, { html: req.args.html, kind: req.args.kind, actor: { id: token, turnId: target?.turnId, variantId: target?.variantId },
-        snapshot, epoch, rootOrigin: root, viewportHeight: 700 });
+        snapshot: req.args.kind === 'session' ? snapshot : undefined, epoch, rootOrigin: root, viewportHeight: 700 });
       result = { token, url: origin + '/frame/' + token };
     } else if (req.method === 'frame.dispose') frames.delete(req.args.token);
     else throw new Error('Unexpected request ' + req.method);

@@ -10,6 +10,31 @@ import org.junit.Test
 
 class TokenAccountingTest {
     @Test
+    fun `additive budgeting counts messages once and verifies the final request`() {
+        var partCalls = 0
+        var fullCalls = 0
+        val accounting = object : TokenAccounting {
+            override fun countParts(messages: List<PreparedMessage>, modelId: String): MessageTokenCounts {
+                partCalls++
+                return MessageTokenCounts(messages.map { 10 }, 3, TokenCountQuality.ESTIMATED, "fixture")
+            }
+            override fun count(messages: List<PreparedMessage>, modelId: String): TokenCount {
+                fullCalls++
+                return TokenCount(messages.size * 10 + 3, TokenCountQuality.ESTIMATED, "fixture")
+            }
+        }
+        val messages = listOf(prepared("system", "main")) + (0 until 1000).map {
+            prepared("history $it", "chat-history", MessageRole.ASSISTANT, "history-$it")
+        } + prepared("latest", "chat-history", MessageRole.USER, "latest")
+        val result = ContextBudgeter(accounting).budget(messages, input(context = 38, output = 5))
+        assertEquals(listOf("system", "history 999", "latest"), result.messages.map { it.content })
+        assertEquals(33, result.report.inputTokens)
+        assertEquals(1, partCalls)
+        assertEquals(1, fullCalls)
+        assertNull(result.failure)
+    }
+
+    @Test
     fun `mapped OpenAI model uses exact tokenizer and unknown model uses byte upper bound`() {
         val accounting = DefaultTokenAccounting()
         val messages = listOf(prepared("你好 world", "main"))

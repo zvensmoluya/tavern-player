@@ -12,41 +12,52 @@ data class TokenCount(
 
 interface TokenAccounting {
     fun count(messages: List<PreparedMessage>, modelId: String): TokenCount
+    /** Null means the counter cannot safely subtract individual messages. */
+    fun countParts(messages: List<PreparedMessage>, modelId: String): MessageTokenCounts? = null
+}
+
+data class MessageTokenCounts(val messages: List<Int>, val overhead: Int, val quality: TokenCountQuality, val tokenizer: String) {
+    fun total() = TokenCount(messages.sum() + overhead, quality, tokenizer)
 }
 
 class DefaultTokenAccounting : TokenAccounting {
     private val registry by lazy { Encodings.newDefaultEncodingRegistry() }
 
-    override fun count(messages: List<PreparedMessage>, modelId: String): TokenCount {
+    override fun count(messages: List<PreparedMessage>, modelId: String): TokenCount = countParts(messages, modelId).total()
+
+    override fun countParts(messages: List<PreparedMessage>, modelId: String): MessageTokenCounts {
         val profile = profileFor(modelId)
         if (profile == null) {
-            return TokenCount(
-                tokens = messages.sumOf {
+            return MessageTokenCounts(
+                messages = messages.map {
                     it.content.toByteArray(Charsets.UTF_8).size +
                         it.authorName.orEmpty().toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD
-                } + REQUEST_OVERHEAD,
+                },
+                overhead = REQUEST_OVERHEAD,
                 quality = TokenCountQuality.ESTIMATED,
                 tokenizer = "utf8-byte-upper-bound",
             )
         }
         return try {
             val encoding: Encoding = registry.getEncoding(profile.encoding)
-            TokenCount(
-                tokens = messages.sumOf { message ->
+            MessageTokenCounts(
+                messages = messages.map { message ->
                     encoding.countTokens(message.role.name.lowercase()) +
                         encoding.countTokens(message.content) +
                         message.authorName?.let(encoding::countTokens).orZero() +
                         profile.tokensPerMessage
-                } + profile.replyPrimerTokens,
+                },
+                overhead = profile.replyPrimerTokens,
                 quality = if (profile.exactMessageFraming) TokenCountQuality.EXACT else TokenCountQuality.ESTIMATED,
                 tokenizer = profile.encoding.name.lowercase() + if (profile.exactMessageFraming) "" else "+estimated-framing",
             )
         } catch (_: Exception) {
-            TokenCount(
-                tokens = messages.sumOf {
+            MessageTokenCounts(
+                messages = messages.map {
                     it.content.toByteArray(Charsets.UTF_8).size +
                         it.authorName.orEmpty().toByteArray(Charsets.UTF_8).size + MESSAGE_OVERHEAD
-                } + REQUEST_OVERHEAD,
+                },
+                overhead = REQUEST_OVERHEAD,
                 quality = TokenCountQuality.ESTIMATED,
                 tokenizer = "utf8-byte-upper-bound",
             )
@@ -183,9 +194,18 @@ class ContextBudgeter(
                 },
             )
         }
-        var count = accounting.count(working, input.modelId)
+        val parts = accounting.countParts(working, input.modelId)
+        val costs = parts?.messages?.toMutableList()
+        var count = parts?.total() ?: accounting.count(working, input.modelId)
+        var verified = parts == null
 
-        while (count.tokens > inputLimit) {
+        while (true) {
+            if (count.tokens <= inputLimit) {
+                if (verified) break
+                count = accounting.count(working, input.modelId)
+                verified = true
+                if (count.tokens <= inputLimit) break
+            }
             val removableIndex = oldestRemovableIndex(working)
             if (removableIndex < 0) break
             val removed = working.removeAt(removableIndex)
@@ -195,8 +215,10 @@ class ContextBudgeter(
                 decision = "dropped ${removed.origin.stage} to fit context",
                 role = removed.role,
             )
-            count = accounting.count(working, input.modelId)
+            count = if (costs != null && !verified) count.copy(tokens = count.tokens - costs.removeAt(removableIndex))
+                else accounting.count(working, input.modelId)
         }
+        if (!verified) count = accounting.count(working, input.modelId)
 
         val report = TokenAccountingReport(
             inputTokens = count.tokens,

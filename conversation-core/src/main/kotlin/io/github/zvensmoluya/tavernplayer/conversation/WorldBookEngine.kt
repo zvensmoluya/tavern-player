@@ -409,7 +409,7 @@ class WorldBookEngine(
                 } else if (entry.caseSensitive != true) {
                     flags = flags or Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
                 }
-                matchesPatternWithinBudget(Pattern.compile(literal?.source ?: key, flags), scan, entry, diagnostics)
+                matchesPatternWithinBudget(compiledPatterns.compile(literal?.source ?: key, flags), scan, entry, diagnostics)
             } catch (error: PatternSyntaxException) {
                 diagnostics += warning("INVALID_WORLD_BOOK_REGEX", "World Book key Regex 无法编译：${error.description}", entry.id)
                 false
@@ -418,7 +418,7 @@ class WorldBookEngine(
         val ignoreCase = entry.caseSensitive != true
         if (entry.matchWholeWords == true) {
             val flags = if (ignoreCase) Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE else 0
-            return Pattern.compile("(?<![\\p{L}\\p{N}_])${Pattern.quote(key)}(?![\\p{L}\\p{N}_])", flags)
+            return compiledPatterns.compile("(?<![\\p{L}\\p{N}_])${Pattern.quote(key)}(?![\\p{L}\\p{N}_])", flags)
                 .matcher(scan)
                 .find()
         }

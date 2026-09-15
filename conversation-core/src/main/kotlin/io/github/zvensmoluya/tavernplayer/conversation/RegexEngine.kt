@@ -245,7 +245,7 @@ class CharacterRegexEngine(
             )
         }
         return CompiledRegex(
-            pattern = Pattern.compile(pattern, flags),
+            pattern = compiledPatterns.compile(pattern, flags),
             global = 'g' in flagsText,
             captureGroupOffset = lookbehindRewrite?.captureGroupOffset ?: 0,
             preservedPrefixGroup = lookbehindRewrite?.preservedPrefixGroup,

@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -31,12 +32,14 @@ fun SafeMarkdownText(
     source: String,
     modifier: Modifier = Modifier,
 ) {
-    val bounded = if (source.length > MAX_RENDER_SOURCE_CHARS) {
-        source.take(MAX_RENDER_SOURCE_CHARS) + "\n\n[内容过长，显示已截断；原始内容仍完整保存]"
-    } else {
-        source
+    val blocks = remember(source) {
+        val bounded = if (source.length > MAX_RENDER_SOURCE_CHARS) {
+            source.take(MAX_RENDER_SOURCE_CHARS) + "\n\n[内容过长，显示已截断；原始内容仍完整保存]"
+        } else {
+            source
+        }
+        parseMarkdownBlocks(sanitizeCardText(bounded))
     }
-    val blocks = parseMarkdownBlocks(sanitizeCardText(bounded))
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { block ->
             when (block.kind) {
@@ -148,7 +151,10 @@ private fun parseMarkdownBlocks(text: String): List<MarkdownBlock> {
     return blocks
 }
 
-private fun inlineMarkdown(raw: String): AnnotatedString {
+@Composable
+private fun inlineMarkdown(raw: String): AnnotatedString = remember(raw) { parseInlineMarkdown(raw) }
+
+private fun parseInlineMarkdown(raw: String): AnnotatedString {
     val source = MARKDOWN_LINK.replace(raw) { it.groupValues[1] }
     return buildAnnotatedString {
         var cursor = 0

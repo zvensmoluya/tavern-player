@@ -19,10 +19,36 @@ export function createSession(initial) {
   function rebuild() { state = clone(base); for (const item of pending) if (item.owner.active) item.project?.(state); changed(); }
   function receive(next) {
     base = clone(next);
+    accept(() => rebuild());
+  }
+  // The shell already knows which messages changed. Keep unchanged historical payloads local
+  // instead of serializing and cloning them again on every draft or streaming notification.
+  function receiveDelta(delta) {
+    function apply(current) {
+      const changes = clone(delta.changes ?? {});
+      if (!delta.messages?.length && !delta.order) return { ...current, ...changes };
+      const messages = new Map(current.messages.map(message => [message.turnId, message]));
+      for (const message of delta.messages ?? []) messages.set(message.turnId, clone(message));
+      const order = delta.order ?? current.messages.map(message => message.turnId);
+      return { ...current, ...changes, messages: order.map(id => {
+        if (!messages.has(id)) throw new Error('Missing message in author delta');
+        return messages.get(id);
+      }) };
+    }
+    const nextBase = apply(base), nextState = pending.length ? null : apply(state);
+    base = nextBase;
+    accept(() => {
+      if (nextState && !pending.length) { state = nextState; changed(); } else rebuild();
+    }, Boolean(delta.messages?.length || delta.order));
+  }
+  function accept(update, checkCandidates = true) {
     // Invalidate a retired candidate before replaying optimistic writes onto the new one.
-    for (const owner of [...owners]) if (owner.actor.variantId &&
-      !base.messages.some(message => message.turnId === owner.actor.turnId && message.variantId === owner.actor.variantId)) dispose(owner);
-    rebuild();
+    if (checkCandidates) {
+      const candidates = new Map(base.messages.map(message => [message.turnId, message.variantId]));
+      for (const owner of [...owners]) if (owner.actor.variantId &&
+        candidates.get(owner.actor.turnId) !== owner.actor.variantId) dispose(owner);
+    }
+    update();
     for (const waiter of [...waiters]) if (has(globals, waiter.name) || (waiter.name === 'Mvu' && state.mvu)) {
       waiters.splice(waiters.indexOf(waiter), 1); bind(waiter.owner, waiter.name); waiter.resolve();
     }
@@ -112,7 +138,7 @@ export function createSession(initial) {
     }
   }
   const session = {
-    get state() { return state; }, get revision() { return base.revision; }, receive, emit, emitSync, stop,
+    get state() { return state; }, get revision() { return base.revision; }, receive, receiveDelta, emit, emitSync, stop,
     attach(notify = () => {}, actor = {}) {
       check();
       let cancelEvents;

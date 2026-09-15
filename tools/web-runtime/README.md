@@ -43,3 +43,20 @@ The optional C-05 test locates its original JSON by hash in the local `source/`
 directory and explicitly skips if unavailable. Neither original content nor local
 filenames belong in committed test reports. Android WebView and complete generation
 flows require separate app/device verification.
+
+## Performance research
+
+After `npm run build`, run `node performance-probe.mjs` from this directory.
+It measures both production author-session snapshot and delta paths and instruments an in-memory
+build of the production shell to count Markdown parsing during draft and tail-message
+updates. All messages are synthetic and all bridge/resource responses are local.
+It uses installed Edge by default; `PROBE_BROWSER_CHANNEL` can select another installed
+Playwright Chromium channel. Output goes to `build/performance/probe.json`.
+
+These desktop measurements exclude Android, disk persistence, providers and real author
+programs. Shell queue completion is not frame presentation or coordinator completion.
+Results have no CI timing threshold. It asserts zero historical Markdown parses for draft
+updates and one parse per changed tail message, and checks that the author coordinator
+eventually receives the final delta. The original baseline is recorded in
+[the performance study](../../docs/performance-study-20260914.md); implemented changes are in
+[the improvement record](../../docs/performance-improvements-20260915.md).

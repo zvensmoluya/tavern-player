@@ -81,6 +81,8 @@ Prompt 文本与兼容字段、Preset 名称 / 控制格式 / 结构 marker、�
 
 ## Conversation Runtime
 
+性能路径更新（2026-09-15）：`DefaultTokenAccounting` 显式提供各条 prepared message 的可加和成本与请求开销。Context 裁剪先扣除已删除消息的成本，结束前再做完整请求校验；自定义非加和计数器继续逐次完整校验。Character Regex 与世界书关键词复用有界 Pattern 缓存，以实际展开/兼容改写后的源码和 flags 为键，每次匹配仍创建独立 Matcher，宏事务与规则诊断不缓存。实现及测量边界见[性能改进记录](performance-improvements-20260915.md)。
+
 `GenerationPlanner` 是发送编排边界，当前由 `PromptCompiler` 实现。一次 generation transaction 依序处理：
 
 1. USER_INPUT storage Regex 与 Macro；

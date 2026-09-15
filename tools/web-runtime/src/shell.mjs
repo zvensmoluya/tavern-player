@@ -14,8 +14,10 @@ function lifecycle(name, args) { broadcast(name, args).catch(error => notice(err
 function publishMessageFacts(next) {
   const previous = factSnapshot; factSnapshot = next;
   if (!previous) return;
+  if (previous.messages === next.messages && previous.mvu === next.mvu) return;
+  const previousMessages = new Map(previous.messages.map(message => [message.turnId, message]));
   for (const message of next.messages) {
-    const before = previous.messages.find(item => item.turnId === message.turnId);
+    const before = previousMessages.get(message.turnId);
     if (!before && message.status === 'COMPLETE') lifecycle(message.role === 'user' ? tavernEvents.MESSAGE_SENT : tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
     if (before && before.swipe_id !== message.swipe_id) lifecycle(tavernEvents.MESSAGE_SWIPED, [message.message_id]);
     if (message.status === 'COMPLETE' && before?.status === 'STREAMING') lifecycle(tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
@@ -39,6 +41,9 @@ function button(text, action, disabled = false) {
 }
 const ui = (action, id) => rpc('ui.' + action, id ? { id } : {});
 function bottom() { window.scrollTo({ top: document.documentElement.scrollHeight }); }
+function followBottom() {
+  requestAnimationFrame(() => { if (following && !focusInFrame()) bottom(); });
+}
 // 视口变化时 scroll 可能晚于 resize 到达，贴底判定只能对比变化前记录的几何。
 function recordBottom() { previousBottom = document.documentElement.scrollHeight - window.innerHeight; }
 const focusInFrame = () => document.activeElement?.tagName === 'IFRAME';
@@ -49,7 +54,7 @@ window.addEventListener('resize', () => {
   recordBottom();
   document.getElementById('bottom').hidden = following;
   for (const frame of frames.values()) if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
-  if (following && !focusInFrame()) requestAnimationFrame(bottom);
+  if (following && !focusInFrame()) followBottom();
 }, { passive: true });
 window.addEventListener('scroll', () => {
   following = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
@@ -128,7 +133,7 @@ function staticContent(text) {
 function newRow() {
   return { element: document.createElement('article'), frames: [], segments: [], headerKey: null, header: null, name: null,
     reasoningKey: null, reasoning: null, reasoningText: null, status: null, statusText: null, reasoningOpen: false,
-    message: null, rendered: false, forced: false };
+    message: null, lastRenderedMessage: null, parsedSource: null, parsedParts: null, rendered: false, forced: false };
 }
 function clearRow(row) {
   row.frames.forEach(dispose); row.frames = [];
@@ -136,6 +141,7 @@ function clearRow(row) {
   row.headerKey = null; row.header = null; row.name = null;
   row.reasoningKey = null; row.reasoning = null; row.reasoningText = null;
   row.status = null; row.statusText = null;
+  row.lastRenderedMessage = null;
 }
 // 段的身份是序号 + kind：kind 与内容都没变的段一律不触碰，也不重发视口或高度。
 function segmentKey(kind, text, variantId) {
@@ -207,7 +213,11 @@ async function renderRow(row, message) {
     }
   }
   const next = [];
-  for (const [index, part] of segments(message.display ?? message.message).entries()) {
+  const source = message.display ?? message.message;
+  if (row.parsedSource !== source || !row.parsedParts) {
+    row.parsedParts = segments(source); row.parsedSource = source;
+  }
+  for (const [index, part] of row.parsedParts.entries()) {
     const previous = row.segments[index];
     if (part.kind === 'page' && message.status !== 'COMPLETE') {
       // 非 COMPLETE 不建 page 帧；占位文案原地随状态改写，不再无限等待。
@@ -251,7 +261,9 @@ async function render() {
     if (!row) { row = newRow(); rows.set(message.turnId, row); }
     row.frames.forEach(frame => { frame.messageId = message.message_id; });
     row.element.dataset.role = message.role;
-    await renderRow(row, message);
+    if (row.lastRenderedMessage !== message || row.forced) {
+      await renderRow(row, message); row.lastRenderedMessage = message;
+    }
     row.element.querySelector('header button').disabled = flags.busy;
     if (messagesNode.children[position] !== row.element) messagesNode.insertBefore(row.element, messagesNode.children[position] ?? null);
   }
@@ -265,7 +277,7 @@ async function render() {
     actionsNode.append(button('下一条', () => ui('next'), flags.busy || last.swipe_id === last.swipes.length - 1));
   }
   if (flags.regenerateAvailable) actionsNode.append(button('重新生成', () => ui('regenerate'), flags.busy));
-  if (following && !focusInFrame()) requestAnimationFrame(bottom);
+  if (following && !focusInFrame()) followBottom();
   recordBottom();
   await updateScripts();
 }
@@ -316,7 +328,7 @@ window.addEventListener('message', async event => {
     if (Number.isFinite(height) && height > 0) {
       // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
       frame.height = Math.min(height, 100000); frame.element.style.height = frame.height + 'px';
-      if (following && !focusInFrame()) requestAnimationFrame(bottom); recordBottom();
+      if (following && !focusInFrame()) followBottom(); recordBottom();
     }
   } else if (data.type === 'loaded') {
     frame.loaded = true;
@@ -340,7 +352,8 @@ window.addEventListener('message', async event => {
       const result = await rpc('host.' + data.method, data.args, { actorToken: frame.token, revision: data.revision });
       if (result.snapshot) {
         // Do not replace render metadata with the smaller authoritative host state.
-        snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({ ...snapshot.messages.find(old => old.id === m.id), ...m })) };
+        const previousMessages = new Map(snapshot.messages.map(message => [message.id, message]));
+        snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({ ...previousMessages.get(m.id), ...m })) };
         if (coordinator) post(coordinator, { type: 'snapshot', snapshot });
         publishMessageFacts(snapshot);
       }
@@ -373,17 +386,26 @@ async function apply(packet) {
   }
   if (packet.type === 'delta') {
     if (!snapshot) throw new Error('Missing initial conversation snapshot');
-    const messages = new Map(snapshot.messages.map(m => [m.turnId, m]));
-    for (const message of packet.messages) messages.set(message.turnId, message);
-    snapshot = { ...snapshot, ...packet.changes, messages: packet.order.map(id => messages.get(id)) };
+    let ordered = snapshot.messages;
+    if (packet.messages.length || packet.order) {
+      const messages = new Map(snapshot.messages.map(m => [m.turnId, m]));
+      for (const message of packet.messages) messages.set(message.turnId, message);
+      ordered = (packet.order ?? snapshot.messages.map(message => message.turnId)).map(id => messages.get(id));
+    }
+    snapshot = { ...snapshot, ...packet.changes, messages: ordered };
   } else snapshot = packet.snapshot;
   if (previous && snapshot.messages.length > previous.messages.length)
     shown += snapshot.messages.length - previous.messages.length;
   flags = packet.flags;
   await ensureCoordinator();
-  post(coordinator, { type: 'snapshot', snapshot });
+  if (packet.type === 'delta') post(coordinator, { type: 'delta', changes: packet.changes, messages: packet.messages,
+    ...(!packet.order || (packet.order.length === previous.messages.length && packet.order.every((id, index) => id === previous.messages[index].turnId))
+      ? {} : { order: packet.order }) });
+  else post(coordinator, { type: 'snapshot', snapshot });
   notice(flags.notice);
-  await render();
+  const draftOnly = packet.type === 'delta' && !packet.messages.length && !packet.order &&
+    Object.keys(packet.changes).every(key => key === 'draft' || key === 'revision') && JSON.stringify(oldFlags) === JSON.stringify(flags);
+  if (!draftOnly) await render();
   publishMessageFacts(snapshot);
   if (!previous) { lifecycle(tavernEvents.CHAT_CHANGED, [snapshot.conversationId]); return; }
   const generation = snapshot.generation, prior = previous.generation;

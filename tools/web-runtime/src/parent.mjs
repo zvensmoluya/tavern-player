@@ -18,6 +18,7 @@ function main() {
       if (event.source !== window.parent || event.origin !== config.rootOrigin || event.data?.epoch !== config.epoch) return;
       const data = event.data;
       if (data.type === 'snapshot') session.receive(data.snapshot);
+      else if (data.type === 'delta') session.receiveDelta(data);
       else if (data.type === 'dispose-owner') session.disposeFrame(data.token);
       else if (data.type === 'fatal') session.stop(new Error(data.message));
       else if (data.type === 'dispose') session.destroy();
