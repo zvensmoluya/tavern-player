@@ -9,6 +9,30 @@ import java.io.File
 
 class WebResourceRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
+    @Test fun largeConversationResourcesSurviveRefreshAndOfflineReuse() = runBlocking {
+        val root = folder.newFolder()
+        val repo = WebResourceRepository(root, fetcher = { url ->
+            WebDownload(ByteArray(9 * 1024 * 1024) { url.last().code.toByte() }, url, "application/javascript")
+        })
+        // Eight distinct 9 MiB bodies exceed both former byte limits.
+        repeat(8) { repo.resolve("large", "hash", "https://cdn.example/$it") }
+        assertEquals(8, repo.reprepare("large", "hash"))
+        assertFalse(File(root, "tavern/web-resources").listFiles()!!.any { it.name.startsWith("refresh-") })
+        val offline = WebResourceRepository(root, fetcher = { error("Offline") })
+        repeat(8) {
+            val resolved = offline.resolve("large", "hash", "https://cdn.example/$it")
+            assertEquals(9L * 1024 * 1024, resolved.first.bytes)
+            assertEquals(('0'.code + it).toByte(), resolved.second.last())
+        }
+    }
+
+    @Test fun conversationAcceptsMoreThan512Bindings() = runBlocking {
+        val root = folder.newFolder()
+        val repo = WebResourceRepository(root, fetcher = { url -> WebDownload(byteArrayOf(1), url, "text/css") })
+        repeat(513) { repo.resolve("many", "hash", "https://cdn.example/$it") }
+        assertEquals(513, repo.reprepare("many", "hash"))
+    }
+
     @Test fun explicitPreparationReplacesAllBindingsOnlyAfterEveryDownloadSucceeds() = runBlocking {
         val root = folder.newFolder()
         var version = "old"
@@ -22,6 +46,7 @@ class WebResourceRepositoryTest {
         version = "new"; failDownload = true
         try { repo.reprepare("c", "hash"); fail("Partial update published") } catch (_: IllegalStateException) {}
         assertEquals(first.first.sha256, repo.resolve("c", "hash", first.first.url).first.sha256)
+        assertFalse(File(root, "tavern/web-resources").listFiles()!!.any { it.name.startsWith("refresh-") })
         failDownload = false
         assertEquals(2, repo.reprepare("c", "hash"))
         val offline = WebResourceRepository(root, fetcher = { error("Offline") })

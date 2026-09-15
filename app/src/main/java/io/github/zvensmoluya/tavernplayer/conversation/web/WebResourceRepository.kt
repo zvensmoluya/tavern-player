@@ -74,43 +74,44 @@ class WebResourceRepository(
             if (indexFile.exists()) readSessionIndex(indexFile, characterHash).entries.keys.toList() else emptyList()
         }
         if (urls.isEmpty()) return@withContext 0
-        val downloads = linkedMapOf<String, WebDownload>()
-        for (url in urls) {
-            currentCoroutineContext().ensureActive()
-            checkedUrl(url)
-            val downloaded = withDownloadPermit { fetcher.fetch(url) }
-            require(downloaded.bytes.size in 1..MAX_RESOURCE_BYTES) { "网页资源超过 8 MiB 或为空" }
-            checkedUrl(downloaded.finalUrl)
-            downloads[url] = downloaded
-        }
-        currentCoroutineContext().ensureActive()
-        val refreshed = sessionMutex.withLock {
-            val entries = linkedMapOf<String, WebResourceEntry>()
+        // Stage refresh bodies on disk so memory does not grow with conversation history.
+        val staged = linkedMapOf<String, File>()
+        val entries = linkedMapOf<String, WebResourceEntry>()
+        try {
             for (url in urls) {
-                val downloaded = downloads.getValue(url)
+                currentCoroutineContext().ensureActive()
+                checkedUrl(url)
+                val downloaded = withDownloadPermit { fetcher.fetch(url) }
+                require(downloaded.bytes.size in 1..MAX_RESOURCE_BYTES) { "网页资源超过 64 MiB 或为空" }
+                checkedUrl(downloaded.finalUrl)
+                val temp = File.createTempFile("refresh-", ".tmp", root)
+                staged[url] = temp
+                temp.writeBytes(downloaded.bytes)
                 entries[url] = WebResourceEntry(url, downloaded.finalUrl, hash(downloaded.bytes), downloaded.bytes.size.toLong(), downloaded.mimeType, System.currentTimeMillis())
-                require(entries.size <= 512) { "会话网页资源超过 512 项" }
-                require(entries.values.distinctBy { it.sha256 }.sumOf { it.bytes } <= MAX_CONVERSATION_BYTES) { "会话网页资源达到 64 MiB 上限" }
             }
             currentCoroutineContext().ensureActive()
-            // Bindings registered by a request that completed during the download window keep their version.
-            val index = readSessionIndex(indexFile, characterHash)
-            val added = index.entries.filterKeys { it !in entries }
-            require((entries.values + added.values).distinctBy { it.sha256 }.sumOf { it.bytes } <= MAX_CONVERSATION_BYTES) { "会话网页资源达到 64 MiB 上限" }
-            val published = entries + added
-            val pendingBytes = entries.values.filter { entry ->
-                val file = blob(entry.sha256).takeIf { it.isFile }
-                file == null || file.length() != entry.bytes
-            }.sumOf { it.bytes }
-            withLiveHashes(entries.values.map { it.sha256 }) {
-                syncCacheQuota(entries.values.map { it.sha256 }.toSet(), pendingBytes)
-                entries.values.forEach { entry -> saveBlob(entry.sha256, downloads.getValue(entry.url).bytes) }
-                writeSessionIndexSafely(indexFile, WebResourceIndex(characterHash = characterHash, entries = published))
-                writeGlobalIndexSafely { it.copy(entries = it.entries + entries) }
+            val refreshed = sessionMutex.withLock {
+                currentCoroutineContext().ensureActive()
+                // Bindings registered by a request that completed during the download window keep their version.
+                val index = readSessionIndex(indexFile, characterHash)
+                val added = index.entries.filterKeys { it !in entries }
+                val published = entries + added
+                val pendingBytes = entries.values.filter { entry ->
+                    val file = blob(entry.sha256).takeIf { it.isFile }
+                    file == null || file.length() != entry.bytes
+                }.sumOf { it.bytes }
+                withLiveHashes(entries.values.map { it.sha256 }) {
+                    syncCacheQuota(entries.values.map { it.sha256 }.toSet(), pendingBytes)
+                    entries.values.forEach { entry -> saveBlob(entry.sha256, staged.getValue(entry.url).readBytes()) }
+                    writeSessionIndexSafely(indexFile, WebResourceIndex(characterHash = characterHash, entries = published))
+                    writeGlobalIndexSafely { it.copy(entries = it.entries + entries) }
+                }
+                entries.size
             }
-            entries.size
+            return@withContext refreshed
+        } finally {
+            staged.values.forEach { it.delete() }
         }
-        return@withContext refreshed
     }
 
     suspend fun resolve(conversationId: String, characterHash: String, url: String): Pair<WebResourceEntry, ByteArray> = withContext(Dispatchers.IO) {
@@ -134,14 +135,12 @@ class WebResourceRepository(
             }
             return Lookup.Pinned(entry)
         }
-        require(index.entries.size < 512) { "会话网页资源超过 512 项" }
         val shared = globalMutex.withLock { loadGlobalIndexLocked().entries[url] } ?: return Lookup.Unbound
         val bytes = readBlob(shared)
         if (bytes == null) {
             // This conversation has no binding for the URL yet, so a changed upstream is simply the new version.
             return Lookup.Unbound
         }
-        require((index.entries.values + shared).distinctBy { it.sha256 }.sumOf { it.bytes } <= MAX_CONVERSATION_BYTES) { "会话网页资源达到 64 MiB 上限" }
         // Hold the inherited hash while its snapshot is written, so eviction cannot take it in between.
         withLiveHashes(listOf(shared.sha256)) {
             writeSessionIndexSafely(indexFile, index.copy(entries = index.entries + (url to shared.copy())))
@@ -161,7 +160,7 @@ class WebResourceRepository(
 
     private suspend fun registerNew(sessionMutex: Mutex, indexFile: File, characterHash: String, url: String): Pair<WebResourceEntry, ByteArray> {
         val downloaded = withDownloadPermit { fetcher.fetch(url) }
-        require(downloaded.bytes.size in 1..MAX_RESOURCE_BYTES) { "网页资源超过 8 MiB 或为空" }
+        require(downloaded.bytes.size in 1..MAX_RESOURCE_BYTES) { "网页资源超过 64 MiB 或为空" }
         checkedUrl(downloaded.finalUrl)
         val sha = hash(downloaded.bytes)
         return sessionMutex.withLock {
@@ -177,9 +176,7 @@ class WebResourceRepository(
                 saveBlob(raced.sha256, downloaded.bytes)
                 return@withLock raced to downloaded.bytes
             }
-            require(index.entries.size < 512) { "会话网页资源超过 512 项" }
             val entry = WebResourceEntry(url, downloaded.finalUrl, sha, downloaded.bytes.size.toLong(), downloaded.mimeType, System.currentTimeMillis())
-            require((index.entries.values + entry).distinctBy { it.sha256 }.sumOf { it.bytes } <= MAX_CONVERSATION_BYTES) { "会话网页资源达到 64 MiB 上限" }
             withLiveHashes(listOf(sha)) {
                 syncCacheQuota(setOf(sha), downloaded.bytes.size.toLong())
                 saveBlob(sha, downloaded.bytes)
@@ -337,10 +334,9 @@ class WebResourceRepository(
         } finally { temp.delete() }
     }
     companion object {
-        const val MAX_RESOURCE_BYTES = 8 * 1024 * 1024
-        const val MAX_CONVERSATION_BYTES = 64L * 1024 * 1024
+        const val MAX_RESOURCE_BYTES = 64 * 1024 * 1024
         const val WEB_RESOURCE_CACHE_BYTES = 512L * 1024 * 1024
-        private const val DOWNLOAD_CONCURRENCY = 6
+        private const val DOWNLOAD_CONCURRENCY = 2
         private const val USAGE_FLUSH_THRESHOLD = 32
         private const val FRESH_BLOB_GRACE_MILLIS = 10 * 60 * 1000L
         private val BLOB_NAME = Regex("[a-f0-9]{64}")
@@ -372,14 +368,14 @@ class PublicWebResourceFetcher(private val client: OkHttpClient = defaultClient(
                     } else {
                         require(response.isSuccessful) { "网页资源服务器返回 HTTP ${response.code}" }
                         val body = response.body
-                        require(body.contentLength() <= WebResourceRepository.MAX_RESOURCE_BYTES) { "网页资源超过 8 MiB" }
+                        require(body.contentLength() <= WebResourceRepository.MAX_RESOURCE_BYTES) { "网页资源超过 64 MiB" }
                         val bytes = java.io.ByteArrayOutputStream()
                         body.byteStream().use { stream ->
                             val buffer = ByteArray(8192)
                             while (true) {
                                 currentCoroutineContext().ensureActive()
                                 val count = stream.read(buffer); if (count < 0) break
-                                require(bytes.size() + count <= WebResourceRepository.MAX_RESOURCE_BYTES) { "网页资源超过 8 MiB" }
+                                require(bytes.size() + count <= WebResourceRepository.MAX_RESOURCE_BYTES) { "网页资源超过 64 MiB" }
                                 bytes.write(buffer, 0, count)
                             }
                         }
@@ -396,6 +392,6 @@ class PublicWebResourceFetcher(private val client: OkHttpClient = defaultClient(
             Dns.SYSTEM.lookup(host).also { addresses ->
                 require(addresses.isNotEmpty() && addresses.all(HttpCharacterImageFetcher::publicAddress)) { "网页资源地址必须指向公网" }
             }
-        }.connectTimeout(15, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).callTimeout(45, TimeUnit.SECONDS).build()
+        }.connectTimeout(15, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).callTimeout(180, TimeUnit.SECONDS).build()
     }
 }
