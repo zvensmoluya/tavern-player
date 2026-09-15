@@ -31,6 +31,8 @@
 
 ## 历史记录
 
+[最新版模拟器安装与验证（2026-09-15）](archive/device-verification-20260915.md)记录旧会话升级核对、Android WebView/MVU/EJS 回归、真实两轮聊天与跨进程恢复、全局世界书导入编辑实测，以及两处仪器测试修复。
+
 [模拟器聊天实测与修复（2026-09-12）](archive/device-chat-verification-20260912.md)记录 DeepSeek 真实对话、键盘、候选和重启恢复的设备结果，以及聊天返回与作者输入焦点修复。
 
 [角色库修复收尾与实测续接（2026-09-12）](archive/library-startup-resume-20260912.md)记录最近一次中断后的修复、模拟器复验结果，以及尚待完成的聊天实测范围。

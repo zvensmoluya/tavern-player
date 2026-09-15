@@ -156,7 +156,7 @@ class BrowserLiveAndroidTest {
             val presetVm = withContext(Dispatchers.Main) { PresetViewModel(app.presetRepository).also { models.add(it) } }
             compose.setContent {
                 mounted?.let { vm -> key(vm) {
-                    TavernPlayerTheme { ChatRoute(vm, presetVm, {}, {}, {}, { characterId, assetId ->
+                    TavernPlayerTheme { ChatRoute(vm, presetVm, {}, {}, {}, resolveAssetPath = { characterId, assetId ->
                         app.characterRepository.assetFile(characterId, assetId)?.absolutePath
                     }) }
                 } }
@@ -192,7 +192,7 @@ class BrowserLiveAndroidTest {
             var vm = viewModel(if (recovering) freshRepository() else repository, id)
             compose.runOnUiThread { mounted = vm }
             progress("opening-$sample")
-            waitForPage()
+            waitForPage(requireAuthorFrame = !recovering)
             inspectPage(output, "opening")
             if (openingOnly) {
                 check(requests.get() == 0) { "BL_REQUEST_COUNT" }
@@ -249,7 +249,7 @@ class BrowserLiveAndroidTest {
             check(vm.uiState.value.messages.map { it.message.id } == saved.selectedMessages().map { it.id }) { "BL_UI_RECOVERY_IDS" }
             check(vm.uiState.value.messages.map { hash(it.message.content) } == saved.selectedMessages().map { hash(it.content) }) { "BL_UI_RECOVERY_CONTENT" }
             compose.runOnUiThread { mounted = vm }
-            waitForPage()
+            waitForPage(requireAuthorFrame = false)
             inspectPage(output, "reopened")
             compose.runOnUiThread { mounted = null }
             compose.waitForIdle()
@@ -291,11 +291,15 @@ class BrowserLiveAndroidTest {
         }
     }
 
-    private fun waitForPage() {
+    private fun waitForPage(requireAuthorFrame: Boolean) {
         compose.waitUntil(60_000) { webViews().any { it.isShown && it.width > 0 && it.height > 0 } }
         compose.waitUntil(60_000) { evaluate("document.readyState === 'complete' && document.querySelectorAll('article').length > 0") == "true" }
-        compose.waitUntil(60_000) {
-            evaluate("Array.from(document.querySelectorAll('article iframe')).some(f => { const r=f.getBoundingClientRect(); return r.width>0 && r.height>0; })") == "true"
+        // Display Regex may hide the opening page once its maximum depth is exceeded.
+        // Reopened conversations can legitimately contain only ordinary message text.
+        if (requireAuthorFrame) {
+            compose.waitUntil(60_000) {
+                evaluate("Array.from(document.querySelectorAll('article iframe')).some(f => { const r=f.getBoundingClientRect(); return r.width>0 && r.height>0; })") == "true"
+            }
         }
         Thread.sleep(1_000)
         compose.onNodeWithTag("webChatContent").assertIsDisplayed()

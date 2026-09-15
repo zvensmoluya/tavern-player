@@ -62,6 +62,45 @@ class RoomConversationRepositoryTest {
         }
     }
 
+    @Test fun `mixed legacy versions preserve records and allow new conversations after import`() = runBlocking {
+        val root = folder.newFolder()
+        val originals = ConversationRepository(folder.newFolder(), compiler).use { source ->
+            (1..3).map { version -> create(source).copy(schemaVersion = version, draft = "draft-$version") }
+        }
+        val files = originals.map { record ->
+            File(root, "tavern/conversations/${record.id}.json").also {
+                it.parentFile!!.mkdirs()
+                // Omit default fields, matching older files that predate those fields.
+                it.writeText(Json.encodeToString(record))
+            }
+        }
+        val bytes = files.map { it.readBytes() }
+        val created = ConversationRepository(root, compiler).use { repository ->
+            originals.forEach { assertEquals(it, repository.get(it.id)) }
+            assertNotNull(repository.store.dao.imported("__active__"))
+            create(repository).also { assertEquals(4, repository.store.dao.summaries().size) }
+        }
+        ConversationRepository(root, compiler).use { repository ->
+            originals.forEach { assertEquals(it, repository.get(it.id)) }
+            assertEquals(created, repository.get(created.id))
+            files.zip(bytes).forEach { (file, original) -> assertArrayEquals(original, file.readBytes()) }
+        }
+    }
+
+    @Test fun `unknown legacy version still blocks activation and preserves source`() = runBlocking {
+        val original = ConversationRepository(folder.newFolder(), compiler).use { create(it) }.copy(schemaVersion = 4)
+        val root = folder.newFolder()
+        val file = File(root, "tavern/conversations/future.json").also {
+            it.parentFile!!.mkdirs(); it.writeText(Json.encodeToString(original))
+        }
+        val bytes = file.readBytes()
+        ConversationRepository(root, compiler).use { repository ->
+            try { create(repository); fail("Unknown version activated") } catch (_: IllegalStateException) { }
+            assertNull(repository.store.dao.imported("__active__"))
+            assertArrayEquals(bytes, file.readBytes())
+        }
+    }
+
     @Test fun `draft writes leave history head and summary unchanged and reject older drafts`() = runBlocking {
         ConversationRepository(folder.newFolder(), compiler).use { repository ->
             val original = create(repository)

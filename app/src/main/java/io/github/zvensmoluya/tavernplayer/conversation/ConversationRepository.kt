@@ -46,7 +46,9 @@ class ConversationRepository(
                 if (marker == null) {
                     val record = try { json.decodeFromString<ConversationRecord>(bytes.toString(Charsets.UTF_8)) }
                     catch (error: Exception) { throw IllegalStateException("旧会话无法解析，导入未激活，原文件已保留", error) }
-                    check(record.schemaVersion == 3) { "旧会话格式不受支持，导入未激活，原文件已保留" }
+                    // The previous JSON reader also accepted v1/v2 using serializer defaults.
+                    // Keep their recorded version and retain the original source bytes.
+                    check(record.schemaVersion in 1..3) { "旧会话格式不受支持，导入未激活，原文件已保留" }
                     store.transaction {
                         val saved = store.save(record.copy(commitRevision = 0), null)
                         check(store.read(saved.id) == saved) { "旧会话导入校验失败，原文件已保留" }

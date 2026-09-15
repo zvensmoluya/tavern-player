@@ -400,11 +400,15 @@ fun CharacterDetailScreen(
                 }
             }
             item("new") {
-                Button(
-                    onClick = onNewConversation,
-                    enabled = !importing,
-                    modifier = Modifier.fillMaxWidth().testTag("newConversation"),
-                ) { Text("开始新对话") }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onNewConversation,
+                        enabled = !importing,
+                        modifier = Modifier.fillMaxWidth().testTag("newConversation"),
+                    ) { Text("开始新对话") }
+                    if (message != null) Text(message, modifier = Modifier.testTag("characterDetailNotice"),
+                        style = MaterialTheme.typography.bodySmall)
+                }
             }
             item("new-native") {
                 // 两条路线都默认可达：纯文字卡和已适配卡都能进原生；原生走不通时玩家可以再按网页模式新建一条。
@@ -499,7 +503,6 @@ fun CharacterDetailScreen(
                         enabled = !importing,
                         modifier = Modifier.testTag("installNativeAdaptation"),
                     ) { Text("导入原生适配文件") }
-                    if (message != null) Text(message, style = MaterialTheme.typography.bodySmall)
                     val adaptation = character.nativeAdaptation
                     if (adaptation == null) {
                         Text("暂无原生适配；卡片可以直接用原生模式开始对话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
