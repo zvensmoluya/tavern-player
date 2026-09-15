@@ -9,7 +9,7 @@ const message = (display, index, extra = {}) => ({ id: 'm' + index, turnId: 't' 
   swipes: [display], swipes_data: [{}], swipes_info: [{}], swipe_id: 0, is_hidden: false, reasoning: [], ...extra });
 
 // Host stand-in: the shell only reaches native through PlayerBridge, answered here by a binding.
-async function open(browser, viewport, displays) {
+async function open(browser, viewport, displays, options = {}) {
   const page = await browser.newPage({ viewport });
   const frames = new Map(), created = []; let serial = 0, snapshot;
   const build = list => ({ conversationId: 'c', revision: 'r0', chatVariables: {}, scriptVariables: {}, draft: '', mvu: null,
@@ -35,7 +35,10 @@ async function open(browser, viewport, displays) {
     const url = new URL(route.request().url());
     let body, type;
     if (url.pathname.startsWith('/frame/')) {
-      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', JSON.stringify(frames.get(url.pathname.split('/').at(-1))).replaceAll('<', '\\u003c'));
+      const config = frames.get(url.pathname.split('/').at(-1));
+      if (!config) { await route.fulfill({ status: 404, body: '' }); return; }
+      await options.beforeFrame?.(config);
+      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', JSON.stringify(config).replaceAll('<', '\\u003c'));
       type = 'text/html';
     } else {
       const name = url.pathname.split('/').at(-1);
@@ -103,7 +106,7 @@ test('streaming rich updates keep the document height and a bottom reader in pla
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const { page, messages, set } = await open(browser, { width: 420, height: 700 }, [message(tall, 0), message(rich('start'), 1)]);
-    await page.waitForFunction(() => { const items = [...document.querySelectorAll('article iframe')];
+    await page.waitForFunction(() => { const items = [...document.querySelectorAll('article iframe:not(.frame-pending)')];
       return items.length === 2 && items.every(item => parseFloat(item.style.height) > 100); });
     await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); window.dispatchEvent(new Event('scroll')); });
     assert.equal(await page.evaluate(() => document.getElementById('bottom').hidden), true);
@@ -200,7 +203,7 @@ test('status text and the page placeholder follow the message status independent
     }
     const list = messages();
     await set([{ ...list[0], status: 'COMPLETE' }]);
-    await page.waitForFunction(() => document.querySelector('article iframe')?.style.height);
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)')?.style.height);
     assert.deepEqual(await page.evaluate(() => { const row = document.querySelector('article');
       return { status: row.querySelector('.status'), loading: row.querySelector('.runtime-loading'), frames: row.querySelectorAll('iframe').length,
         name: row.querySelector('header span').textContent }; }),
@@ -285,4 +288,139 @@ test('a static frame keeps the shell prose baseline while author styles still wi
     const pageFrame = await authorFrame(page, '#author-page');
     assert.equal(await pageFrame.locator('link[href$="message.css"]').count(), 0);
   } finally { await browser.close(); }
+});
+
+test('plain streaming preserves prefix nodes and selection while extending the tail text node', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const source = suffix => 'A paragraph already being read.\n\nThe reply grows: ' + suffix;
+    const { page, set } = await open(browser, { width: 420, height: 700 }, [message(source('start'), 0, { status: 'STREAMING' })]);
+    await page.waitForFunction(() => document.querySelectorAll('article .message-segment p').length === 2);
+    await page.evaluate(() => {
+      const [first, last] = document.querySelectorAll('article .message-segment p');
+      window.__nodes = { first, last, text: last.firstChild, removed: 0 };
+      new MutationObserver(records => { for (const record of records) window.__nodes.removed += record.removedNodes.length; })
+        .observe(first.parentNode, { childList: true, subtree: true });
+      const range = document.createRange(); range.setStart(first.firstChild, 2); range.setEnd(first.firstChild, 11);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+    });
+    for (let i = 1; i <= 12; i++) {
+      await set([message(source('start' + ' more'.repeat(i)), 0, { status: 'STREAMING' })]);
+      await page.waitForFunction(text => document.querySelector('article .message-segment')?.textContent.includes(text), 'start' + ' more'.repeat(i));
+    }
+    assert.deepEqual(await page.evaluate(() => {
+      const [first, last] = document.querySelectorAll('article .message-segment p');
+      return { first: first === window.__nodes.first, last: last === window.__nodes.last,
+        text: last.firstChild === window.__nodes.text, removed: window.__nodes.removed, selection: String(window.getSelection()) };
+    }), { first: true, last: true, text: true, removed: 0, selection: 'paragraph' });
+    await set([message('Edited **answer**.', 0)]);
+    await page.waitForFunction(() => document.querySelector('article strong')?.textContent === 'answer');
+    assert.equal(await page.locator('article .message-segment p').count(), 1);
+  } finally { await browser.close(); }
+});
+
+test('rich streaming retains one document, form state and images, and only applies complete CSS', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const source = suffix => '<div id="panel"><p id="stable-prefix">Already visible</p><input id="field" value="default">' +
+      '<details id="fold"><summary>More</summary>Details</details>' +
+      '<img id="picture" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">' +
+      '<p id="tail">' + suffix + '</p></div>';
+    const { page, created, set } = await open(browser, { width: 420, height: 700 }, [message(source('Start'), 0, { status: 'STREAMING' })]);
+    const frame = await authorFrame(page, '#field');
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)'));
+    await frame.locator('#field').fill('unsaved text');
+    await frame.evaluate(() => {
+      document.getElementById('field').setSelectionRange(2, 7);
+      document.getElementById('fold').open = true;
+      window.__kept = ['stable-prefix', 'field', 'fold', 'picture', 'tail'].map(id => document.getElementById(id));
+      window.__imageLoads = 0; document.getElementById('picture').addEventListener('load', () => window.__imageLoads++);
+    });
+    for (let i = 1; i <= 12; i++) {
+      await set([message(source('Start' + ' more'.repeat(i)), 0, { status: 'STREAMING' })]);
+      await frame.waitForFunction(text => document.getElementById('tail')?.textContent === text, 'Start' + ' more'.repeat(i));
+    }
+    const content = source('Final');
+    await set([message(content + '<style>#tail{color:rgb(1,2,3)', 0, { status: 'STREAMING' })]);
+    await frame.waitForFunction(() => document.getElementById('tail').textContent === 'Final');
+    assert.notEqual(await frame.locator('#tail').evaluate(node => getComputedStyle(node).color), 'rgb(1, 2, 3)');
+    await set([message(content + '<style>#tail{color:rgb(1,2,3)}</style>', 0)]);
+    await frame.waitForFunction(() => getComputedStyle(document.getElementById('tail')).color === 'rgb(1, 2, 3)');
+    assert.deepEqual(await frame.evaluate(() => ({ same: window.__kept.every(node => document.getElementById(node.id) === node),
+      input: document.getElementById('field').value, focused: document.activeElement.id,
+      selection: [document.getElementById('field').selectionStart, document.getElementById('field').selectionEnd],
+      open: document.getElementById('fold').open, imageLoads: window.__imageLoads, host: typeof getVariables })),
+    { same: true, input: 'unsaved text', focused: 'field', selection: [2, 7], open: true, imageLoads: 0, host: 'undefined' });
+    assert.equal(created.filter(item => item.kind === 'static').length, 1);
+    // New candidates own fresh form state even if they reuse the same source.
+    const priorUrl = await page.locator('article iframe').getAttribute('src');
+    await set([message(content, 0, { variantId: 'v0-new' })]);
+    await page.waitForFunction(prior => {
+      const frame = document.querySelector('article iframe:not(.frame-pending)');
+      return frame && frame.getAttribute('src') !== prior;
+    }, priorUrl);
+    const replacement = await authorFrame(page, '#field');
+    assert.equal(await replacement.locator('#field').inputValue(), 'default');
+    assert.equal(created.filter(item => item.kind === 'static').length, 2);
+  } finally { await browser.close(); }
+});
+
+test('HTML stays buffered until complete and the placeholder survives slow page preparation', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  try {
+    const source = 'Intro\n\n```html\n<head><style>#ready{color:rgb(1,2,3)}</style></head><body>' +
+      '<p id="ready">Page ready</p><script>window.boots=(window.boots||0)+1;window.renderEvents=[];' +
+      'eventOn(iframe_events.MESSAGE_IFRAME_RENDER_ENDED,()=>window.renderEvents.push("iframe"));' +
+      'eventOn(tavern_events.CHARACTER_MESSAGE_RENDERED,()=>window.renderEvents.push("message"));</script></body>\n```';
+    const { page, created, set } = await open(browser, { width: 420, height: 700 },
+      [message(source.slice(0, source.indexOf('<body>')), 0, { status: 'STREAMING' })],
+      { beforeFrame: config => config.kind === 'page' ? gate : undefined });
+    await page.waitForFunction(() => document.querySelector('article .runtime-loading'));
+    assert.doesNotMatch(await page.locator('article').innerText(), /<head>|<style>|color:|```/);
+    await set([message(source, 0, { status: 'STREAMING' })]);
+    assert.equal(pages(created), 0);
+    await page.locator('article .runtime-loading').evaluate(node => { node.dataset.probe = 'kept'; });
+    await set([message(source, 0)]);
+    await page.waitForFunction(() => document.querySelector('article iframe.frame-pending'));
+    assert.equal(await page.locator('article .runtime-loading').getAttribute('data-probe'), 'kept');
+    assert.equal(await page.locator('article iframe').isVisible(), false);
+    // Waiting for page assets does not block later message rendering.
+    await set([message(source, 0), message('Next reply is streaming', 1, { status: 'STREAMING' })]);
+    await page.waitForFunction(() => document.querySelectorAll('article')[1]?.textContent.includes('Next reply is streaming'));
+    release();
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)'));
+    const frame = await authorFrame(page, '#ready');
+    assert.equal(await frame.evaluate(() => window.boots), 1);
+    await frame.waitForFunction(() => window.renderEvents.length === 2);
+    assert.deepEqual(await frame.evaluate(() => window.renderEvents), ['iframe', 'message']);
+    assert.equal(await frame.locator('#ready').evaluate(node => getComputedStyle(node).color), 'rgb(1, 2, 3)');
+    assert.equal(await page.locator('article .runtime-loading').count(), 0);
+    assert.equal(pages(created), 1);
+  } finally { release(); await browser.close(); }
+});
+
+test('text remains visible during promotion and a slow static frame receives the latest preview', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  try {
+    const { page, created, set } = await open(browser, { width: 420, height: 700 }, [message('Visible prose', 0, { status: 'STREAMING' })],
+      { beforeFrame: config => config.kind === 'static' ? gate : undefined });
+    await page.waitForFunction(() => document.querySelector('article')?.textContent.includes('Visible prose'));
+    await set([message('Visible prose\n\n<div id="value">Old</div>', 0, { status: 'STREAMING' })]);
+    await page.waitForFunction(() => document.querySelector('article iframe.frame-pending'));
+    assert.match(await page.locator('article').innerText(), /Visible prose/);
+    for (let i = 0; i < 8; i++) await set([message('Visible prose\n\n<div id="value">Revision ' + i + '</div>', 0, { status: 'STREAMING' })]);
+    release();
+    const frame = await authorFrame(page, '#value');
+    await frame.waitForFunction(() => document.getElementById('value').textContent === 'Revision 7');
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)'));
+    assert.equal(created.filter(item => item.kind === 'static').length, 1);
+    // Static patches still sanitize active markup and do not create author host capabilities.
+    await set([message('<div id="value">Safe</div><script>window.unwanted=1</script><img onerror="window.unwanted=2" src="bad">', 0)]);
+    await frame.waitForFunction(() => document.getElementById('value').textContent === 'Safe');
+    assert.deepEqual(await frame.evaluate(() => ({ unwanted: window.unwanted ?? null,
+      handler: document.querySelector('img').getAttribute('onerror'), host: typeof getVariables })),
+    { unwanted: null, handler: null, host: 'undefined' });
+  } finally { release(); await browser.close(); }
 });

@@ -1,10 +1,13 @@
-import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { tavernEvents, mvuEvents, iframeEvents } from './host.mjs';
+import { segmentMarkdown } from './markdown.mjs';
+import { patchChildren } from './dom-patch.mjs';
 
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
 let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, programKey = '', following = true, previousBottom = 0;
+let measuredViewportHeight = window.innerHeight;
+let observedScrollY = window.scrollY;
 let renderQueue = Promise.resolve(), coordinator = null, factSnapshot = null;
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
@@ -45,19 +48,27 @@ function followBottom() {
   requestAnimationFrame(() => { if (following && !focusInFrame()) bottom(); });
 }
 // 视口变化时 scroll 可能晚于 resize 到达，贴底判定只能对比变化前记录的几何。
-function recordBottom() { previousBottom = document.documentElement.scrollHeight - window.innerHeight; }
+function recordBottom() { previousBottom = document.documentElement.scrollHeight - measuredViewportHeight; }
 const focusInFrame = () => document.activeElement?.tagName === 'IFRAME';
 window.addEventListener('resize', () => {
   // 键盘弹出会改变视口而不产生滚动，读者原本是否在底部要用变化前的偏移判断。
   const wasFollowing = following && window.scrollY >= previousBottom - 80;
   following = wasFollowing || document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  measuredViewportHeight = window.innerHeight;
   recordBottom();
   document.getElementById('bottom').hidden = following;
   for (const frame of frames.values()) if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
   if (following && !focusInFrame()) followBottom();
 }, { passive: true });
 window.addEventListener('scroll', () => {
-  following = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  // The viewport can change before its resize event, including while a frame reports its size.
+  // Preserve the old reading intent until resize has compared it with the old viewport.
+  if (window.innerHeight !== measuredViewportHeight) return;
+  const atBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  // A queued scroll notification at the same position is not a reader scrolling away.
+  // In particular, it must not cancel the bottom adjustment queued by a keyboard resize.
+  if (atBottom || window.scrollY !== observedScrollY) following = atBottom;
+  observedScrollY = window.scrollY;
   document.getElementById('bottom').hidden = following;
 }, { passive: true });
 document.getElementById('bottom').onclick = () => { following = true; bottom(); };
@@ -70,16 +81,7 @@ document.getElementById('earlier').onclick = () => {
   });
 };
 
-export function segments(text) {
-  const result = [], tokens = marked.lexer(text); let normal = [];
-  const flush = () => { if (normal.length) { result.push({ kind: 'normal', text: marked.parser(normal) }); normal = []; } };
-  for (const token of tokens) {
-    if (token.type === 'code' && /<body(?:\s[^>]*)?>/i.test(token.text) && (/<\/body\s*>/i.test(token.text) || token.lang?.toLowerCase() === 'html')) {
-      flush(); result.push({ kind: 'page', text: token.text });
-    } else normal.push(token);
-  }
-  flush(); return result;
-}
+export function segments(text, incomplete = false) { return segmentMarkdown(text, incomplete); }
 
 async function createFrame(kind, html, target, sourceId) {
   const result = await rpc('frame.create', { kind, html, messageId: target?.id, sourceId, viewportHeight: window.innerHeight });
@@ -93,12 +95,11 @@ async function createFrame(kind, html, target, sourceId) {
   element.src = result.url;
   return frame;
 }
-// 段级重建在同一任务里把新帧换到旧帧的位置，此时 detach 为 false，节点由调用方接管。
-function dispose(frame, detach = true) {
+function dispose(frame) {
   if (!frame) return;
   if (coordinator && frame !== coordinator) post(coordinator, { type: 'dispose-owner', token: frame.token });
   post(frame, { type: 'dispose' });
-  if (detach) frame.element.remove();
+  frame.element.remove();
   frames.delete(frame.token);
   for (const [id, item] of eventAcks) if (item.frame === frame) { eventAcks.delete(id); item.reject(new Error('Runtime disposed')); }
   rpc('frame.dispose', { token: frame.token }).catch(() => {});
@@ -121,19 +122,10 @@ const richText = text => /<(?:style|table|div|span|form|input|img|details|sectio
 // HTML styles never share the trusted player's document or controls.
 const SANITIZE = { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
   FORBID_ATTR: ['srcdoc'] };
-function sanitize(text) {
-  return DOMPurify.sanitize(text, { ...SANITIZE, WHOLE_DOCUMENT: false });
-}
-// 作者的 <style> 会被整文档解析提升进 <head>，只序列化 body 就会连样式一起丢掉。
-// 取回 head 里的样式块与正文一起交给 static 帧：样式仍只作用于这个没有宿主能力的沙箱帧。
-function staticContent(text) {
-  const parsed = new DOMParser().parseFromString(DOMPurify.sanitize(text, { ...SANITIZE, WHOLE_DOCUMENT: true }), 'text/html');
-  return [...parsed.head.querySelectorAll('style')].map(node => node.outerHTML).join('') + parsed.body.innerHTML;
-}
 function newRow() {
   return { element: document.createElement('article'), frames: [], segments: [], headerKey: null, header: null, name: null,
     reasoningKey: null, reasoning: null, reasoningText: null, status: null, statusText: null, reasoningOpen: false,
-    message: null, lastRenderedMessage: null, parsedSource: null, parsedParts: null, rendered: false, forced: false };
+    message: null, lastRenderedMessage: null, parsedSource: null, parsedIncomplete: null, parsedParts: null, rendered: false, forced: false };
 }
 function clearRow(row) {
   row.frames.forEach(dispose); row.frames = [];
@@ -147,17 +139,38 @@ function clearRow(row) {
 function segmentKey(kind, text, variantId) {
   return JSON.stringify(kind === 'page' ? [kind, text, variantId] : [kind, text]);
 }
-// 重建的段在同一任务内原地换节点：旧帧先收到 dispose，新帧已带上旧帧最后实测的高度，
-// 浏览器只在任务结束后布局，读者看到的文档高度不会先掉再涨。
-function replaceSegment(row, previous, node) {
-  if (!previous) return;
-  if (previous.frame) { dispose(previous.frame, false); row.frames = row.frames.filter(item => item !== previous.frame); }
-  previous.node.replaceWith(node);
+function removeSegmentFrames(row, segment) {
+  for (const frame of [segment?.frame, ...(segment?.retiring ?? [])].filter(Boolean)) {
+    dispose(frame); row.frames = row.frames.filter(item => item !== frame);
+  }
 }
-// resize 处理把每次实测高度记在帧上；重建该段时用它预置新 iframe 的高度。
-function presetHeight(segment) {
-  const height = segment?.frame?.height;
-  return Number.isFinite(height) ? height : null;
+function segmentNode(previous) {
+  const node = previous?.node ?? document.createElement('div');
+  node.className = 'message-segment'; return node;
+}
+function updateStatic(frame, html) {
+  if (html.length > 2 * 1024 * 1024) throw new Error('网页超过 2 MiB');
+  frame.staticHtml = html; frame.staticVersion = (frame.staticVersion ?? 0) + 1;
+  if (frame.loaded) post(frame, { type: 'static-update', html, version: frame.staticVersion });
+}
+function revealSegment(row, segment) {
+  const frame = segment.frame;
+  if (!frames.has(frame.token) || frame.revealed) return;
+  for (const retired of segment.retiring) {
+    dispose(retired); row.frames = row.frames.filter(item => item !== retired);
+  }
+  segment.retiring = [];
+  // Keep the new iframe attached: moving it through replaceChildren would reload its document.
+  for (const node of [...segment.node.childNodes]) if (node !== frame.element) node.remove();
+  frame.revealed = true; frame.element.classList.remove('frame-pending'); frame.element.inert = false;
+  segment.node.style.minHeight = '';
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    frame.element.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120 });
+  }
+  if (following && !focusInFrame()) followBottom(); recordBottom();
+  if (frame.kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_ENDED, [frame.token]);
+  row.rendered = true;
+  lifecycle(row.message.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
 }
 // 未变的段由调用方直接复用，新节点只接在段列表尾部，顺序不会被这段整理打乱。
 function placeRow(row) {
@@ -171,18 +184,43 @@ function placeRow(row) {
 }
 async function buildSegment(row, message, part, kind, previous) {
   if (kind === 'text') {
-    const node = document.createElement('div');
-    node.innerHTML = DOMPurify.sanitize(sanitize(part.text), { FORBID_TAGS: ['style'], FORBID_ATTR: ['style', 'id', 'name'] });
-    replaceSegment(row, previous, node);
-    return { kind, key: segmentKey(kind, part.text), node };
+    const template = document.createElement('template');
+    template.innerHTML = DOMPurify.sanitize(part.text, { ...SANITIZE, ADD_TAGS: [],
+      FORBID_TAGS: [...SANITIZE.FORBID_TAGS, 'style'], FORBID_ATTR: ['srcdoc', 'style', 'id', 'name'] });
+    if (previous?.kind === 'text' && previous.variantId === message.variantId) {
+      patchChildren(previous.content, template.content); previous.key = segmentKey(kind, part.text); return previous;
+    }
+    const node = segmentNode(previous), content = document.createElement('div');
+    removeSegmentFrames(row, previous); node.replaceChildren(content); node.style.minHeight = '';
+    patchChildren(content, template.content);
+    return { kind, key: segmentKey(kind, part.text), node, content, variantId: message.variantId };
   }
-  const height = presetHeight(previous);
-  const frame = kind === 'page' ? await createFrame('page', part.text, message)
-    : await createFrame('static', '<body>' + staticContent(part.text) + '</body>', message);
+  if (kind === 'static' && previous?.kind === 'static' && previous.variantId === message.variantId) {
+    updateStatic(previous.frame, part.text); previous.key = segmentKey(kind, part.text); return previous;
+  }
+  const node = segmentNode(previous), height = node.getBoundingClientRect().height;
+  if (kind === 'page' && previous?.kind === 'waiting') previous.content.textContent = '正在加载交互界面…';
+  let retiring = [previous?.frame, ...(previous?.retiring ?? [])].filter(Boolean);
+  // An executable page must lose its owner before its replacement starts running.
+  for (const old of retiring) if (old.kind === 'page' || !old.revealed) {
+    dispose(old); row.frames = row.frames.filter(item => item !== old);
+  }
+  retiring = retiring.filter(old => frames.has(old.token));
+  if (!node.childNodes.length) {
+    const loading = document.createElement('p'); loading.className = 'runtime-loading';
+    loading.textContent = '正在加载内容…'; node.append(loading);
+  }
+  if (height) node.style.minHeight = height + 'px';
+  // Static markup is sanitized inside its persistent sandbox before entering a document.
+  const html = part.text;
+  const frame = await createFrame(kind, html, message);
+  frame.element.classList.add('frame-pending'); frame.element.inert = true; frame.revealed = false;
   if (height) frame.element.style.height = height + 'px';
-  frame.height = height;
-  row.frames.push(frame); replaceSegment(row, previous, frame.element);
-  return { kind, key: segmentKey(kind, part.text, message.variantId), node: frame.element, frame };
+  const segment = { kind, key: segmentKey(kind, part.text, message.variantId), node, frame, retiring, variantId: message.variantId };
+  frame.onLoaded = () => revealSegment(row, segment);
+  if (kind === 'static') updateStatic(frame, html);
+  row.frames.push(frame); node.append(frame.element);
+  return segment;
 }
 async function renderRow(row, message) {
   row.message = message;
@@ -214,30 +252,34 @@ async function renderRow(row, message) {
   }
   const next = [];
   const source = message.display ?? message.message;
-  if (row.parsedSource !== source || !row.parsedParts) {
-    row.parsedParts = segments(source); row.parsedSource = source;
+  const incomplete = message.status !== 'COMPLETE';
+  if (row.parsedSource !== source || row.parsedIncomplete !== incomplete || !row.parsedParts) {
+    row.parsedParts = segments(source, incomplete); row.parsedSource = source; row.parsedIncomplete = incomplete;
   }
   for (const [index, part] of row.parsedParts.entries()) {
     const previous = row.segments[index];
-    if (part.kind === 'page' && message.status !== 'COMPLETE') {
+    if ((part.kind === 'page' || part.kind === 'pending') && incomplete) {
       // 非 COMPLETE 不建 page 帧；占位文案原地随状态改写，不再无限等待。
       const text = waitingLabels[message.status] ?? WAITING;
       if (previous?.kind === 'waiting') {
-        if (previous.key !== text) { previous.node.textContent = text; previous.key = text; }
+        if (previous.key !== text) { previous.content.textContent = text; previous.key = text; }
         next.push(previous); continue;
       }
-      const node = document.createElement('p');
-      node.className = 'runtime-loading'; node.textContent = text;
-      replaceSegment(row, previous, node); next.push({ kind: 'waiting', key: text, node });
+      const node = segmentNode(previous), content = document.createElement('p');
+      content.className = 'runtime-loading'; content.textContent = text;
+      removeSegmentFrames(row, previous); node.replaceChildren(content); node.style.minHeight = '';
+      next.push({ kind: 'waiting', key: text, node, content });
       continue;
     }
-    const kind = part.kind === 'page' ? 'page' : richText(part.text) ? 'static' : 'text';
+    // Once promoted, keep this candidate's static document even if a later projection is plain.
+    const kind = part.kind === 'page' ? 'page' : richText(part.text) ||
+      (previous?.kind === 'static' && previous.variantId === message.variantId) ? 'static' : 'text';
     const key = segmentKey(kind, part.text, message.variantId);
-    if (previous?.kind === kind && previous.key === key) { next.push(previous); continue; }
+    if (previous?.kind === kind && previous.key === key && previous.variantId === message.variantId) { next.push(previous); continue; }
     next.push(await buildSegment(row, message, part, kind, previous));
   }
   for (const segment of row.segments.slice(next.length)) {
-    if (segment.frame) { dispose(segment.frame); row.frames = row.frames.filter(item => item !== segment.frame); }
+    removeSegmentFrames(row, segment);
     segment.node.remove();
   }
   row.segments = next;
@@ -328,20 +370,17 @@ window.addEventListener('message', async event => {
     if (Number.isFinite(height) && height > 0) {
       // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
       frame.height = Math.min(height, 100000); frame.element.style.height = frame.height + 'px';
-      if (following && !focusInFrame()) followBottom(); recordBottom();
+      if (frame.revealed !== false) { if (following && !focusInFrame()) followBottom(); recordBottom(); }
     }
   } else if (data.type === 'loaded') {
     frame.loaded = true;
     if (frame.kind === 'session') { post(frame, { type: 'snapshot', snapshot }); frame.onLoaded?.(); return; }
-    if (frame.kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_ENDED, [frame.token]);
+    if (frame.kind === 'static') post(frame, { type: 'static-update', html: frame.staticHtml, version: frame.staticVersion });
+    else frame.onLoaded?.();
     // 建帧到加载完成之间可能已经发生过视口变化（键盘、旋转、分屏），补发一次当前可见高度。
     if (frame.kind !== 'script') post(frame, { type: 'viewport', height: window.innerHeight });
-    if (frame.kind !== 'script') {
-      const message = snapshot.messages[frame.messageId];
-      // 行级标记：渲染事件按消息只发一次，段级更新不再补发。
-      const row = rows.get(message?.turnId); if (row) row.rendered = true;
-      lifecycle(message?.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [frame.messageId]);
-    }
+  } else if (data.type === 'static-applied') {
+    if (frame.kind === 'static' && data.version === frame.staticVersion) frame.onLoaded?.();
   } else if (data.type === 'notice') {
     if (data.level === 'buttons') {
       const item = [...scriptFrames.values()].find(item => item.frame === frame); if (item && Array.isArray(data.message)) scriptButtons(item, data.message);

@@ -29,7 +29,8 @@ const report = {
   generatedAt: new Date().toISOString(),
   commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   node: process.version, platform: process.platform, arch: process.arch, messageChars: text.length,
-  sources: Object.fromEntries(await Promise.all(['src/shell.mjs', 'src/session.mjs'].map(async file => [file, sha(await readFile(file))]))),
+  sources: Object.fromEntries(await Promise.all(['src/shell.mjs', 'src/session.mjs', 'src/parent.mjs', 'src/markdown.mjs', 'src/dom-patch.mjs']
+    .map(async file => [file, sha(await readFile(file))]))),
   scope: 'Synthetic desktop probe; excludes Android, disk, provider, real author programs and frame presentation latency.',
   session: [], sessionDelta: [], browser: [],
 };
@@ -59,7 +60,7 @@ for (const variableChars of [0, 4096]) for (const count of [50, 200, 1000]) {
 // Count calls in the real shell source; do not replace its renderer or change production files.
 let shell = await readFile('src/shell.mjs', 'utf8');
 const hooks = [
-  ['export function segments(text) {', 'export function segments(text) { globalThis.__probeParses = (globalThis.__probeParses ?? 0) + 1;'],
+  ['export function segments(text, incomplete = false) {', 'export function segments(text, incomplete = false) { globalThis.__probeParses = (globalThis.__probeParses ?? 0) + 1;'],
   ['globalThis.Player = {', 'globalThis.Player = { probeIdle() { return renderQueue; },'],
 ];
 for (const [before, after] of hooks) {

@@ -69,7 +69,7 @@ test('author vh layout follows the visible viewport without reloading the page',
     assert.match(await frame.evaluate(() => [...document.querySelectorAll('style')].map(style => style.textContent).join('')),
       /min-height:calc\(100 \* var\(--player-frame-vh, 1vh\)\)/);
     assert.equal(await frame.evaluate(() => getComputedStyle(document.getElementById('panel')).minHeight), '700px');
-    await page.waitForFunction(() => document.querySelector('article iframe')?.style.height === '700px');
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)')?.style.height === '700px');
     // The keyboard shrinking the WebView arrives as a plain viewport change.
     await page.setViewportSize({ width: 420, height: 420 });
     await frame.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--player-frame-vh') === '4.2px');
@@ -84,9 +84,17 @@ test('keyboard-sized viewports keep the reader anchored and defer to focused aut
     const tall = index => card(`<body><div style="height:600px">${index}</div></body>`);
     const { page, push } = await open(browser, { width: 420, height: 700 },
       [tall(1), tall(2), card('<body><div style="height:520px">3</div><input id="field"></body>')]);
-    await page.waitForFunction(() => { const items = [...document.querySelectorAll('article iframe')]; return items.length === 3 && items.every(item => parseFloat(item.style.height) > 100); });
+    await page.waitForFunction(() => { const items = [...document.querySelectorAll('article iframe:not(.frame-pending)')]; return items.length === 3 && items.every(item => parseFloat(item.style.height) > 100); });
     await page.evaluate(() => { window.scrollTo(0, document.documentElement.scrollHeight); window.dispatchEvent(new Event('scroll')); });
     assert.equal(await page.evaluate(() => document.getElementById('bottom').hidden), true);
+    // Interleave a frame measurement and a same-position scroll with the viewport change.
+    // The queued bottom adjustment must survive these notifications.
+    await page.evaluate(() => window.addEventListener('resize', () => {
+      const frame = document.querySelector('article iframe:not(.frame-pending)');
+      window.dispatchEvent(new MessageEvent('message', { source: frame.contentWindow, origin: new URL(frame.src).origin,
+        data: { channel: 'player-frame', epoch: 'viewport', type: 'resize', height: parseFloat(frame.style.height) } }));
+      window.dispatchEvent(new Event('scroll'));
+    }, { capture: true, once: true }));
     await page.setViewportSize({ width: 420, height: 420 });
     await page.waitForFunction(() => document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80 && document.getElementById('bottom').hidden);
     // Focus inside an author frame pauses automatic following so the browser can keep it in view.
@@ -95,8 +103,8 @@ test('keyboard-sized viewports keep the reader anchored and defer to focused aut
     await author.locator('#field').focus();
     await page.waitForFunction(() => document.activeElement?.tagName === 'IFRAME');
     await push(message(tall(4), 3));
-    await page.waitForFunction(() => document.querySelectorAll('article iframe').length === 4 &&
-      parseFloat(document.querySelectorAll('article iframe')[3].style.height) > 100);
+    await page.waitForFunction(() => document.querySelectorAll('article iframe:not(.frame-pending)').length === 4 &&
+      parseFloat(document.querySelectorAll('article iframe:not(.frame-pending)')[3].style.height) > 100);
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
     assert.ok(await page.evaluate(() => document.documentElement.scrollHeight - window.scrollY - window.innerHeight > 80));
     // Leaving the author frame resumes following on the next render.

@@ -1,11 +1,14 @@
 import $ from 'jquery';
 import { createHost } from './host.mjs';
 import { createSession } from './session.mjs';
+import DOMPurify from 'dompurify';
+import { patchChildren } from './dom-patch.mjs';
 
 function main() {
   const config = JSON.parse(document.getElementById('configuration').textContent);
   const page = document.getElementById('page'), pending = new Map();
   let sequence = 0, disposed = false, viewportHeight = Number(config.viewportHeight) || 800;
+  let staticReady = false, staticHead = null, staticHtml = config.html, renderedStaticHtml = null;
   const send = data => window.parent.postMessage({ ...data, channel: 'player-frame', epoch: config.epoch }, config.rootOrigin);
   function notify(level, message) {
     if (level === 'error') { document.getElementById('error').textContent = String(message); measure(); }
@@ -81,6 +84,9 @@ function main() {
       target.addEventListener('error', event => notify('error', event.message || '网页资源或程序执行失败'));
       target.addEventListener('unhandledrejection', event => notify('error', event.reason?.message || '网页操作失败'));
       target.addEventListener('load', () => {
+        if (config.kind === 'static') {
+          staticHead = target.document.head.cloneNode(true); staticReady = true; renderStatic();
+        }
         new target.ResizeObserver(measure).observe(target.document.body);
         measure(); send({ type: 'loaded' });
       });
@@ -94,6 +100,22 @@ function main() {
       if (body) page.style.height = Math.min(100000, Math.max(1, body.scrollHeight, body.offsetHeight)) + 'px';
       send({ type: 'resize', height: Math.min(100000, document.body.scrollHeight) });
     } catch { notify('error', '页面导航超出兼容运行范围'); }
+  }
+
+  function correctViewport(html) {
+    return html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, style => style.replace(/min-height\s*:\s*([\d.]+)vh/gi,
+      (_, amount) => `min-height:calc(${amount} * var(--player-frame-vh, 1vh))`));
+  }
+  function renderStatic() {
+    if (!staticReady || disposed || staticHtml === renderedStaticHtml) return;
+    const clean = DOMPurify.sanitize(staticHtml, { WHOLE_DOCUMENT: true, ADD_TAGS: ['style'],
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'], FORBID_ATTR: ['srcdoc'] });
+    const next = new DOMParser().parseFromString(correctViewport(clean), 'text/html');
+    // Keep the trusted bootstrap and baseline ahead of author styles; patch only sanitized data.
+    next.head.prepend(...[...staticHead.childNodes].map(node => node.cloneNode(true)));
+    patchChildren(page.contentDocument.head, next.head);
+    patchChildren(page.contentDocument.body, next.body);
+    renderedStaticHtml = staticHtml; measure();
   }
 
   // 作者页的视口高度折算改用 CSS 变量，随可见高度更新时不必重建 srcdoc。
@@ -118,6 +140,10 @@ function main() {
       host.dispose();
     } else if (data.type === 'viewport') {
       applyViewport(Number(data.height));
+    } else if (data.type === 'static-update' && config.kind === 'static' && !disposed) {
+      if (typeof data.html !== 'string' || data.html.length > 2 * 1024 * 1024) return;
+      staticHtml = data.html; renderStatic();
+      if (staticReady) send({ type: 'static-applied', version: data.version });
     }
   });
 
@@ -134,12 +160,12 @@ function main() {
     '<script>parent.PlayerFrame.install(window);</script>' +
     `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
   let html = config.html;
+  // Static content enters through the same sanitized patch path at startup and during streaming.
+  if (config.kind === 'static') html = '<body></body>';
   if (config.kind === 'script') html = '<body><script type="module">' + html.replace(/<\/script/gi, '<\\/script') + '</script></body>';
   // Match the source renderer's viewport-height correction without touching JavaScript strings.
   // 折算结果引用变量而不是固定 px，键盘改变可见高度后作者布局随之伸缩。
-  html = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, style => style.replace(/min-height\s*:\s*([\d.]+)vh/gi,
-    // 变量缺失时退回作者原本的 vh 语义（1vh 即 1% 帧高），避免折算整体失效。
-    (_, amount) => `min-height:calc(${amount} * var(--player-frame-vh, 1vh))`));
+  html = correctViewport(html);
   page.srcdoc = inject(html, prefix);
   if (config.kind === 'script') page.hidden = true;
 }
