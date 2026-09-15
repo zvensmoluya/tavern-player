@@ -70,6 +70,7 @@ class ChatScreenTest {
             WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", comment = "中性内容", content = "阅读正文"))))))
         compose.setContent { TavernPlayerTheme { ChatScreen(state = screen, actions = actions()) } }
         compose.onNodeWithTag("openWorldBook").performClick()
+        compose.onNodeWithText("角色世界书").performClick()
         compose.onNodeWithTag("worldBookEntry-0-0").performClick()
         compose.onNodeWithTag("worldBookText-0").assertTextEquals("阅读正文")
         compose.onNodeWithTag("worldBookUsage").assertIsNotEnabled()

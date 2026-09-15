@@ -30,10 +30,11 @@ class ChatViewModel(
     ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
     nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
     val browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
+    globalWorldBooks: suspend () -> GlobalWorldBookSnapshot = { GlobalWorldBookSnapshot() },
 ) : ViewModel() {
     private val session = ConversationSession(repository, compiler, generator, conversationRepository, presetSource,
         characterAsset, persona, idGenerator, now, projectionDispatcher, adaptationRuntime, mvuRuntime, ejsRuntime,
-        nativeScriptRuntime, browserEnvironment)
+        nativeScriptRuntime, browserEnvironment, globalWorldBooks)
     val uiState = session.uiState
     fun loadConversation(conversationId: String) = session.loadConversation(conversationId)
     fun updateInput(value: String) = session.updateInput(value)
@@ -69,10 +70,11 @@ class ChatViewModel(
         private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
         private val browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
         private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
+        private val globalWorldBooks: suspend () -> GlobalWorldBookSnapshot = { GlobalWorldBookSnapshot() },
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime, ejsRuntime = ejsRuntime, nativeScriptRuntime = nativeScriptRuntime, browserEnvironment = browserEnvironment) as T
+            ChatViewModel(repository, compiler, generator, conversationRepository, presetSource, mvuRuntime = mvuRuntime, ejsRuntime = ejsRuntime, nativeScriptRuntime = nativeScriptRuntime, browserEnvironment = browserEnvironment, globalWorldBooks = globalWorldBooks) as T
     }
 
 }

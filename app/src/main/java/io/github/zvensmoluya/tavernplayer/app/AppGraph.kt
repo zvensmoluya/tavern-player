@@ -41,6 +41,7 @@ class AppGraph(context: Context) {
     val personaRepository by lazy { PersonaRepository(appContext.filesDir, loadOnInit = false) }
     val characterRepository by lazy { CharacterRepository(appContext.filesDir, loadOnInit = false) }
     val presetRepository by lazy { PresetRepository(appContext.filesDir) }
+    val worldBookRepository by lazy { io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository(appContext.filesDir) }
     val shelfTransferClient by lazy { ShelfTransferClient() }
     val mvuRuntime by lazy {
         io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime {

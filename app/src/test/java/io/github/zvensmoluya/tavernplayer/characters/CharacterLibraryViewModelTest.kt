@@ -66,14 +66,16 @@ class CharacterLibraryViewModelTest {
     }
 
     @Test
-    fun `Shelf worldbook is recognized without creating an asset`() = runTest {
+    fun `Shelf worldbook is imported independently and remains disabled`() = runTest {
         val fixture = fixture("worldbook", """{"entries":{}}""".encodeToByteArray(), "book.json")
         val harness = harness(fixture)
 
         harness.viewModel.importFromShelf("http://shelf/transfer")
         harness.awaitImport()
 
-        assertEquals("已识别世界书；当前版本暂不支持独立世界书导入", harness.viewModel.uiState.value.message)
+        assertEquals("已导入 book，请在全局世界书中启用", harness.viewModel.uiState.value.message)
+        assertEquals(1, harness.worldBooks.library.value.size)
+        assertTrue(harness.worldBooks.capture().books.isEmpty())
         assertTrue(harness.characterRepository.characters.value.isEmpty())
         assertEquals(1, harness.presetRepository.library.value.presets.size)
     }
@@ -158,20 +160,23 @@ class CharacterLibraryViewModelTest {
         val characters = CharacterRepository(root)
         val presets = PresetRepository(root, ioDispatcher = mainDispatcher.dispatcher)
         val conversations = ConversationRepository(root, PromptCompiler())
+        val worldBooks = io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository(root)
         val receiver = ShelfTransferReceiver { transfer }
         val personaSource = MutablePersonaSource(Persona("default-persona", "旅人"))
         return Harness(
             viewModel = CharacterLibraryViewModel(
                 characters,
-                conversations,
+                { conversations },
                 personaSource,
-                presets,
+                { presets },
                 receiver,
+                worldBookRepository = { worldBooks },
             ),
             characterRepository = characters,
             conversationRepository = conversations,
             presetRepository = presets,
             personaSource = personaSource,
+            worldBooks = worldBooks,
         )
     }
 
@@ -203,6 +208,7 @@ class CharacterLibraryViewModelTest {
         val conversationRepository: ConversationRepository,
         val presetRepository: PresetRepository,
         val personaSource: MutablePersonaSource,
+        val worldBooks: io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository,
     ) {
         suspend fun awaitImport() {
             viewModel.uiState.first { !it.importing }

@@ -23,6 +23,8 @@
 
 ## 既有能力的阶段契约与接入记录
 
+- [全局世界书接入与验证](global-world-books-20260915.md)
+
 - [Native 内容适配边界 v1](adaptation-runtime-v1.md)
 - [JS 动态原生 Surface：首轮实现](native-script-surfaces-20260908.md)
 - [只读状态绑定与模型编译精简](native-state-bindings-20260907.md)

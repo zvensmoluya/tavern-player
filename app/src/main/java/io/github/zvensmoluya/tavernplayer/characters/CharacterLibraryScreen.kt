@@ -88,6 +88,7 @@ fun CharacterLibraryRoute(
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
     onOpenPersona: () -> Unit,
+    onOpenGlobalWorldBooks: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -150,6 +151,7 @@ fun CharacterLibraryRoute(
         onOpenModels = onOpenModels,
         onOpenPresets = onOpenPresets,
         onOpenPersona = onOpenPersona,
+        onOpenGlobalWorldBooks = onOpenGlobalWorldBooks,
     )
 }
 
@@ -164,30 +166,32 @@ fun CharacterLibraryScreen(
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
     onOpenPersona: () -> Unit,
+    onOpenGlobalWorldBooks: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("角色") },
-                actions = {
-                    TextButton(onClick = onOpenPresets, modifier = Modifier.testTag("openPresetsFromLibrary")) {
-                        Text("预设")
-                    }
-                    TextButton(onClick = onOpenModels, modifier = Modifier.testTag("openModelsFromLibrary")) {
-                        Text("模型")
-                    }
-                    TextButton(
-                        onClick = onImportFromShelf,
-                        enabled = !state.busy,
-                        modifier = Modifier.testTag("importFromShelf"),
-                    ) { Text("Shelf") }
-                    TextButton(
-                        onClick = onImport,
-                        enabled = !state.busy,
-                        modifier = Modifier.testTag("importCharacter"),
-                    ) { Text("导入") }
-                },
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("角色") },
+                    actions = {
+                        TextButton(
+                            onClick = onImportFromShelf,
+                            enabled = !state.busy,
+                            modifier = Modifier.testTag("importFromShelf"),
+                        ) { Text("Shelf") }
+                        TextButton(
+                            onClick = onImport,
+                            enabled = !state.busy,
+                            modifier = Modifier.testTag("importCharacter"),
+                        ) { Text("导入") }
+                    },
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onOpenPresets, modifier = Modifier.testTag("openPresetsFromLibrary")) { Text("预设") }
+                    TextButton(onClick = onOpenModels, modifier = Modifier.testTag("openModelsFromLibrary")) { Text("模型") }
+                    TextButton(onClick = onOpenGlobalWorldBooks, modifier = Modifier.testTag("openGlobalWorldBooks")) { Text("全局世界书") }
+                }
+            }
         },
     ) { padding ->
         if (state.characters.isEmpty()) {

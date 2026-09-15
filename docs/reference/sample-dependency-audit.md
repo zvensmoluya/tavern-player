@@ -132,7 +132,7 @@ C-04、C-07 的 helper 脚本只 import 远程 MVU / mvu_zod 地址，该程序�
 | --- | --- |
 | `registerVariableSchema` | 在锁定 MVU 源码中**没有任何引用**，是宿主侧的冗余绑定；空实现不影响行为。 |
 | `substitudeMacros` | 用于 initvar 解析与回复更新（5 处）。宿主只替换 `{{user}}` / `{{char}}`；本机 6 份原件的 `[initvar]` 条目仅出现 `{{user}}`，覆盖充分。 |
-| `getLorebookSettings` / `setLorebookSettings` | 用于 initvar 的启用书列表。宿主返回 `selected_global_lorebooks: []`，与 Player 无全局世界书一致；实际条目来自角色书，由 `MvuConversationRuntime` 传入的 `entries` 提供，`getLorebookEntries` 因此**不是**返回空。 |
+| `getLorebookSettings` / `setLorebookSettings` | 用于 initvar 的启用书列表。宿主返回 `selected_global_lorebooks: []`，该次验收时 Player 尚无全局世界书；新增的玩家全局书库尚未接入此初始化接口；实际条目来自角色书，由 `MvuConversationRuntime` 传入的 `entries` 提供，`getLorebookEntries` 因此**不是**返回空。 |
 | `getLorebookEntries` | 宿主持有生产侧传入的角色世界书条目，initvar 加载因此可用；有测试断言原件的初始状态存在且 `{{user}}` 已展开。 |
 
 因此先前按名字判定的“运行时阻塞缺口”是**误报**，已从逐样本明细中移除。initvar 那条链路（`getEnabledLorebookList` → `getCharLorebooks` → `getLorebookEntries` → 解析 `[initvar]`）在本机原件上确实执行成功。

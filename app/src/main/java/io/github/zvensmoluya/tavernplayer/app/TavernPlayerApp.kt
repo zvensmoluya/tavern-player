@@ -27,11 +27,14 @@ fun TavernPlayerApp(
     characterLibraryViewModel: CharacterLibraryViewModel,
     presetViewModel: () -> PresetViewModel,
     personaViewModel: () -> PersonaViewModel,
+    worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
 ) {
     val libraryState by characterLibraryViewModel.uiState.collectAsState()
     var surface by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
     var returnFromModels by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
     var returnFromPresets by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
+    var returnFromWorldBooks by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
+    fun openWorldBooks() { returnFromWorldBooks = surface; surface = AppSurface.GLOBAL_WORLD_BOOKS }
     var returnFromPersona by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
 
     fun openModels() {
@@ -81,6 +84,7 @@ fun TavernPlayerApp(
             },
             onOpenModels = ::openModels,
             onOpenPresets = ::openPresets,
+            onOpenGlobalWorldBooks = ::openWorldBooks,
             onOpenPersona = ::openPersona,
         )
         AppSurface.CHARACTER_DETAIL -> {
@@ -137,6 +141,7 @@ fun TavernPlayerApp(
             onBack = { surface = AppSurface.CHARACTER_DETAIL },
             onOpenModels = ::openModels,
             onOpenPresets = ::openPresets,
+            onOpenGlobalWorldBooks = ::openWorldBooks,
         )
         AppSurface.MODEL_CONFIGURATION -> ModelConnectionsRoute(
             viewModel = connectionsViewModel(),
@@ -149,6 +154,9 @@ fun TavernPlayerApp(
                 surface = returnFromPresets
             },
         )
+        AppSurface.GLOBAL_WORLD_BOOKS -> worldBookRepository?.let {
+            io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookLibraryScreen(it(), onBack = { surface = returnFromWorldBooks })
+        }
         AppSurface.PERSONA -> PersonaRoute(
             viewModel = personaViewModel(),
             onBack = {
@@ -167,6 +175,7 @@ internal enum class AppSurface {
     CHAT,
     MODEL_CONFIGURATION,
     PRESET_CENTER,
+    GLOBAL_WORLD_BOOKS,
     PERSONA,
 }
 

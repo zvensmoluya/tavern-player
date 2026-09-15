@@ -63,6 +63,7 @@ class CharacterLibraryViewModel(
     private val shelfTransferReceiver: ShelfTransferReceiver,
     private val compilationService: (() -> NativeCompilationService)? = null,
     private val connectionRepository: (() -> ConnectionRepository)? = null,
+    private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
 ) : ViewModel() {
     constructor(
         characterRepository: CharacterRepository,
@@ -194,8 +195,10 @@ class CharacterLibraryViewModel(
                     when (transfer.manifest.kind) {
                         "character" -> importShelfCharacter(transfer.sourceBytes, transfer.manifest.filename)
                         "preset" -> importShelfPreset(transfer.sourceBytes, transfer.manifest.filename)
-                        "worldbook" -> _uiState.update {
-                            it.copy(importing = false, message = "已识别世界书；当前版本暂不支持独立世界书导入")
+                        "worldbook" -> {
+                            val book = requireNotNull(worldBookRepository) { "世界书仓库不可用" }().import(transfer.sourceBytes, transfer.manifest.filename)
+                            _uiState.update { it.copy(importing = false, importDiagnostics = book.diagnostics,
+                                message = "已导入 ${book.book.name}，请在全局世界书中启用") }
                         }
                         else -> _uiState.update {
                             it.copy(importing = false, message = "未知的 Shelf 资源类型：${transfer.manifest.kind}")
@@ -413,6 +416,7 @@ class CharacterLibraryViewModel(
         private val shelfTransferReceiver: ShelfTransferReceiver,
         private val compilationService: (() -> NativeCompilationService)? = null,
         private val connectionRepository: (() -> ConnectionRepository)? = null,
+        private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -424,6 +428,7 @@ class CharacterLibraryViewModel(
                 shelfTransferReceiver,
                 compilationService,
                 connectionRepository,
+                worldBookRepository,
             ) as T
     }
 }

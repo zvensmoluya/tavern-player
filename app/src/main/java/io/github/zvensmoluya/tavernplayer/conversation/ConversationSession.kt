@@ -157,6 +157,7 @@ class ConversationSession(
     private val ejsRuntime: QuickJsEjsRuntime = QuickJsEjsRuntime(),
     private val nativeScriptRuntime: QuickJsNativeRuntime = QuickJsNativeRuntime(),
     val browserEnvironment: io.github.zvensmoluya.tavernplayer.conversation.web.BrowserEnvironment? = null,
+    private val globalWorldBooks: suspend () -> GlobalWorldBookSnapshot = { GlobalWorldBookSnapshot() },
 ) {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
     private var currentPreset = presetSource.captureActive()
@@ -999,6 +1000,7 @@ class ConversationSession(
         args["should_stream"]?.let { require(it.jsonPrimitive.booleanOrNull != null) { "should_stream 必须为布尔值" } }
         val connection = requireNotNull(_uiState.value.selectedConnection) { "请先配置模型" }
         val preset = presetSource.captureActive()
+        val globalBooks = if (method == "generation.raw") GlobalWorldBookSnapshot() else globalWorldBooks()
         val limits = connection.effectiveTokenLimits()
         val plan = if (method == "generation.raw") {
             val prompts = args["ordered_prompts"] as? JsonArray ?: error("缺少 ordered_prompts")
@@ -1024,13 +1026,13 @@ class ConversationSession(
             require(count == null || count >= 0) { "max_chat_history 必须为非负整数" }
             var history = record.promptMessages().let { if (count == null) it else it.takeLast(count) }
             if (input.isNotBlank()) history = history + ConversationMessage(idGenerator(), MessageRole.USER, input, record.persona.name)
-            val compiled = ejsRuntime.compile(compiler, NormalGenerationInput(
+            val compiled = ejsRuntime.compile(compiler, globalBooks.apply(NormalGenerationInput(
                 character = record.character, persona = record.persona, history = history, preset = preset,
                 worldBookState = record.worldBookState,
                 runtimeState = record.runtimeState, conversationId = record.id, generationId = browserGenerationId.orEmpty(),
                 modelId = connection.selectedModel, modelContextTokens = limits.contextTokens?.toIntSafe(),
                 modelOutputTokens = limits.outputTokens?.toIntSafe(),
-            ), mutableMapOf())
+            )), mutableMapOf())
             when (compiled) {
                 is CompilationResult.Success -> compiled.plan
                 is CompilationResult.Failure -> error(compiled.diagnostics.firstOrNull { it.severity == DiagnosticSeverity.ERROR }?.message ?: "辅助生成编排失败")
@@ -1130,6 +1132,7 @@ class ConversationSession(
         appendAssistantTurn: Boolean,
         preset: PresetAsset,
     ) {
+        val globalBooks = globalWorldBooks()
         record = mvuRuntime.initialize(record, preset, compiler)
         val evaluationInstant = Instant.ofEpochMilli(now())
         val evaluationZoneId = ZoneId.systemDefault()
@@ -1142,7 +1145,7 @@ class ConversationSession(
         mvuRuntime.validateCheckpoint(record.character, runtimeBeforeGeneration)
         val modelTokenLimits = connection.effectiveTokenLimits()
         val lastVisibleTurn = record.turns.lastOrNull()
-        val baseInput = NormalGenerationInput(
+        val baseInput = globalBooks.apply(NormalGenerationInput(
             character = record.character,
             worldBookState = record.worldBookState,
             persona = record.persona,
@@ -1162,7 +1165,7 @@ class ConversationSession(
             allChatLastMessageId = record.turns.lastIndex.takeIf { it >= 0 },
             evaluationInstant = evaluationInstant,
             evaluationZoneId = evaluationZoneId,
-        )
+        ))
         var localInputLimit: Int? = null
         val validationDiagnostics = mutableListOf<CompilationDiagnostic>()
         val validationTrace = mutableListOf<CompilationTraceEntry>()

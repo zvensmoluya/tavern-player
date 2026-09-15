@@ -46,6 +46,7 @@ fun WorldBookReaderScreen(
     onBack: () -> Unit,
     sessionState: ConversationWorldBookState? = null,
     busy: Boolean = false,
+    global: Boolean = false,
     message: String? = null,
     lastInjections: Map<String, Map<String, WorldBookInjectionStatus>>? = null,
     onEntryMode: (String, String, WorldBookEntryMode?) -> Unit = { _, _, _ -> },
@@ -120,14 +121,14 @@ fun WorldBookReaderScreen(
                         Spacer(Modifier.width(6.dp))
                         Text("修改", fontSize = 14.sp)
                     }
-                    else -> ReaderBadge(if (sessionState == null) "角色附带" else "本次对话",
+                    else -> ReaderBadge(if (sessionState == null) "角色附带" else if (global) "全局" else "本次对话",
                         modifier = Modifier.padding(end = 20.dp))
                 }
             }
         },
         bottomBar = {
             if (selected != null && !isEditing) ReaderBottomBar(
-                index = selectedIndex, count = rows.size, mode = mode, busy = busy,
+                index = selectedIndex, count = rows.size, mode = mode, busy = busy, global = global,
                 onUsage = { usageVisible = true },
                 onPrevious = { rows.getOrNull(selectedIndex - 1)?.let(select) },
                 onNext = { rows.getOrNull(selectedIndex + 1)?.let(select) },
@@ -138,7 +139,7 @@ fun WorldBookReaderScreen(
             when {
                 isEditing && entry != null -> ReaderEditor(
                     title = entry.readerTitle(selected.entryIndex), draft = draft, original = entry.content,
-                    changed = draft != content, busy = busy, message = message,
+                    changed = draft != content, busy = busy, message = message, global = global,
                     onChange = { draft = it }, onRestore = { draft = entry.content },
                 )
                 selected != null -> key(selected.book.id, selected.entry.id) {
@@ -157,7 +158,7 @@ fun WorldBookReaderScreen(
                                     fontSize = 29.sp, lineHeight = 39.sp, fontWeight = FontWeight.SemiBold, color = ReaderColors.Ink)
                                 if (sessionState == null) Text(if (entry?.enabled == true) "作者已启用" else "作者已停用",
                                     fontSize = 12.sp, color = ReaderColors.Muted)
-                                if (playerOverride?.content != null) ReaderBadge("正文已调整 · 仅本次对话",
+                                if (playerOverride?.content != null) ReaderBadge(if (global) "正文已调整 · 全局" else "正文已调整 · 仅本次对话",
                                     accent = true, modifier = Modifier.testTag("worldBookContentChanged"))
                                 lastInjections?.get(selected.book.id)?.get(selected.entry.id)?.let { status ->
                                     Text("最近一次生成 · ${status.label()}", fontSize = 12.sp, color = ReaderColors.Muted,
@@ -181,7 +182,7 @@ fun WorldBookReaderScreen(
                     Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("worldBookEntries"), state = listState,
                     contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
                 ) {
-                    item("intro") { ReaderIntroduction(rows.size, sessionState != null) }
+                    item("intro") { ReaderIntroduction(rows.size, sessionState != null, global) }
                     if (rows.isEmpty()) item {
                         ReaderEmptyState(if (books.isEmpty()) "这张角色卡没有附带世界书" else "世界书暂无内容")
                     }
@@ -203,7 +204,7 @@ fun WorldBookReaderScreen(
     }
     if (usageVisible && selected != null && mode != null) ReaderUsageSheet(
         title = selected.entry.readerTitle(selected.entryIndex), mode = mode,
-        canRestore = playerOverride?.mode != null, busy = busy,
+        canRestore = playerOverride?.mode != null, busy = busy, global = global,
         onDismiss = { usageVisible = false },
         onSelect = { option ->
             if (option != mode) onEntryMode(selected.book.id, selected.entry.id, option)
@@ -221,7 +222,7 @@ fun WorldBookReaderScreen(
 
 @Composable
 private fun ReaderEditor(
-    title: String, draft: String, original: String, changed: Boolean, busy: Boolean, message: String?,
+    title: String, draft: String, original: String, changed: Boolean, busy: Boolean, message: String?, global: Boolean,
     onChange: (String) -> Unit, onRestore: () -> Unit,
 ) {
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -230,12 +231,12 @@ private fun ReaderEditor(
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, Modifier.weight(1f), fontSize = 14.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
                 color = ReaderColors.Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("仅本次对话", fontSize = 11.sp, color = ReaderColors.Muted)
+            Text(if (global) "全局修改" else "仅本次对话", fontSize = 11.sp, color = ReaderColors.Muted)
         } else {
             Text(title, fontSize = 22.sp, lineHeight = 30.sp, fontWeight = FontWeight.SemiBold,
                 color = ReaderColors.Ink, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 20.dp, bottom = 10.dp))
-            Text("仅用于本次对话，不改动角色原卡。", fontSize = 13.sp, lineHeight = 21.sp, color = ReaderColors.Muted)
+            Text(if (global) "修改影响所有会话的后续生成，恢复原文使用导入时的正文。" else "仅用于本次对话，不改动角色原卡。", fontSize = 13.sp, lineHeight = 21.sp, color = ReaderColors.Muted)
             if (original.contains("<%")) Text("原文包含模板。修改后若仍含模板代码，该段不会执行或注入；恢复原文可恢复模板。",
                 fontSize = 12.sp, lineHeight = 19.sp, color = ReaderColors.Muted, modifier = Modifier.padding(top = 8.dp))
         }

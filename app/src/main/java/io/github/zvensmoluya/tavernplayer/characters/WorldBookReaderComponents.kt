@@ -94,7 +94,7 @@ internal fun ReaderTopBar(
 }
 
 @Composable
-internal fun ReaderIntroduction(count: Int, inConversation: Boolean) {
+internal fun ReaderIntroduction(count: Int, inConversation: Boolean, global: Boolean = false) {
     Column(Modifier.padding(start = 4.dp, end = 4.dp, top = 24.dp, bottom = 26.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -105,7 +105,7 @@ internal fun ReaderIntroduction(count: Int, inConversation: Boolean) {
                 ReaderIcon(ReaderSymbol.Book, tint = ReaderColors.Accent, modifier = Modifier.size(27.dp))
             }
         }
-        if (inConversation) Text("阅读角色设定，调整这一次的游玩。", fontSize = 13.sp, lineHeight = 21.sp,
+        if (inConversation) Text(if (global) "修改影响所有会话的后续生成。" else "阅读角色设定，调整这一次的游玩。", fontSize = 13.sp, lineHeight = 21.sp,
             color = ReaderColors.Muted, modifier = Modifier.padding(top = 18.dp))
     }
 }
@@ -173,7 +173,7 @@ internal fun ReaderMessage(message: String, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun ReaderBottomBar(
-    index: Int, count: Int, mode: WorldBookEntryMode?, busy: Boolean,
+    index: Int, count: Int, mode: WorldBookEntryMode?, busy: Boolean, global: Boolean = false,
     onUsage: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
 ) {
     Surface(color = ReaderColors.Paper, shadowElevation = 3.dp) {
@@ -190,7 +190,7 @@ internal fun ReaderBottomBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("本次对话", fontSize = 10.sp, lineHeight = 14.sp, color = ReaderColors.Muted)
+                        Text(if (global) "全局" else "本次对话", fontSize = 10.sp, lineHeight = 14.sp, color = ReaderColors.Muted)
                         Text(mode.label(), fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium,
                             color = if (mode == WorldBookEntryMode.FORCED) ReaderColors.Amber else ReaderColors.Ink)
                     }
@@ -213,7 +213,7 @@ internal fun ReaderBottomBar(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderUsageSheet(
-    title: String, mode: WorldBookEntryMode, canRestore: Boolean, busy: Boolean,
+    title: String, mode: WorldBookEntryMode, canRestore: Boolean, busy: Boolean, global: Boolean = false,
     onDismiss: () -> Unit, onSelect: (WorldBookEntryMode) -> Unit, onRestore: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -253,7 +253,7 @@ internal fun ReaderUsageSheet(
                     }
                 }
             }
-            Text("只用于本次对话，从下一次生成开始。", fontSize = 12.sp, lineHeight = 20.sp,
+            Text(if (global) "该书启用时，用于所有会话的后续生成。" else "只用于本次对话，从下一次生成开始。", fontSize = 12.sp, lineHeight = 20.sp,
                 color = ReaderColors.Muted, modifier = Modifier.padding(top = 18.dp))
             if (canRestore) TextButton(onClick = onRestore, enabled = !busy,
                 colors = ButtonDefaults.textButtonColors(contentColor = ReaderColors.Accent),

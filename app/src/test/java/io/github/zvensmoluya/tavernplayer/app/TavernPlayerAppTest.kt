@@ -4,6 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class TavernPlayerAppTest {
+    @Test fun `global books do not require a selected character`() {
+        assertEquals(AppSurface.GLOBAL_WORLD_BOOKS, selectAppSurface(AppSurface.GLOBAL_WORLD_BOOKS, false))
+    }
+
     @Test
     fun `library remains available without a model connection`() {
         assertEquals(

@@ -1975,6 +1975,33 @@ class ChatViewModelTest {
         assertTrue(captured?.diagnostics.orEmpty().none { it.code.endsWith("_FALLBACK") })
     }
 
+    @Test fun `global books are captured for each send and regenerate independently of preset`() = runTest {
+        val plans = mutableListOf<GenerationPlan>()
+        var global = GlobalWorldBookSnapshot(listOf(io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition("global-test", entries = listOf(
+            io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition("global-entry", content = "GLOBAL INSTRUCTION", constant = true)))))
+        val presets = FixedPresetSource()
+        val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, plan ->
+            plans += plan
+            flow { emit(GenerationEvent.TextDelta("reply")); emit(GenerationEvent.Finished("stop")) }
+        }, presetSource = presets, projectionDispatcher = mainDispatcherRule.dispatcher, globalWorldBooks = { global })
+        try {
+            vm.updateInput("continue")
+            vm.send()
+            assertTrue(plans.single().messages.any { "GLOBAL INSTRUCTION" in it.content })
+            presets.set(DemoConversationContent.preset.copy(name = "Other"))
+            vm.regenerate()
+            assertEquals(2, plans.size)
+            assertTrue(plans.last().messages.any { "GLOBAL INSTRUCTION" in it.content })
+            global = GlobalWorldBookSnapshot()
+            vm.updateInput("again")
+            vm.send()
+            assertEquals(3, plans.size)
+            assertFalse(plans.last().messages.any { "GLOBAL INSTRUCTION" in it.content })
+            assertTrue(plans.first().messages.any { "GLOBAL INSTRUCTION" in it.content })
+            assertFalse(vm.uiState.value.character.worldBooks.any { it.id == "global-test" })
+        } finally { androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() } }
+    }
+
     private fun viewModel(
         generator: FakeGenerator,
         character: CharacterAsset = DemoConversationContent.character,

@@ -304,7 +304,7 @@ class CharacterCardImporter(
         ?: throw ImportFailure("MISSING_CARD_METADATA", "PNG 中没有 ccv3 或 chara tEXt metadata")
     }
 
-    private fun parseWorldBook(
+    internal fun parseWorldBook(
         raw: JsonObject,
         sourceSha256: String,
         diagnostics: MutableList<CompatibilityDiagnostic>,

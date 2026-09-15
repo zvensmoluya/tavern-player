@@ -41,6 +41,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -72,6 +74,7 @@ fun ChatRoute(
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
+    onOpenGlobalWorldBooks: () -> Unit = {},
     resolveAssetPath: (characterId: String, assetId: String) -> String? = { _, _ -> null },
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -99,6 +102,7 @@ fun ChatRoute(
             openModels = onOpenModels,
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
+            openGlobalWorldBooks = onOpenGlobalWorldBooks,
             submitNativeForm = viewModel::submitNativeForm,
             invokeNativeAction = viewModel::invokeNativeAction,
             cancelNativeAction = viewModel::cancelNativeAction,
@@ -128,6 +132,7 @@ data class ChatScreenActions(
     val back: () -> Unit = {},
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
+    val openGlobalWorldBooks: () -> Unit = {},
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
     val invokeNativeAction: (NativeSurfaceInvocation) -> Unit = {},
     val cancelNativeAction: () -> Unit = {},
@@ -166,6 +171,7 @@ fun ChatScreen(
     var traceVisible by remember { mutableStateOf(false) }
     var nativeDetailsVisible by remember(state.conversationId) { mutableStateOf(false) }
     var nativeGuideVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var worldBookMenu by remember { mutableStateOf(false) }
     var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var historicalStateMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val hasNativeGuide = state.character.nativeAdaptation?.guide != null
@@ -212,11 +218,12 @@ fun ChatScreen(
                     ) { Text("返回") }
                 },
                 actions = {
-                    if (state.character.worldBooks.isNotEmpty()) {
-                        TextButton(
-                            modifier = Modifier.testTag("openWorldBook"),
-                            onClick = { worldBookVisible = true },
-                        ) { Text("世界书", maxLines = 1) }
+                    Box {
+                        TextButton(modifier = Modifier.testTag("openWorldBook"), onClick = { worldBookMenu = true }) { Text("世界书", maxLines = 1) }
+                        DropdownMenu(expanded = worldBookMenu, onDismissRequest = { worldBookMenu = false }) {
+                            DropdownMenuItem(text = { Text("角色世界书") }, onClick = { worldBookMenu = false; worldBookVisible = true })
+                            DropdownMenuItem(text = { Text("全局世界书") }, onClick = { worldBookMenu = false; actions.openGlobalWorldBooks() }, enabled = !state.busy)
+                        }
                     }
                     TextButton(
                         modifier = Modifier.testTag("choosePreset"),

@@ -156,4 +156,18 @@ class WorldBookReaderScreenTest {
         compose.onNodeWithTag("worldBookBack").performClick()
         compose.onNodeWithTag("worldBookEntry-0-0").assertIsDisplayed()
     }
+    @Test fun `global reader identifies the scope in reading editing and usage`() {
+        compose.setContent { TavernPlayerTheme {
+            WorldBookReaderScreen("global", character.name, character.worldBooks, {}, global = true,
+                sessionState = io.github.zvensmoluya.tavernplayer.conversation.ConversationWorldBookState())
+        } }
+        compose.onNodeWithText("修改影响所有会话的后续生成。").assertExists()
+        compose.onNodeWithTag("worldBookEntry-0-0").performClick()
+        compose.onNodeWithTag("worldBookUsage").performClick()
+        compose.onNodeWithText("该书启用时，用于所有会话的后续生成。").assertExists()
+        compose.onNodeWithTag("worldBookEntryMode-AUTO").performClick()
+        compose.onNodeWithTag("worldBookEditContent").performClick()
+        compose.onNodeWithText("修改影响所有会话的后续生成，恢复原文使用导入时的正文。").assertExists()
+    }
+
 }

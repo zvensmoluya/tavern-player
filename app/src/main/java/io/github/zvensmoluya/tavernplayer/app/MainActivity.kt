@@ -30,6 +30,7 @@ class MainActivity : ComponentActivity() {
             graph.mvuRuntime,
             graph.ejsRuntime,
             graph.browserEnvironment,
+            globalWorldBooks = graph.worldBookRepository::capture,
         )
     }
     private val characterLibraryViewModel by viewModels<CharacterLibraryViewModel> {
@@ -41,6 +42,7 @@ class MainActivity : ComponentActivity() {
             graph.shelfTransferClient,
             { graph.nativeCompilationService },
             { graph.connectionRepository },
+            { graph.worldBookRepository },
         )
     }
     private val presetViewModel by viewModels<PresetViewModel> {
@@ -67,6 +69,7 @@ class MainActivity : ComponentActivity() {
                     characterLibraryViewModel,
                     { presetViewModel },
                     { personaViewModel },
+                    { graph.worldBookRepository },
                 )
             }
         }

@@ -43,7 +43,7 @@ app ───────────────> model-gateway
 
 - `character` 进入 `CharacterRepository`；
 - `preset` 进入 `PresetRepository`，沿用现有 Preset 格式检测、规范化和完整来源保留；
-- `worldbook` 当前只识别并提示尚未支持独立导入。
+- `worldbook` 进入 `WorldBookRepository`，校验独立 ST World Info / Character Book JSON 并默认停用。
 
 二维码 URL 只用于当前接收，不进入持久化状态。Shelf 使用局域网明文 HTTP，因此 Android 应用显式允许 cleartext；该能力只由 Shelf 接收入口触发。
 
@@ -80,6 +80,20 @@ Preset 编辑与仓库行为：
 从 Preset 列表进入一项时会先把它设为全局 active，再编辑同一项。主界面只把实际 `prompt_order` 中的普通 Prompt 与 Preset Regex 投影为快速开关；Prompt 开关只修改既有 order entry 的 `enabled`，不插入、移除或移动队列，未编排定义继续完整保留。
 
 Prompt 文本与兼容字段、Preset 名称 / 控制格式 / 结构 marker、模型请求参数分别位于独立次级页面。请求参数可逐项开启或关闭；关闭时保留本地值，但从兼容 Provider 请求和 ST 导出中移除。切换 Provider 不反向修改 Preset，Provider 协议必填值由播放器的安全预算补齐并进入诊断。
+
+## 全局 World Book
+
+接入与验证记录见[全局世界书](archive/global-world-books-20260915.md)。
+
+`WorldBookImporter` 接受至多 32 MiB 的 UTF-8 JSON：ST World Info 的 `entries` 对象，或独立 Character Book 的 `entries` 数组。ST 扁平字段先归一化，再复用角色书解析器；重复 ID、无效条目拒绝整份导入。保留原始 JSON 和字段诊断，不执行程序。字段基线参考固定 [ST world-info.js](https://github.com/SillyTavern/SillyTavern/blob/8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8/public/scripts/world-info.js)。
+
+`WorldBookRepository` 异步读取独立原子 manifest，保存来源、不可变导入定义、启用状态和玩家覆盖，先落盘后发布；损坏文件不自动覆盖。书 ID 使用独立全局命名空间；同源重复导入复用已有项，不改变启用状态。另存为以当前导出内容建立新的恢复基线和 ID。
+
+生成开始捕获 `GlobalWorldBookSnapshot`，只为本次编排合并 Character 书和全局书，不改角色资产或会话角色快照。Provider 重裁剪复用同一份捕获。全局条目继续使用现有 `WorldBookEngine` 和 required 注入保证；timed state 进入该会话的 runtime checkpoint。网页会话为全局原始 EJS 建立哈希引用，编辑模板后沿用来源变化的跳过／强制失败规则；原生模式不新增模板执行能力。全局库不暴露为作者脚本可写的共享状态。
+
+来源组合沿用已有引擎：角色书先于全局书消耗共享总预算，全局书保持库内导入顺序，各书显式预算照常生效；分组和递归限于书内，注入按原位置及 order 合并。未新增跨书递归或 ST 可配置混排，也不按名称／正文去重。停用后不再参与；保存的计时检查点按既有引擎的代际规则处理。
+
+导出保留来源结构及未知字段，合并正文和启用调整；`entries[*].extensions.tavern_player_mode` 保存 Player 的 `AUTO` / `FORCED` / `DISABLED`，重新导入恢复。ST 不识别该扩展，因此导出不承诺 ST 能执行“始终注入”。角色阅读、会话阅读和全局阅读复用同一阅读器，全局页明确显示跨会话修改范围。
 
 ## Conversation Runtime
 
@@ -170,4 +184,4 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 ## 当前尚未实现
 
-当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 World Book / Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。
+当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。
