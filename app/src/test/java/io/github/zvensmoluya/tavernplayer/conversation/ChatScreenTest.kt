@@ -53,6 +53,18 @@ class ChatScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Test fun `save retry stays available in both conversation routes while business actions are blocked`() {
+        var screen by mutableStateOf(state().copy(storageFailed = true))
+        var retries = 0
+        compose.setContent { TavernPlayerTheme { ChatScreen(state = screen, actions = actions().copy(retrySave = { retries++ })) } }
+        compose.onNodeWithTag("retrySave").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("sendMessage").assertIsNotEnabled()
+        compose.runOnIdle { screen = screen.copy(executionMode = ConversationExecutionMode.BROWSER) }
+        compose.onNodeWithTag("retrySave").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("sendMessage").assertIsNotEnabled()
+        assertEquals(2, retries)
+    }
+
     @Test fun `world book opens as a full reader during generation and returns to chat`() {
         val screen = state().copy(running = true, character = state().character.copy(worldBooks = listOf(
             WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", comment = "中性内容", content = "阅读正文"))))))

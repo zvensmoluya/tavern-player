@@ -99,7 +99,7 @@ class NativeSurfaceLiveAndroidTest {
             suspend fun send(text: String, turn: Int) {
                 withContext(Dispatchers.Main) { vm.updateInput(text); vm.send() }
                 withTimeout(360_000) { vm.uiState.first { !it.busy && it.messages.size >= 1 + turn * 2 } }
-                val saved = repository.get(initial.id)!!
+                val saved = repository.blockingGet(initial.id)!!
                 report("conversation-$turn.json", Json.encodeToString(saved))
                 report("trace-$turn.json", vm.uiState.value.lastTrace?.let { Json.encodeToString(it.plan) } ?: "null")
                 assertEquals("Actual model reply did not complete; inspect private trace", ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
@@ -109,7 +109,7 @@ class NativeSurfaceLiveAndroidTest {
                 report("surfaces-$turn.json", Json.encodeToString(runtime.present(program, saved.nativeContext(), saved.nativeRevision()).map { it.data }))
             }
             send("我把三份“样本茶包”收进物品栏，数量为3，描述为普通茶包。用一句话回应，并在回复末尾按世界书变量协议输出完整的 <UpdateVariable><Analysis>...</Analysis><JSONPatch>...</JSONPatch></UpdateVariable>，执行物品记录。不要省略变量更新块。", 1)
-            val first = repository.get(initial.id)!!
+            val first = repository.blockingGet(initial.id)!!
             fun inventoryKeys(state: ConversationRuntimeState) = NativeStatePath.read(state.mvuState?.data, "/stat_data/物品栏")!!.jsonObject.keys
             val added = inventoryKeys(first.runtimeState) - inventoryKeys(initial.runtimeState)
             assertEquals("First reply must add exactly one inventory record", 1, added.size)
@@ -120,7 +120,7 @@ class NativeSurfaceLiveAndroidTest {
                 "/stat_data/物品栏$itemPointer/数量")?.jsonPrimitive?.intOrNull
             assertEquals("First real reply must insert three items", 3, quantity(first.runtimeState))
             send("我取用一份物品栏里名为“$itemName”的物品，其余保留。用一句话回应，并在回复末尾输出世界书要求的完整 <UpdateVariable><Analysis>...</Analysis><JSONPatch>...</JSONPatch></UpdateVariable>，更新剩余数量。不要省略变量更新块。", 2)
-            val second = repository.get(initial.id)!!
+            val second = repository.blockingGet(initial.id)!!
             assertEquals("Second real reply must update remaining quantity", 2, quantity(second.runtimeState))
             assertEquals("MVU card must not call a second model to confirm copied Player state", 2, plans.size)
             assertEquals(3, quantity(first.runtimeState))
@@ -136,25 +136,25 @@ class NativeSurfaceLiveAndroidTest {
                 File(root, "inventory.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                 bitmap.recycle()
             }
-            val restored = ConversationRepository(root, PromptCompiler(), mvuRuntime = mvu).get(initial.id)!!
+            val restored = ConversationRepository(root, PromptCompiler(), mvuRuntime = mvu).blockingGet(initial.id)!!
             assertEquals(second.runtimeState, restored.runtimeState)
             assertEquals(runtime.present(program, second.nativeContext(), second.nativeRevision()), runtime.present(program, restored.nativeContext(), restored.nativeRevision()))
             // Exercise actual regeneration and candidate restoration without changing model output.
             withContext(Dispatchers.Main) { vm.regenerate() }
             withTimeout(360_000) { vm.uiState.first { !it.busy && it.messages.last().variantCount == 2 } }
-            val regenerated = repository.get(initial.id)!!
+            val regenerated = repository.blockingGet(initial.id)!!
             report("conversation-regenerated.json", Json.encodeToString(regenerated))
             assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
             assertEquals("Regeneration must consume from the pre-reply quantity", 2, quantity(regenerated.runtimeState))
             withContext(Dispatchers.Main) { vm.previousVariant() }
             withTimeout(20_000) { vm.uiState.first { !it.busy && it.messages.last().variantIndex == 0 } }
-            withTimeout(20_000) { repository.conversations.first { records -> records.any { it.id == initial.id && it.turns.last().selectedVariantIndex == 0 } } }
-            assertEquals(second.runtimeState, repository.get(initial.id)!!.runtimeState)
+            withTimeout(20_000) { while (repository.get(initial.id)!!.turns.last().selectedVariantIndex != 0) kotlinx.coroutines.delay(10) }
+            assertEquals(second.runtimeState, repository.blockingGet(initial.id)!!.runtimeState)
             withContext(Dispatchers.Main) { vm.nextVariant() }
             withTimeout(20_000) { vm.uiState.first { !it.busy && it.messages.last().variantIndex == 1 } }
-            withTimeout(20_000) { repository.conversations.first { records -> records.any { it.id == initial.id && it.turns.last().selectedVariantIndex == 1 } } }
-            assertEquals(regenerated.runtimeState, repository.get(initial.id)!!.runtimeState)
-            val reloaded = ConversationRepository(root, PromptCompiler(), mvuRuntime = mvu).get(initial.id)!!
+            withTimeout(20_000) { while (repository.get(initial.id)!!.turns.last().selectedVariantIndex != 1) kotlinx.coroutines.delay(10) }
+            assertEquals(regenerated.runtimeState, repository.blockingGet(initial.id)!!.runtimeState)
+            val reloaded = ConversationRepository(root, PromptCompiler(), mvuRuntime = mvu).blockingGet(initial.id)!!
             assertEquals(regenerated.runtimeState, reloaded.runtimeState)
             report("result.json", buildJsonObject {
                 put("sample", "C-04"); put("model", connection.selectedModel); put("realChatRequests", plans.size)

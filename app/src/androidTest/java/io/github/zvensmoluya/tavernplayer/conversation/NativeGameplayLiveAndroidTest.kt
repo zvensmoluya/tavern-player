@@ -95,7 +95,7 @@ class NativeGameplayLiveAndroidTest {
             compose.onNodeWithTag("openNativeDetails").performClick()
             compose.onNodeWithTag("refreshConversationMemories").performScrollTo().performClick()
             compose.waitUntil(600_000) { !active.uiState.value.running }
-            val saved = checkNotNull(ConversationRepository(context.filesDir, PromptCompiler()).get(seed.id))
+            val saved = checkNotNull(ConversationRepository(context.filesDir, PromptCompiler()).blockingGet(seed.id))
             File(output, "$name.json").writeText(Json.encodeToString(saved))
             File(output, "$name-result.txt").writeText(active.uiState.value.message.orEmpty())
             assertEquals(active.uiState.value.message, 3, saved.runtimeState.memories.size)
@@ -290,11 +290,11 @@ class NativeGameplayLiveAndroidTest {
             val state = active.uiState.value
             if (state.messages.last().message.role == MessageRole.ASSISTANT && state.messages.last().metadata != null) {
                 compose.waitUntil(15_000) {
-                    val persisted = ConversationRepository(context.filesDir, graph.promptCompiler).get(checkNotNull(state.conversationId))?.turns?.lastOrNull()?.selected
+                    val persisted = ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(checkNotNull(state.conversationId))?.turns?.lastOrNull()?.selected
                     persisted?.message?.id == state.messages.last().message.id && persisted.status != PersistedMessageStatus.STREAMING
                 }
             }
-            val record = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(checkNotNull(state.conversationId)))
+            val record = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(checkNotNull(state.conversationId)))
             File(output, "$name.json").writeText(Json.encodeToString(record))
             File(output, "$name.txt").writeText(state.messages.lastOrNull()?.message?.sourceText.orEmpty())
             File(output, "$name-result.txt").writeText("message=${state.message}\nerror=${state.lastTrace?.error}\nusage=${state.lastTrace?.usage}\nfinish=${state.lastTrace?.finishReason}\ndiagnostics=${state.lastTrace?.streamDiagnostics?.joinToString("\n")}\n")
@@ -337,7 +337,7 @@ class NativeGameplayLiveAndroidTest {
             choose("witnesses", "天海咲")
             compose.onNodeWithTag("native-form-submit-custom-opening-contract").performScrollTo().performClick()
             compose.waitUntil(15_000) { !active.uiState.value.setupSaving }
-            val setup = checkNotNull(graph.conversationRepository.get(pressureRecord.id))
+            val setup = checkNotNull(graph.conversationRepository.blockingGet(pressureRecord.id))
             assertEquals(3, setup.turns.single().selected.openingSourceIndex)
             assertEquals(JsonPrimitive("TS魔法少女"), setup.runtimeState.conversationState.values["protagonist-body"])
             compose.runOnUiThread {
@@ -358,13 +358,13 @@ class NativeGameplayLiveAndroidTest {
             awaitReply("gameplay-2-training")
             assertFalse(active.uiState.value.messages.last().stateUnconfirmed)
             assertEquals(JsonPrimitive("已变身"), active.uiState.value.conversationState["protagonist-transformation"])
-            val training = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(pressureRecord.id))
+            val training = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(pressureRecord.id))
             File(output, "mana-observation.txt").writeText("before=$manaBefore\nafter=${training.runtimeState.conversationState.values["protagonist-mana"]}\n")
             compose.runOnUiThread { active.previewPlayerChoice("voluntary-defeat") }
             assertNotNull(active.uiState.value.choicePreview)
             compose.runOnUiThread { active.confirmPlayerChoice() }
             compose.waitUntil(15_000) { !active.uiState.value.busy }
-            val chosen = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(pressureRecord.id))
+            val chosen = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(pressureRecord.id))
             File(output, "gameplay-choice.json").writeText(Json.encodeToString(chosen))
             assertEquals(JsonPrimitive("战败"), chosen.runtimeState.conversationState.values["protagonist-battle"])
             assertEquals(training.turns.size, chosen.turns.size)
@@ -382,8 +382,8 @@ class NativeGameplayLiveAndroidTest {
             assertFalse(active.uiState.value.messages.last().stateUnconfirmed)
             assertEquals(JsonPrimitive("未变身"), active.uiState.value.conversationState["protagonist-transformation"])
             assertEquals(JsonPrimitive("无战斗"), active.uiState.value.conversationState["protagonist-battle"])
-            val complete = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(pressureRecord.id))
-            val restored = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(pressureRecord.id))
+            val complete = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(pressureRecord.id))
+            val restored = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(pressureRecord.id))
             assertEquals(complete, restored)
             assertEquals(1, restored.turns.sumOf { it.selected.playerChoiceCommits.size })
             assertEquals(chosen.turns.last().selected.runtimeStateAfter, restored.turns[chosen.turns.lastIndex].selected.runtimeStateAfter)
@@ -400,7 +400,7 @@ class NativeGameplayLiveAndroidTest {
             compose.onNodeWithTag("native-form-submit-custom-opening-contract").performScrollTo().performClick()
             compose.waitUntil(15_000) { !active.uiState.value.setupSaving }
             assertEquals(JsonPrimitive("TS魔法少女"), active.uiState.value.conversationState["protagonist-body"])
-            val committed = checkNotNull(graph.conversationRepository.get(pressureRecord.id))
+            val committed = checkNotNull(graph.conversationRepository.blockingGet(pressureRecord.id))
             assertEquals("custom-opening-contract", committed.runtimeState.setupCommit?.formId)
             val restoredRepository = ConversationRepository(context.filesDir, PromptCompiler())
             compose.runOnUiThread {
@@ -413,10 +413,10 @@ class NativeGameplayLiveAndroidTest {
             compose.onNodeWithTag("sendMessage").performClick()
             compose.waitUntil(600_000) { !active.uiState.value.running }
             compose.waitUntil(15_000) {
-                val persisted = restoredRepository.get(pressureRecord.id)?.turns?.lastOrNull()?.selected
+                val persisted = restoredRepository.blockingGet(pressureRecord.id)?.turns?.lastOrNull()?.selected
                 persisted?.message?.id == active.uiState.value.messages.last().message.id && persisted.status == PersistedMessageStatus.COMPLETE
             }
-            val savedPressure = checkNotNull(restoredRepository.get(pressureRecord.id))
+            val savedPressure = checkNotNull(restoredRepository.blockingGet(pressureRecord.id))
             File(output, "pressure-first.json").writeText(Json.encodeToString(savedPressure))
             File(output, "pressure-first.txt").writeText(active.uiState.value.messages.last().message.sourceText)
             assertEquals(active.uiState.value.message, ChatMessageStatus.COMPLETE, active.uiState.value.messages.last().status)
@@ -428,7 +428,7 @@ class NativeGameplayLiveAndroidTest {
             compose.onNodeWithTag("openNativeDetails").performClick()
             compose.onNodeWithTag("native-state-protagonist-mana").assertExists()
             screenshot("pressure-state")
-            val disk = ConversationRepository(context.filesDir, PromptCompiler()).get(pressureRecord.id)
+            val disk = ConversationRepository(context.filesDir, PromptCompiler()).blockingGet(pressureRecord.id)
             assertTrue("Persisted runtime differs after reopening the conversation repository", savedPressure.runtimeState == disk?.runtimeState)
         }
         if (scenario == "second-pressure" || scenario == "second-pressure-memory") {
@@ -465,11 +465,11 @@ class NativeGameplayLiveAndroidTest {
             assertEquals(secondState.message, ChatMessageStatus.COMPLETE, secondState.messages.last().status)
             assertFalse(secondState.messages.last().stateUnconfirmed)
             assertEquals(firstPanel, secondState.messages[secondState.messages.lastIndex - 2].nativePanels)
-            compose.waitUntil(15_000) { restoredRepository.get(secondRecord.id)?.turns?.lastOrNull()?.selected?.status == PersistedMessageStatus.COMPLETE }
-            val savedSecond = checkNotNull(restoredRepository.get(secondRecord.id))
+            compose.waitUntil(15_000) { restoredRepository.blockingGet(secondRecord.id)?.turns?.lastOrNull()?.selected?.status == PersistedMessageStatus.COMPLETE }
+            val savedSecond = checkNotNull(restoredRepository.blockingGet(secondRecord.id))
             File(output, "second-pressure-second.json").writeText(Json.encodeToString(savedSecond))
             File(output, "second-pressure-second.txt").writeText(secondState.messages.last().message.sourceText)
-            assertTrue(savedSecond.runtimeState == ConversationRepository(context.filesDir, PromptCompiler()).get(secondRecord.id)?.runtimeState)
+            assertTrue(savedSecond.runtimeState == ConversationRepository(context.filesDir, PromptCompiler()).blockingGet(secondRecord.id)?.runtimeState)
             screenshot("second-pressure-second")
             if (scenario == "second-pressure-memory") {
                 val beforeMemory = active.uiState.value.conversationState
@@ -478,7 +478,7 @@ class NativeGameplayLiveAndroidTest {
                 compose.onNodeWithTag("refreshConversationMemories").performScrollTo().performClick()
                 progress("waiting for three source-bound memory analyses")
                 compose.waitUntil(600_000) { !active.uiState.value.running }
-                val afterMemory = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).get(secondRecord.id))
+                val afterMemory = checkNotNull(ConversationRepository(context.filesDir, graph.promptCompiler).blockingGet(secondRecord.id))
                 File(output, "second-memory.json").writeText(Json.encodeToString(afterMemory))
                 File(output, "second-memory-result.txt").writeText(active.uiState.value.message.orEmpty())
                 assertEquals(active.uiState.value.message, 3, afterMemory.runtimeState.memories.size)

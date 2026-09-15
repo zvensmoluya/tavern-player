@@ -86,7 +86,7 @@ class NativeEntryScreenTest {
             executionMode = ConversationExecutionMode.LEGACY_NATIVE)
         val browser = native.copy(id = "c-browser", executionMode = ConversationExecutionMode.BROWSER)
         compose.setContent { TavernPlayerTheme {
-            CharacterDetailScreen(CharacterAsset("plain", name = "纯文字样本"), listOf(native, browser), null, {}, {}, {})
+            CharacterDetailScreen(CharacterAsset("plain", name = "纯文字样本"), listOf(native, browser).map { io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary(it.id, it.character.assetId, 0, 0, 0, "空白对话", it.executionMode.name) }, null, {}, {}, {})
         } }
         compose.onNodeWithTag("characterDetail").performScrollToNode(hasTestTag("conversation-c-native"))
         compose.onAllNodesWithText("· 原生模式", substring = true).assertCountEquals(1)

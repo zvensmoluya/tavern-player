@@ -1,17 +1,14 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import android.content.Context
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
-import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
+import io.github.zvensmoluya.tavernplayer.conversation.storage.*
 import java.io.File
 import java.util.UUID
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -24,25 +21,42 @@ class ConversationRepository(
     private val mvuRuntime: io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime =
         io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime(),
     private val prepareBrowser: suspend (io.github.zvensmoluya.tavernplayer.content.BrowserProgram) -> io.github.zvensmoluya.tavernplayer.content.BrowserProgram = { it },
-) {
-    private val root = File(filesDir, "tavern/conversations")
+    context: Context,
+    databaseOverride: ConversationDatabase? = null,
+) : AutoCloseable {
+    private val legacyRoot = File(filesDir, "tavern/conversations")
+    internal val store = RoomConversationStore(context, filesDir, databaseOverride)
     private val mutex = Mutex()
-    private val json = Json {
-        encodeDefaults = true
-        ignoreUnknownKeys = true
-    }
-    private val _conversations = MutableStateFlow<List<ConversationRecord>>(emptyList())
-    val conversations: StateFlow<List<ConversationRecord>> = _conversations.asStateFlow()
+    private var initialized = false
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+    val conversations: Flow<List<ConversationSummary>> = flow {
+        ensureInitialized()
+        emitAll(store.dao.observeSummaries().distinctUntilChanged())
+    }.flowOn(ioDispatcher)
 
-    init {
-        root.mkdirs()
-        AtomicFileStore.cleanupTemporaryFiles(root)
-        val loaded = loadAll().map { record ->
-            val recovered = NativeOperations.recover(record.recoverInterruptedStreams())
-            if (recovered != record) writeRecord(recovered)
-            recovered
+    private suspend fun ensureInitialized() = withContext(ioDispatcher) { mutex.withLock { initializeLocked() } }
+    private fun initializeLocked() {
+        if (initialized) return
+        if (store.dao.imported("__active__") == null) {
+            legacyRoot.listFiles().orEmpty().filter { it.isFile && it.extension == "json" }.sortedBy { it.name }.forEach { file ->
+                val bytes = file.readBytes()
+                val hash = RoomConversationStore.sha256(bytes)
+                val marker = store.dao.imported(file.name)
+                check(marker == null || marker.sha256 == hash) { "导入中的旧会话发生变化，原文件已保留" }
+                if (marker == null) {
+                    val record = try { json.decodeFromString<ConversationRecord>(bytes.toString(Charsets.UTF_8)) }
+                    catch (error: Exception) { throw IllegalStateException("旧会话无法解析，导入未激活，原文件已保留", error) }
+                    check(record.schemaVersion == 3) { "旧会话格式不受支持，导入未激活，原文件已保留" }
+                    store.transaction {
+                        val saved = store.save(record.copy(commitRevision = 0), null)
+                        check(store.read(saved.id) == saved) { "旧会话导入校验失败，原文件已保留" }
+                        store.dao.put(ImportRow(file.name, hash))
+                    }
+                }
+            }
+            store.transaction { store.dao.put(ImportRow("__active__", "1")) }
         }
-        _conversations.value = loaded.sortedByDescending(ConversationRecord::updatedAtEpochMillis)
+        initialized = true
     }
 
     suspend fun create(
@@ -52,6 +66,7 @@ class ConversationRepository(
         executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
     ): ConversationRecord = withContext(ioDispatcher) {
         mutex.withLock {
+            initializeLocked()
             val timestamp = now()
             val conversationId = idFactory()
             val capturedPreset = preset.snapshot()
@@ -116,56 +131,68 @@ class ConversationRepository(
                 updatedAtEpochMillis = timestamp,
                 executionMode = executionMode,
             ), capturedPreset, compiler)
-            writeRecord(record)
-            publish(record)
-            record
+            store.save(record, null)
         }
     }
 
-    fun get(conversationId: String): ConversationRecord? =
-        _conversations.value.firstOrNull { it.id == conversationId }
+    suspend fun get(conversationId: String): ConversationRecord? = withContext(ioDispatcher) {
+        ensureInitialized()
+        store.read(conversationId)
+    }
 
-    fun forCharacter(characterId: String): List<ConversationRecord> =
-        _conversations.value.filter { it.character.assetId == characterId }
-
-    suspend fun save(record: ConversationRecord): ConversationRecord = withContext(ioDispatcher) {
+    suspend fun open(conversationId: String): ConversationRecord? = withContext(ioDispatcher) {
         mutex.withLock {
-            val updated = record.copy(updatedAtEpochMillis = now())
-            writeRecord(updated)
-            publish(updated)
-            updated
+            initializeLocked()
+            val loaded = store.read(conversationId) ?: return@withLock null
+            val streams = store.streamData(conversationId)
+            var recovered = recoverConversation(loaded, streams, compiler)
+            if (recovered != loaded || streams.isNotEmpty()) {
+                recovered = store.transaction {
+                    check(store.dao.streams(conversationId).associateBy { it.id } == streams.associate { it.progress.id to it.progress }) {
+                        "生成进度在恢复期间发生变化，请重新打开会话"
+                    }
+                    val result = store.save(recovered, loaded, activity = false)
+                    streams.forEach { store.dao.deleteStream(it.progress.id) }
+                    result
+                }
+            }
+            recovered
         }
     }
 
-    private fun publish(record: ConversationRecord) {
-        _conversations.value = (_conversations.value.filterNot { it.id == record.id } + record)
-            .sortedByDescending(ConversationRecord::updatedAtEpochMillis)
+    suspend fun contains(conversationId: String): Boolean = withContext(ioDispatcher) {
+        ensureInitialized(); store.dao.head(conversationId) != null
     }
 
-    private fun loadAll(): List<ConversationRecord> = root.listFiles()
-        .orEmpty()
-        .filter { it.isFile && it.extension == "json" }
-        .mapNotNull { file -> runCatching { json.decodeFromString<ConversationRecord>(file.readText()) }.getOrNull() }
-
-    private fun writeRecord(record: ConversationRecord) {
-        val file = File(root, "${record.id}.json")
-        AtomicFileStore.writeUtf8(file, json.encodeToString(record))
+    suspend fun forCharacter(characterId: String): List<ConversationSummary> = withContext(ioDispatcher) {
+        ensureInitialized(); store.dao.summaries().filter { it.assetId == characterId }
     }
-}
 
-private fun ConversationRecord.recoverInterruptedStreams(): ConversationRecord {
-    var changed = false
-    val recovered = turns.map { turn ->
-        turn.copy(
-            variants = turn.variants.map { variant ->
-                if (variant.status == PersistedMessageStatus.STREAMING) {
-                    changed = true
-                    variant.copy(status = PersistedMessageStatus.INTERRUPTED)
-                } else {
-                    variant
-                }
-            },
-        )
+    suspend fun save(record: ConversationRecord, previous: ConversationRecord? = null,
+        activity: Boolean = true, finishStream: String? = null): ConversationRecord = withContext(ioDispatcher) {
+        mutex.withLock {
+            initializeLocked()
+            val before = previous ?: store.read(record.id)
+            check(before == null || record.commitRevision == before.commitRevision) { "会话已变化，拒绝过期写入" }
+            val updated = if (activity) record.copy(updatedAtEpochMillis = now()) else record
+            store.save(updated, before, activity, finishStream)
+        }
     }
-    return if (changed) copy(turns = recovered) else this
+
+    suspend fun saveDraft(record: ConversationRecord) = withContext(ioDispatcher) {
+        mutex.withLock { initializeLocked(); store.saveDraft(record) }
+    }
+    suspend fun startStream(id: String, record: ConversationRecord, variantId: String, context: StreamContext) = withContext(ioDispatcher) {
+        mutex.withLock { initializeLocked(); store.startStream(id, record.id, variantId, json.encodeToString(context)) }
+    }
+    suspend fun appendStream(id: String, chunks: List<StreamChunk>, projectedThrough: Long, preview: MessageVariant?) = withContext(ioDispatcher) {
+        mutex.withLock { store.appendStream(id, chunks, projectedThrough, preview) }
+    }
+    suspend fun readMessages(id: String, before: Int = Int.MAX_VALUE, limit: Int = 50) = withContext(ioDispatcher) {
+        ensureInitialized(); store.page(id, before, limit)
+    }
+    suspend fun collectUnusedBlobs() = withContext(ioDispatcher) {
+        mutex.withLock { initializeLocked(); store.dao.collectUnusedBlobs() }
+    }
+    override fun close() = store.close()
 }

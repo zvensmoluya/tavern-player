@@ -1,8 +1,11 @@
 plugins {
+    alias(libs.plugins.ksp)
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
 }
+
+ksp { arg("room.schemaLocation", "$projectDir/schemas") }
 
 android {
     namespace = "io.github.zvensmoluya.tavernplayer"
@@ -111,6 +114,8 @@ tasks.matching { task ->
 }
 
 dependencies {
+    implementation(libs.room.runtime)
+    ksp(libs.room.compiler)
     implementation(libs.webkit)
     implementation(project(":content-core"))
     implementation(project(":conversation-core"))

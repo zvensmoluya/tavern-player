@@ -1,6 +1,6 @@
 # Tavern Player 当前实现架构
 
-> 状态：描述当前仓库已经建立的边界，整理于 2026-09-09。默认网页消息区、宿主桥和原程序装载已接入，范围见[网页运行契约](web-runtime.md)。文中 Native 编译描述独立可选适配实现。
+> 状态：描述当前仓库已经建立的边界，更新于 2026-09-15。默认网页消息区、宿主桥和原程序装载已接入，范围见[网页运行契约](web-runtime.md)。文中 Native 编译描述独立可选适配实现。
 >
 > 产品与兼容性决定见 [`product-direction.md`](product-direction.md)。
 
@@ -27,7 +27,7 @@ app ───────────────> model-gateway
 
 ## 网页运行路径
 
-`BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ChatViewModel` 串行协调原生操作、保存与生成。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
+`BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ConversationSession` 统一持有可写会话、已提交基线、版本与生成任务，串行提交原生/网页操作；`ChatViewModel` 只做生命周期和 UI 适配。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
 
 网页外壳先创建一个持久作者会话协调 iframe，再挂载消息和后台脚本。`session.mjs` 统一保存共享对象、事件监听器、待提交视图和命令队列；各 `host.mjs` 保留页面身份与原生传输入口。作者内容与协调器同源，通过实际对象引用共享函数和回调；协调器仍与可信外壳不同源且不直接访问原生桥。原生事实事件只向协调器分发一次，销毁页面按所属身份清理监听器、等待及排队操作。
 
@@ -140,9 +140,13 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `PersonaRepository` 原子保存一份全局默认 Persona。角色库中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
 
-`ConversationRepository` 保存完整 Character Snapshot、Persona（name、avatar 与可选 description）、turn / variants、Macro local variables、World Book timed state、World Book activation overrides、`ConversationStateSnapshot` 和 generation metadata，但不保存 Conversation 级 Preset 绑定。Persona description 只作为 `{{persona}}` 与 `personaDescription` marker 的动态内容源，位置和 role 继续由 Preset 决定。写入使用临时文件、fsync 和原子替换；启动时清理未完成导入，并把遗留 `STREAMING` variant 恢复为 `INTERRUPTED`。Conversation record schema v3 不兼容旧的 `adaptationState` 存储名。
+`ConversationRepository` 通过 `RoomConversationStore` 保存 Character Snapshot、Persona、turn/variants、运行检查点、世界书意图和生成诊断，不保存 Conversation 级 Preset 绑定。会话头、摘要、草稿、消息、候选、生成计划分片、原生操作、原始流日志与不可变内容引用分表；相同正文和检查点按内容哈希复用。角色列表只读摘要，打开会话才重建该会话对象，读取中共享相同检查点和正文实例。Persona description 的编排语义保持不变。
 
-应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。角色库首屏会在后台 I/O 创建 Conversation 仓库并持续订阅已有对话，以显示每张卡的对话数量，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
+数据库位于应用私有目录 `tavern/conversation.db`，Room schema 1 导出在 `app/schemas`。旧 `tavern/conversations/*.json` 首次逐份导入、完整字段回读比较，全部成功后激活；损坏文件阻止激活，原文件始终保留。JSON 导入格式仍为 Conversation record schema v3，不支持更早的 `adaptationState` 名称。正常写入不再生成会话 JSON 文件。
+
+`ConversationSession` 是业务写入所有者：持有 `commitRevision` 和独立 `draftSeq`，所有持久业务提交通过统一提交锁，存储拒绝过期版本。普通打字仅更新 draft 表，不改最近活动时间。流式事件先按序进入独立日志，预览最多约每 50 ms 更新，进度每 500 ms 或达到批次门槛写入。Finished 只记录结束原因，继续接收尾随 usage；最终投影、MVU 结果、正文、用量、运行状态与日志删除在同一事务提交，成功后发布 COMPLETE。保存失败保留待提交结果并阻止后续业务写入，用户可重试保存。切会话与关闭先结束任务并等待落盘；进程意外退出后按原始事件重建 INTERRUPTED 正文，不重新调用模型、MVU 或作者动作。详细边界见[会话存储与事务实现](conversation-storage.md)。
+
+应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。角色库首屏会在后台 I/O 初始化 Room/旧数据导入并持续订阅已有对话摘要，以显示每张卡的对话数量，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
 
 Conversation State 属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`UpdateVariableSetV1Adapter` 与 `UpdateVariableJsonPatchV1Adapter` 只把唯一、完整 assistant update envelope 中白名单路径的 scalar 更新解码为 `ConversationStatePatch`，`NativeAdaptationRuntime` 在消息候选完成时一次应用；完整空块是已确认的 no-op，缺块不是状态事实，缺失内层或外层闭合标签的畸形块不会被宽松修复。原始 `sourceText` 保留机器块用于摄入与诊断；声明对应 Adapter 后，Player 在聊天 storage/display 的 Macro / Regex 投影前剥离已识别的完整机器块，并在流式阶段暂时隐藏未闭合块。畸形块不直接写入状态；单个畸形块只有在独立确认成功后才从 canonical 展示移除，歧义的多个块保持可见。Adapter 不负责 UI 或 Prompt。`PromptCompiler` 把适配声明的 label/type/description 与当前值按稳定顺序编码为固定 JSON system projection；该投影不经过卡片模板、Macro 或 Regex，也不允许 Adaptation 指定 role、位置或格式。声明 Adapter 时，Player 另生成固定 dialect 与白名单回写契约，并要求每轮以完整块确认更新或 no-op。
 

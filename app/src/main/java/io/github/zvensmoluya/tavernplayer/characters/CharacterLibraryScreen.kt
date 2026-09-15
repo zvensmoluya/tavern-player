@@ -66,7 +66,7 @@ import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.CompatibilitySeverity
-import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
+import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.SafeMarkdownText
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -325,7 +325,7 @@ private fun CharacterCardRow(
 @Composable
 fun CharacterDetailScreen(
     character: CharacterAsset,
-    conversations: List<ConversationRecord>,
+    conversations: List<ConversationSummary>,
     avatarPath: String?,
     onBack: () -> Unit,
     onNewConversation: () -> Unit,
@@ -582,15 +582,15 @@ fun CharacterDetailScreen(
                 item("conversation-title") {
                     Text("已有对话", style = MaterialTheme.typography.titleLarge)
                 }
-                items(conversations, key = ConversationRecord::id) { conversation ->
+                items(conversations, key = ConversationSummary::id) { conversation ->
                     Card(
                         modifier = Modifier.fillMaxWidth().testTag("conversation-${conversation.id}"),
                         onClick = { onOpenConversation(conversation.id) },
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(conversation.preview(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(conversation.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${conversation.turns.size} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)} · ${conversation.executionMode.displayName()}",
+                                "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)} · ${ConversationExecutionMode.valueOf(conversation.executionMode).displayName()}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -679,13 +679,6 @@ private suspend fun Context.readCharacterCard(uri: Uri): Pair<ByteArray, String>
     } ?: error("无法打开所选文件")
     return bytes to fileName
 }
-
-private fun ConversationRecord.preview(): String = turns.asReversed()
-    .asSequence()
-    .map { it.selected.message.content.trim() }
-    .firstOrNull(String::isNotBlank)
-    ?.take(160)
-    ?: "空白对话"
 
 private fun formatTimestamp(epochMillis: Long): String = runCatching {
     TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))

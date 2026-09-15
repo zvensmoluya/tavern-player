@@ -96,7 +96,7 @@ class NativePlayerChoiceAndroidTest {
             openChoice()
             compose.onNodeWithTag("native-choice-confirm").performClick()
             compose.waitUntil(15_000) { !active.uiState.value.busy && active.uiState.value.input == native.playerChoices.single().draft }
-            val saved = checkNotNull(ConversationRepository(root, graph.promptCompiler).get(record.id))
+            val saved = checkNotNull(ConversationRepository(root, graph.promptCompiler).blockingGet(record.id))
             assertEquals(1, saved.turns.size)
             assertEquals(JsonPrimitive("战败"), saved.runtimeState.conversationState.values["protagonist-battle"])
             assertEquals(1, saved.turns.single().selected.playerChoiceCommits.size)
@@ -133,7 +133,7 @@ class NativePlayerChoiceAndroidTest {
             screenshot("historical-state-320dp")
             compose.onNodeWithTag("native-state-protagonist-battle").assertIsDisplayed()
             assertEquals(JsonPrimitive("未变身"), active.uiState.value.conversationState["protagonist-transformation"])
-            assertEquals(later.runtimeState, ConversationRepository(root, graph.promptCompiler).get(record.id)!!.runtimeState)
+            assertEquals(later.runtimeState, ConversationRepository(root, graph.promptCompiler).blockingGet(record.id)!!.runtimeState)
         } finally { root.deleteRecursively() }
     }
 }

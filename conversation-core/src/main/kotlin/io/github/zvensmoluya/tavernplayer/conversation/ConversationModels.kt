@@ -329,6 +329,9 @@ data class MessageVariant(
     val finishReason: String? = null,
     val inputTokens: Long? = null,
     val outputTokens: Long? = null,
+    val totalTokens: Long? = null,
+    val cachedTokens: Long? = null,
+    val reasoningTokens: Long? = null,
     val generationPlan: GenerationPlan? = null,
     val edited: Boolean = false,
     val runtimeStateBefore: ConversationRuntimeState? = null,
@@ -376,6 +379,8 @@ data class ConversationRecord(
     val worldBookState: ConversationWorldBookState = ConversationWorldBookState(),
     // Missing field in an existing record must retain its original execution path.
     val executionMode: ConversationExecutionMode = ConversationExecutionMode.LEGACY_NATIVE,
+    val commitRevision: Long = 0,
+    val draftSeq: Long = 0,
 )
 
 @Serializable
@@ -394,7 +399,7 @@ data class ConversationChoiceDraft(val variantId: String, val commitId: String, 
 
 /** 用户改写草稿后，它成为普通输入；未改写的选择草稿不能悄悄带到另一候选。 */
 fun ConversationRecord.withDraft(value: String): ConversationRecord =
-    copy(draft = value, choiceDraft = choiceDraft?.takeIf { it.text == value }, nativeDraftOrigin = nativeDraftOrigin?.takeIf { it.text == value })
+    copy(draft = value, draftSeq = draftSeq + if (draft == value) 0 else 1, choiceDraft = choiceDraft?.takeIf { it.text == value }, nativeDraftOrigin = nativeDraftOrigin?.takeIf { it.text == value })
 
 fun ConversationRecord.reconcileChoiceDraft(): ConversationRecord {
     nativeDraftOrigin?.let { origin ->

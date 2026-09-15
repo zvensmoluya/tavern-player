@@ -122,7 +122,7 @@ class NativeOpeningAndroidTest {
                 screenshot("opening-$index-form")
                 compose.onNodeWithTag("native-form-submit-$formId").performClick()
                 compose.waitUntil(15_000) { !active.uiState.value.busy && active.uiState.value.input.contains("照明魔法") }
-                val saved = checkNotNull(ConversationRepository(root, graph.promptCompiler).get(record.id))
+                val saved = checkNotNull(ConversationRepository(root, graph.promptCompiler).blockingGet(record.id))
                 assertEquals(if (index == 0) 3 else index, saved.turns.single().selected.openingSourceIndex)
                 assertEquals(JsonPrimitive("TS魔法少女"), saved.runtimeState.conversationState.values["protagonist-body"])
                 assertEquals(formId, saved.runtimeState.setupCommit?.formId)

@@ -39,16 +39,14 @@ fun MessageVariant.nativeHead(): ConversationRuntimeState? {
     return runtimeStateAfter?.takeIf { it.nativeCommitId == action.id } ?: action.runtime
 }
 
-fun ConversationRecord.nativeRevision(): String = nativeHash(buildString {
-    // Do not recursively hash historical commit snapshots or captured generation plans on the UI thread.
-    append(buildJsonArray { turns.forEach { turn -> add(buildJsonArray {
-        val variant = turn.selected
-        add(variant.id); add(variant.message.content); add(variant.message.sourceText); add(variant.status.name)
-        variant.nativeOperations.lastOrNull()?.let { add(it.id); add(it.status.name); add(it.commits.size) }
-    }) } })
-    append(Json.encodeToString(runtimeState)); append(Json.encodeToString(character.nativeAdaptation?.script))
-    append(JsonPrimitive(id)); append(JsonPrimitive(draft))
-})
+fun ConversationRecord.nativeRevision(): String = buildString {
+    append(id); append(':'); append(commitRevision); append(':'); append(draftSeq)
+    // Selection and in-flight receipts can change before the next durable commit.
+    turns.forEach { turn ->
+        append(':'); append(turn.selected.id)
+        turn.selected.nativeOperations.lastOrNull()?.let { append(':'); append(it.id); append(':'); append(it.status); append(':'); append(it.commits.size) }
+    }
+}
 
 fun nativeHash(text: String): String = MessageDigest.getInstance("SHA-256")
     .digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

@@ -20,7 +20,7 @@ class NativeMemoryAndroidTest {
         val expectedFile = java.io.File(context.cacheDir, "native-memory-checkpoint.json")
         assumeTrue("explicit live memory checkpoint is required", expectedFile.isFile)
         val expected = Json.decodeFromString<ConversationRecord>(expectedFile.readText())
-        val restored = checkNotNull(ConversationRepository(context.filesDir, PromptCompiler()).get(expected.id))
+        val restored = checkNotNull(ConversationRepository(context.filesDir, PromptCompiler()).blockingGet(expected.id))
         assertEquals(3, restored.runtimeState.memories.size)
         assertEquals(expected.runtimeState, restored.runtimeState)
         assertEquals(expected.turns, restored.turns)

@@ -25,6 +25,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class CharacterLibraryViewModelTest {
     @get:Rule
     val mainDispatcher = MainDispatcherRule()
@@ -91,7 +93,8 @@ class CharacterLibraryViewModelTest {
         )
 
         harness.viewModel.createConversation(harness.characterRepository.characters.value.single().id)
-        val conversation = harness.conversationRepository.conversations.first { it.isNotEmpty() }.single()
+        val summary = harness.conversationRepository.conversations.first { it.isNotEmpty() }.single()
+        val conversation = harness.conversationRepository.get(summary.id)!!
 
         assertEquals("小舟", conversation.persona.name)
         assertEquals("喜欢雨夜。", conversation.persona.description)

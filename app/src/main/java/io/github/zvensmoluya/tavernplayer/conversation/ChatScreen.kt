@@ -87,6 +87,7 @@ fun ChatRoute(
             send = { if (state.selectedConnection == null) onOpenModels() else viewModel.send() },
             cancel = viewModel::cancel,
             retry = viewModel::retry,
+            retrySave = viewModel::retrySave,
             regenerate = viewModel::regenerate,
             editMessage = viewModel::editMessage,
             previousVariant = viewModel::previousVariant,
@@ -119,6 +120,7 @@ data class ChatScreenActions(
     val selectConnection: (String) -> Unit,
     val reset: () -> Unit,
     val openModels: () -> Unit,
+    val retrySave: () -> Unit = {},
     val regenerate: () -> Unit = {},
     val previousVariant: () -> Unit = {},
     val nextVariant: () -> Unit = {},
@@ -256,6 +258,13 @@ fun ChatScreen(
                         Text("  详情", style = MaterialTheme.typography.labelMedium)
                     }
                 }
+                if (state.storageFailed) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("对话尚未保存", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                        OutlinedButton(onClick = actions.retrySave, modifier = Modifier.testTag("retrySave")) { Text("重试保存") }
+                    }
+                }
                 ChatComposer(state, actions)
             }
         },
@@ -334,7 +343,7 @@ fun ChatScreen(
                     )
                 }
             }
-            if (state.retryAvailable) {
+            if (state.retryAvailable && !state.storageFailed) {
                 item("retry") {
                     OutlinedButton(
                         modifier = Modifier.testTag("retryGeneration"),

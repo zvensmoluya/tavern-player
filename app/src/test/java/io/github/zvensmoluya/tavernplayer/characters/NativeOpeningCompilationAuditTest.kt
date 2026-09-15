@@ -14,6 +14,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 /** Opt-in differential audit of an unmodified model artifact against its original pure draft builder. */
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class NativeOpeningCompilationAuditTest {
     @get:Rule val temporary = TemporaryFolder()
 

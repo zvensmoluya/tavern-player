@@ -17,6 +17,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class NativeCompilationServiceTest {
     @get:Rule val mainDispatcher = MainDispatcherRule()
     @get:Rule val temporary = TemporaryFolder()

@@ -13,6 +13,8 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class BrowserProgramPreparerTest {
     @get:Rule val folder = TemporaryFolder()
     private val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))

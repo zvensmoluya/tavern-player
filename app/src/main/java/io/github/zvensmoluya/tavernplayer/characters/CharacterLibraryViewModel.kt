@@ -9,7 +9,7 @@ import io.github.zvensmoluya.tavernplayer.content.NativeCompilationResult
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.modelgateway.GatewayException
-import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
+import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.personas.DefaultPersonaSource
@@ -32,7 +32,7 @@ import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
     val characters: List<CharacterAsset> = emptyList(),
-    val conversations: List<ConversationRecord> = emptyList(),
+    val conversations: List<ConversationSummary> = emptyList(),
     val persona: Persona = PersonaRepository.defaultPersona(),
     val selectedCharacterId: String? = null,
     val importing: Boolean = false,
@@ -51,8 +51,8 @@ data class CharacterLibraryUiState(
     val selectedCharacter: CharacterAsset?
         get() = characters.firstOrNull { it.id == selectedCharacterId }
 
-    fun conversationsFor(characterId: String): List<ConversationRecord> =
-        conversations.filter { it.character.assetId == characterId }
+    fun conversationsFor(characterId: String): List<ConversationSummary> =
+        conversations.filter { it.assetId == characterId }
 }
 
 class CharacterLibraryViewModel(
@@ -119,10 +119,15 @@ class CharacterLibraryViewModel(
     // The library surface shows a conversation count on every card, so conversations belong to the
     // first screen even though the repository behind them is still created on demand.
     private fun loadConversations() {
-        if (conversationJob == null) conversationJob = viewModelScope.launch {
-            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
-            repository.conversations.collect { conversations ->
-                _uiState.update { it.copy(conversations = conversations) }
+        if (conversationJob?.isActive != true) conversationJob = viewModelScope.launch {
+            try {
+                val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
+                repository.conversations.collect { conversations ->
+                    _uiState.update { it.copy(conversations = conversations) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "对话读取失败：${error.message ?: "请检查本地存储"}") }
             }
         }
     }
@@ -385,7 +390,7 @@ class CharacterLibraryViewModel(
     fun openConversation(conversationId: String) {
         viewModelScope.launch {
             val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
-            if (repository.get(conversationId) != null) {
+            if (repository.contains(conversationId)) {
                 _uiState.update { it.copy(openConversationId = conversationId) }
             }
         }

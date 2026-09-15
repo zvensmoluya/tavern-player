@@ -284,14 +284,11 @@ class CharacterAndConversationRepositoryTest {
             ),
         )
         assertEquals(PersistedMessageStatus.STREAMING, record.turns.last().selected.status)
-        val persistedText = File(root, "tavern/conversations/${record.id}.json").readText()
-        val persistedFiles = File(root, "tavern/conversations").listFiles().orEmpty()
-            .joinToString("\n---\n") { "${it.name}: ${it.readText()}" }
-        assertTrue(persistedFiles, persistedText.contains("STREAMING"))
-        assertTrue(persistedText, persistedText.contains("partial"))
-
+        val persisted = repository.get(record.id)!!
+        assertEquals(PersistedMessageStatus.STREAMING, persisted.turns.last().selected.status)
+        assertTrue(persisted.turns.last().selected.message.content.contains("partial"))
         val restored = ConversationRepository(root, PromptCompiler())
-        val loaded = restored.get(record.id)!!
+        val loaded = restored.open(record.id)!!
         assertEquals(2, loaded.turns.size)
         assertEquals(PersistedMessageStatus.INTERRUPTED, loaded.turns.last().selected.status)
         assertEquals("warm", loaded.runtimeState.localVariables["mood"]?.text)

@@ -69,6 +69,7 @@ class AppGraph(context: Context) {
     }
     val conversationRepository by lazy {
         ConversationRepository(
+            context = appContext,
             filesDir = appContext.filesDir,
             compiler = promptCompiler,
             mvuRuntime = mvuRuntime,

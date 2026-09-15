@@ -45,9 +45,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+@org.robolectric.annotation.Config(sdk = [35])
 class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
+
+    @Test fun `finish waits for trailing usage and atomic persistence before publishing complete`() = runTest {
+        val directory = Files.createTempDirectory("stream-terminal-transaction").toFile()
+        ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher).use { conversations ->
+            val saved = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+            lateinit var vm: ChatViewModel
+            val generator = FakeGenerator { _, _ -> flow {
+                emit(GenerationEvent.TextDelta("Final answer"))
+                emit(GenerationEvent.Finished("stop"))
+                assertEquals(ChatMessageStatus.STREAMING, vm.uiState.value.messages.last().status)
+                emit(GenerationEvent.Usage(GenerationUsage(inputTokens = 21, outputTokens = 4, totalTokens = 25, cachedTokens = 5, reasoningTokens = 2)))
+                // Fail only the final transaction, after it has written the terminal variant.
+                conversations.store.beforeCommit = {
+                    val last = conversations.store.dao.turns(saved.id).last()
+                    if (conversations.store.dao.variants(last.id).last().metadata.contains("\"status\":\"COMPLETE\"")) {
+                        throw IOException("terminal commit failed")
+                    }
+                }
+            } }
+            vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
+            vm.loadConversation(saved.id)
+            vm.updateInput("Question")
+            vm.send()
+            assertTrue(vm.uiState.value.storageFailed)
+            assertEquals(ChatMessageStatus.STREAMING, vm.uiState.value.messages.last().status)
+            assertEquals(PersistedMessageStatus.STREAMING, conversations.get(saved.id)!!.turns.last().selected.status)
+            assertEquals(1, conversations.store.dao.streams(saved.id).size)
+            vm.updateInput("Next draft while storage is unavailable")
+            conversations.store.beforeCommit = null
+            vm.retrySave()
+            assertFalse(vm.uiState.value.storageFailed)
+            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+            val terminal = conversations.get(saved.id)!!.turns.last().selected
+            assertEquals(21L, terminal.inputTokens)
+            assertEquals(4L, terminal.outputTokens)
+            assertEquals(25L, terminal.totalTokens)
+            assertEquals(5L, terminal.cachedTokens)
+            assertEquals(2L, terminal.reasoningTokens)
+            assertEquals("Next draft while storage is unavailable", conversations.get(saved.id)!!.draft)
+            assertTrue(conversations.store.dao.streams(saved.id).isEmpty())
+            assertEquals(1, generator.calls)
+            androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() }
+        }
+        directory.deleteRecursively()
+    }
 
     @Test fun `browser writes save literally and reject stale or failed operations`() = kotlinx.coroutines.runBlocking {
         val directory = Files.createTempDirectory("browser-writes").toFile()
@@ -65,9 +112,7 @@ class ChatViewModelTest {
             assertEquals(JsonPrimitive(7), conversations.get(saved.id)!!.runtimeState.browserChatVariables["score"])
             try { vm.invokeBrowser(actor, revision, "variables.replace", args); throw AssertionError("Stale revision accepted") }
             catch (_: IllegalArgumentException) {}
-            // Obstruct the actual atomic writer without mocking the bridge or the proposal controller.
-            val target = java.io.File(directory, "tavern/conversations/${saved.id}.json")
-            assertTrue(target.delete()); assertTrue(target.mkdir()); java.io.File(target, "obstruction").writeText("blocked")
+            conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
             try {
                 vm.invokeBrowser(actor, vm.uiState.value.browserSnapshot.getValue("revision").jsonPrimitive.content,
                     "variables.replace", kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"chat","data":{"score":99}}""").jsonObject)
@@ -178,7 +223,7 @@ class ChatViewModelTest {
             vm.editMessage(vm.uiState.value.messages.single().message.id, "Edited", MessageEditMode.RESTART)
             awaitNative(vm, "0")
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                kotlinx.coroutines.withTimeout(5000) { conversations.conversations.first { it.first().turns.single().selected.nativeOperations.isEmpty() } }
+                kotlinx.coroutines.withTimeout(5000) { while (conversations.get(saved.id)!!.turns.single().selected.nativeOperations.isNotEmpty()) kotlinx.coroutines.delay(10) }
             }
             disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
             assertTrue(disk.turns.single().selected.nativeOperations.isEmpty())
@@ -226,17 +271,13 @@ class ChatViewModelTest {
             val character = DemoConversationContent.character.copy(firstMessage = "A", nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
             val conversations = ConversationRepository(directory, PromptCompiler())
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            val target = java.io.File(directory, "tavern/conversations/" + saved.id + ".json")
-            val backup = java.io.File(directory, "saved.json")
             var blockOnce = true
             val generator = object : ConversationGenerator {
                 override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) = ProviderTokenValidation(10, TokenCountQuality.EXACT, "test")
                 override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
                     if (blockOnce) {
                         blockOnce = false
-                        check(target.renameTo(backup))
-                        check(target.mkdir())
-                        java.io.File(target, "blocker").writeText("test")
+                        conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
                     }
                     emit(GenerationEvent.TextDelta("Result")); emit(GenerationEvent.Finished("stop"))
                 }
@@ -245,11 +286,13 @@ class ChatViewModelTest {
             vm.loadConversation(saved.id)
             fun invoke(surface: NativeRenderedSurface) = vm.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single()))
             invoke(awaitNative(vm).nativeSurfaces.single())
-            val failed = awaitNative(vm, "1")
+            val failed = kotlinx.coroutines.withTimeout(10000) { vm.uiState.first { it.storageFailed && !it.nativeActionRunning } }
             assertTrue(failed.message.orEmpty().contains("结束状态未能保存"))
             assertEquals(JsonPrimitive(1), conversations.get(saved.id)!!.runtimeState.scriptState!!["count"])
-            check(java.io.File(target, "blocker").delete()); check(target.delete()); check(backup.renameTo(target))
-            invoke(failed.nativeSurfaces.single())
+            conversations.store.beforeCommit = null
+            vm.retrySave()
+            awaitMvuIdle(vm)
+            invoke(awaitNative(vm, "1").nativeSurfaces.single())
             awaitNative(vm, "2")
             val disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
             assertEquals(JsonPrimitive(2), disk.runtimeState.scriptState!!["count"])
@@ -268,8 +311,12 @@ class ChatViewModelTest {
     }
 
     private suspend fun awaitNative(vm: ChatViewModel, title: String? = null): ChatUiState = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-        kotlinx.coroutines.withTimeout(10000) {
-            vm.uiState.first { !it.busy && it.nativeSurfaces.isNotEmpty() && (title == null || it.nativeSurfaces.single().data.title == title) }
+        try {
+            kotlinx.coroutines.withTimeout(10000) {
+                vm.uiState.first { !it.busy && it.nativeSurfaces.isNotEmpty() && (title == null || it.nativeSurfaces.single().data.title == title) }
+            }
+        } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AssertionError("Native title $title not ready: ${vm.uiState.value.message}; surface error=${vm.uiState.value.nativeSurfaceError}", timeout)
         }
     }
 
@@ -305,7 +352,7 @@ class ChatViewModelTest {
         try {
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
+            suspend fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
             fun text(delta: Int) = "Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":$delta}]</JSONPatch></UpdateVariable>"
             fun assertProcessed(message: ConversationMessage, raw: String) {
                 assertEquals(raw, message.sourceText)
@@ -326,10 +373,8 @@ class ChatViewModelTest {
                 // Editing exposes the new view before persistNow finishes; await the repository acknowledgement.
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     kotlinx.coroutines.withTimeout(60_000) {
-                        conversations.conversations.first { records ->
-                            records.firstOrNull { it.id == saved.id }?.runtimeState?.mvuState?.data
-                                ?.get("stat_data")?.jsonObject?.get("days")?.jsonPrimitive?.content?.toIntOrNull() == expected
-                        }
+                        while (conversations.get(saved.id)?.runtimeState?.mvuState?.data
+                            ?.get("stat_data")?.jsonObject?.get("days")?.jsonPrimitive?.content?.toIntOrNull() != expected) kotlinx.coroutines.delay(10)
                     }
                 }
                 assertEquals(expected, days())
@@ -716,9 +761,7 @@ class ChatViewModelTest {
         try {
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
             val created = conversations.create(DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation()), DemoConversationContent.persona, DemoConversationContent.preset)
-            val target = java.io.File(directory, "tavern/conversations/${created.id}.json")
-            check(target.delete()); check(target.mkdir())
-            java.io.File(target, "prevent-replacement").writeText("test")
+            conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
             val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow { error("must not generate") } }, conversations,
                 FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
             vm.loadConversation(created.id)
@@ -855,10 +898,7 @@ class ChatViewModelTest {
             )))
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
             val created = conversations.create(DemoConversationContent.character.copy(firstMessage = "<setup/>", nativeAdaptation = native), DemoConversationContent.persona, DemoConversationContent.preset)
-            val target = java.io.File(directory, "tavern/conversations/${created.id}.json")
-            check(target.delete())
-            check(target.mkdir())
-            java.io.File(target, "prevent-replacement").writeText("test")
+            conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
             val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
             vm.loadConversation(created.id)
             vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
@@ -1313,13 +1353,13 @@ class ChatViewModelTest {
                 idGenerator = { "message-variable-${id++}" },
                 projectionDispatcher = mainDispatcherRule.dispatcher,
             )
-            fun persisted() = requireNotNull(conversations.get(seeded.id))
+            suspend fun persisted() = requireNotNull(conversations.get(seeded.id))
             // 网页楼层 API 的读取路径：取选中候选自己的变量（含候选最新检查点）。
-            fun candidateDays(turnIndex: Int, variantIndex: Int): String {
+            suspend fun candidateDays(turnIndex: Int, variantIndex: Int): String {
                 val selected = persisted().turns[turnIndex].variants[variantIndex]
                 return ((BrowserConversation.variables(selected)["stat_data"] as JsonObject)["days"] as JsonPrimitive).content
             }
-            fun assertFloors(state: ChatUiState) {
+            suspend fun assertFloors(state: ChatUiState) {
                 assertEquals("Day ${candidateDays(2, state.messages[2].variantIndex)}", state.messages[2].displayContent)
                 assertEquals("Day ${candidateDays(4, state.messages[4].variantIndex)}", state.messages[4].displayContent)
                 assertEquals("2", candidateDays(2, 0))

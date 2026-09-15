@@ -92,7 +92,7 @@ class NativeOperationsTest {
         val rendered = NativeRenderedSurface("actions", record.nativeRevision(), NativeSurfaceData(NativeSurfaceType.ACTION_GROUP, "Actions", actions = listOf(action)))
         val valid = invocation(record)
         NativeOperations.authorize(record, rendered, valid)
-        reject { NativeOperations.authorize(record.copy(draft = "edited"), rendered, valid) }
+        reject { NativeOperations.authorize(record.withDraft("edited"), rendered, valid) }
         reject { NativeOperations.authorize(record, rendered, valid.copy(action = action.copy(args = buildJsonObject { put("admin", true) }))) }
         reject { NativeOperations.authorize(record, rendered, valid.copy(action = action.copy(enabled = false))) }
         val otherBranch = record.copy(turns = listOf(record.turns.single().copy(selectedVariantIndex = 1)))

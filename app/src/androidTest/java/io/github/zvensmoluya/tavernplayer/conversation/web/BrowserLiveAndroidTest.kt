@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.web
 
+import io.github.zvensmoluya.tavernplayer.conversation.blockingGet
+
 import android.graphics.Bitmap
 import android.view.View
 import android.view.ViewGroup
@@ -177,7 +179,7 @@ class BrowserLiveAndroidTest {
                 val expected = checkNotNull(recoveryMarker)
                 check(expected.getValue("pid").jsonPrimitive.int != android.os.Process.myPid()) { "BL_SAME_PROCESS" }
                 id = expected.getValue("conversationId").jsonPrimitive.content
-                val restored = checkNotNull(freshRepository().get(id))
+                val restored = checkNotNull(freshRepository().blockingGet(id))
                 verifyMarker(restored, expected)
             } else {
                 progress("import-$sample-P01")
@@ -218,10 +220,10 @@ class BrowserLiveAndroidTest {
                     val completed = vm.uiState.value.messages.last()
                     check(completed.message.id !in before && completed.message.role == MessageRole.ASSISTANT &&
                         completed.status == ChatMessageStatus.COMPLETE && completed.message.content.isNotBlank()) { "BL_ASSISTANT_INCOMPLETE" }
-                    withTimeout(20_000) { repository.conversations.first { records -> records.any { record ->
-                        record.id == id && record.turns.any { it.selected.message.id == completed.message.id &&
-                            it.selected.status == PersistedMessageStatus.COMPLETE && it.selected.message.content == completed.message.content }
-                    } } }
+                    withTimeout(20_000) {
+                        while (repository.get(id)!!.turns.none { it.selected.message.id == completed.message.id &&
+                            it.selected.status == PersistedMessageStatus.COMPLETE && it.selected.message.content == completed.message.content }) kotlinx.coroutines.delay(10)
+                    }
                     val position = vm.uiState.value.messages.indexOfFirst { it.message.id == completed.message.id }
                     val domHash = waitForAssistantDom(position, vm.uiState.value.messages.size)
                     inspectPage(output, "turn-${index + 1}")
@@ -239,10 +241,10 @@ class BrowserLiveAndroidTest {
             compose.runOnUiThread { mounted = null }
             compose.waitForIdle()
             withContext(Dispatchers.Main) { clear(vm) }
-            val saved = checkNotNull(freshRepository().get(id))
+            val saved = checkNotNull(freshRepository().blockingGet(id))
             check(saved.executionMode == ConversationExecutionMode.BROWSER && saved.character.nativeAdaptation == null) { "BL_MODE" }
             val expected = marker(saved, identity)
-            verifyMarker(checkNotNull(freshRepository().get(id)), expected)
+            verifyMarker(checkNotNull(freshRepository().blockingGet(id)), expected)
             vm = viewModel(freshRepository(), id)
             check(vm.uiState.value.messages.map { it.message.id } == saved.selectedMessages().map { it.id }) { "BL_UI_RECOVERY_IDS" }
             check(vm.uiState.value.messages.map { hash(it.message.content) } == saved.selectedMessages().map { hash(it.content) }) { "BL_UI_RECOVERY_CONTENT" }
@@ -252,7 +254,7 @@ class BrowserLiveAndroidTest {
             compose.runOnUiThread { mounted = null }
             compose.waitForIdle()
             withContext(Dispatchers.Main) { clear(vm) }
-            markerFile.writeText(marker(checkNotNull(freshRepository().get(id)), identity).toString())
+            markerFile.writeText(marker(checkNotNull(freshRepository().blockingGet(id)), identity).toString())
             report("result", buildJsonObject {
                 put("passed", true); put("sample", sample); put("preset", "P-01")
                 put("phase", phase); put("identity", identity); put("completedTurns", completedTurns)

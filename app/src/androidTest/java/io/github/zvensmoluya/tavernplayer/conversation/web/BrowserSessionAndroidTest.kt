@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.web
 
+import io.github.zvensmoluya.tavernplayer.conversation.blockingGet
+
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -143,7 +145,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
             assertTrue("Image resize must expand its containing frame", frameHeight.get() > 180)
             repeat(3) { compose.runOnUiThread { session.update(state(saved.get())) } }
             compose.runOnUiThread { session.release(); web.destroy() }
-            saved.set(ConversationRepository(root, graph.promptCompiler).get(initial.id)!!)
+            saved.set(ConversationRepository(root, graph.promptCompiler).blockingGet(initial.id)!!)
             assertEquals(JsonPrimitive(1), saved.get().runtimeState.browserChatVariables["boots"])
             mount()
             compose.waitUntil(30_000) { saved.get().runtimeState.browserChatVariables["boots"] == JsonPrimitive(2) || failures.isNotEmpty() }
@@ -172,7 +174,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         } else {
             assertEquals("recover", phase)
             assertNotEquals(pid.readText().trim().toInt(), android.os.Process.myPid())
-            val record = repository.get("process-record")!!
+            val record = repository.blockingGet("process-record")!!
             assertEquals(ConversationExecutionMode.BROWSER, record.executionMode)
             assertEquals(JsonPrimitive(42), record.runtimeState.browserChatVariables["checkpoint"])
             assertEquals(record.runtimeState.browserChatVariables, record.turns.last().selected.nativeHead()!!.browserChatVariables)

@@ -12,17 +12,8 @@ data class BrowserActor(val id: String, val turnId: String? = null, val variantI
 object BrowserConversation {
     private val json = Json { encodeDefaults = true }
 
-    fun revision(record: ConversationRecord): String = BrowserProgramReader.sha256(buildString {
-        append(record.id); append(record.character.browserProgram?.variables); append(json.encodeToString(record.character.regexScripts)); append(JsonPrimitive(record.draft)); append(json.encodeToString(record.runtimeState)); append(json.encodeToString(record.worldBookState))
-        record.turns.forEach { turn ->
-            append(turn.id); append(turn.selectedVariantIndex)
-            turn.variants.forEach { variant ->
-                append(variant.id); append(json.encodeToString(variant.message)); append(variant.status.name)
-                append(variant.browserVariables); append(variant.browserHidden); append(variant.browserExtra); append(variant.browserOwnVariables)
-                append(json.encodeToString(variant.browserHead))
-            }
-        }
-    })
+    /** The session assigns commit revisions; typing has its own independent sequence. */
+    fun revision(record: ConversationRecord): String = "${record.id}:${record.commitRevision}:${record.draftSeq}"
 
     fun authorize(record: ConversationRecord, actor: BrowserActor, revision: String) {
         require(record.executionMode == ConversationExecutionMode.BROWSER) { "当前会话未启用网页运行" }

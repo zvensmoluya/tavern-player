@@ -130,6 +130,7 @@ class BrowserConversationTest {
         val wire = BrowserRegex.encode(initial.character.regexScripts.single())
         val changed = JsonObject(wire + mapOf("enabled" to JsonPrimitive(true), "replace_string" to JsonPrimitive("After")))
         val next = BrowserConversation.apply(initial, BrowserActor("script"), "regex.replace", buildJsonObject { put("regexes", JsonArray(listOf(changed))) })
+            .copy(commitRevision = initial.commitRevision + 1) // Simulate the session/store commit acknowledgement.
         val engine = CharacterRegexEngine(executionStrategy = ImmediateRegexExecutionStrategy)
         fun project(projection: RegexProjection) = engine.apply("Opening", next.character.regexScripts,
             io.github.zvensmoluya.tavernplayer.content.RegexPlacement.AI_OUTPUT, projection,
@@ -146,6 +147,7 @@ class BrowserConversationTest {
     @Test fun `character variables persist in the captured character independently of chat checkpoints`() {
         val original = record()
         val next = BrowserConversation.apply(original, BrowserActor("script"), "variables.replace", args("""{"type":"character","data":{"seed":2}}"""))
+            .copy(commitRevision = original.commitRevision + 1) // Simulate the session/store commit acknowledgement.
         assertTrue(next.runtimeState.browserChatVariables.isEmpty())
         val switched = BrowserConversation.apply(next, BrowserActor("script"), "messages.set", args("""{"messages":[{"message_id":0,"swipe_id":1}]}"""))
         val restored = Json.decodeFromString<ConversationRecord>(Json.encodeToString(switched))
