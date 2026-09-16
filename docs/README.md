@@ -10,6 +10,7 @@
 | [产品与兼容性边界](product-direction.md) | 当前选择、交付范围与明确限制 |
 | [实现架构](architecture.md) | 仓库实际运行方式、模块和状态归属 |
 | [网页运行契约](web-runtime.md) | 原程序接口、资源固定、状态与恢复的已实现范围 |
+| [本地试验版安装包](experimental-build.md) | 构建入口、独立包名、调试签名与覆盖更新限制 |
 | [HTML Surface 与免编译游玩](html-surface-discussion-20260909.md) | 路线讨论与背景；实现状态以网页运行契约为准 |
 | [性能调查与设计方向（2026-09-14）](performance-study-20260914.md) | 全链路源码调查、桌面规模实验与待讨论设计；不表示优化已实现 |
 | [会话性能改造方案](performance-design.md) | 部分实施的总体方案；组件、存储、流式事务和旧数据导入设计 |

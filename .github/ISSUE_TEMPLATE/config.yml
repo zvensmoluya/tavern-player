@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 下载试验版 / Download the experimental build
+    url: https://github.com/zvensmoluya/tavern-player/releases
+    about: 安装包、版本说明与更新限制 / APKs, release notes, and update limitations.
+  - name: 产品与兼容边界 / Product and compatibility scope
+    url: https://github.com/zvensmoluya/tavern-player/blob/main/docs/product-direction.md
+    about: 提问前可先查看当前支持范围 / Check current capabilities and limitations.

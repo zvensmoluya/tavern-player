@@ -17,7 +17,7 @@
 
 <p align="center">
   <a href="README.md">简体中文</a> · <strong>English</strong><br>
-  <a href="#getting-started">Get started</a> · <a href="docs/README.md">Documentation</a> · <a href="docs/product-direction.md">Compatibility</a> · <a href="assets/branding/README.md">Brand assets</a>
+  <a href="https://github.com/zvensmoluya/tavern-player/releases">Download APK</a> · <a href="#getting-started">Get started</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/zvensmoluya/tavern-player/issues">Report an issue</a>
 </p>
 
 ---
@@ -51,6 +51,10 @@ The complicated parts can stay underneath. They don't all need to become setting
 The project is in development. The single-character conversation loop is available; see the [product scope](docs/product-direction.md) and [web runtime contract](docs/web-runtime.md) for compatibility boundaries.
 
 ## Getting started
+
+Download the experimental `.apk` from [GitHub Releases](https://github.com/zvensmoluya/tavern-player/releases), open it on Android 8.0 or later, and allow installation from that source when prompted. Choose the APK attachment, not the automatically generated Source code archive.
+
+The experimental app uses a separate application ID and a debug signing key. It can coexist with a future release app, but data is not migrated automatically and a different signature prevents an in-place update. The first build passed compilation, lint, and signature checks; installation and chat on a physical device have not yet been verified. See the [experimental build guide](docs/experimental-build.md).
 
 1. **Import a character.** Pick a PNG / JSON card in the character library, or scan Tavern Shelf. You can browse character content before connecting a model.
 2. **Connect a model.** Configure your service connection and choose a model in the model settings. You can start with the built-in default preset.
@@ -103,6 +107,8 @@ Most technical documentation is currently in Chinese.
 
 ## Development and verification
 
+For an installable trial APK, run `./gradlew.bat :app:assembleExperimental`. It uses a separate application ID and the local debug signing key, so it can coexist with the release app. Data is separate, and a different signing key prevents an in-place update. See the [experimental build guide](docs/experimental-build.md) (Chinese).
+
 Build with the repository's Gradle Wrapper. Configure the Android SDK and make Node.js and npm available on the command line; the build prepares the web and MVU runtime assets.
 
 ```powershell
@@ -124,6 +130,8 @@ Optional local character-card compatibility checks accept `-DcommunityCard=<path
 </details>
 
 ## Open source
+
+Report bugs and suggestions through [Issues](https://github.com/zvensmoluya/tavern-player/issues). See [CONTRIBUTING](CONTRIBUTING.md) for contribution guidance.
 
 SillyTavern built the ecosystem. We're building the player.
 

@@ -1,0 +1,46 @@
+name: 问题反馈 / Bug report
+description: 报告安装、聊天或内容兼容问题 / Report installation, chat, or compatibility issues.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请提供最小复现步骤。不要附带 API Key、完整请求头、私人聊天或未经授权的角色卡；角色内容请使用匿名最小样本。
+        Please share minimal reproduction steps and remove credentials, private chats, and unlicensed content.
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本 / App version
+      placeholder: 0.1.0-experimental.1
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 手机与系统 / Device and Android version
+      placeholder: 手机型号、Android 版本；网页问题可补充 WebView 版本
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 如与模型有关，请说明协议和模型 ID，不要填写密钥。
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际表现 / Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏截图或日志 / Redacted screenshots or logs
+      description: 可选。请先移除密钥、私人消息、本机路径和个人信息。

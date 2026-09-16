@@ -17,7 +17,7 @@
 
 <p align="center">
   <strong>简体中文</strong> · <a href="readme-en.md">English</a><br>
-  <a href="#开始使用">开始使用</a> · <a href="docs/README.md">项目文档</a> · <a href="docs/product-direction.md">兼容边界</a> · <a href="assets/branding/README.md">视觉资源</a>
+  <a href="https://github.com/zvensmoluya/tavern-player/releases">下载 APK</a> · <a href="#开始使用">开始使用</a> · <a href="docs/README.md">项目文档</a> · <a href="https://github.com/zvensmoluya/tavern-player/issues">反馈问题</a>
 </p>
 
 ---
@@ -57,6 +57,10 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 项目仍在开发中。单角色对话闭环已可用，具体兼容范围见[产品边界](docs/product-direction.md)和[网页运行契约](docs/web-runtime.md)。
 
 ## 开始使用
+
+先从 [GitHub Releases](https://github.com/zvensmoluya/tavern-player/releases) 下载试验版 `.apk`，在 Android 8.0 及以上手机上打开并按提示允许安装来源。请下载 APK 附件，不是页面自动提供的 Source code 压缩包。
+
+当前试验版使用独立包名和调试签名，可与未来正式版并存，数据不自动迁移；换签名不能直接覆盖更新。首版已通过构建、lint 和签名检查，尚未完成真机安装与聊天验收。详见[试验版说明](docs/experimental-build.md)。
 
 1. **导入角色**：在角色库选择 PNG / JSON 角色卡，或扫描 Tavern Shelf。没有模型连接也能先浏览角色内容。
 2. **连接模型**：在“模型”中配置你的服务连接并选择模型。预设可以先使用内置“默认”。
@@ -122,6 +126,8 @@ Native 适配提供实验性的“准备游玩”入口：模型理解相关源�
 
 ## 开发与验证
 
+想先打一个可直接安装的试验包，可以使用 `./gradlew.bat :app:assembleExperimental`。试验版使用独立包名和本机调试签名，可与正式版并存；数据独立，换签名不能直接覆盖。详见[本地试验版说明](docs/experimental-build.md)。
+
 使用仓库内的 Gradle Wrapper 构建 Android 工程。需要配置 Android SDK，并让 Node.js 与 npm 在命令行可用；构建会准备网页与 MVU 运行资源。
 
 ```powershell
@@ -145,6 +151,8 @@ Native 适配提供实验性的“准备游玩”入口：模型理解相关源�
 </details>
 
 ## 开源
+
+欢迎通过 [Issues](https://github.com/zvensmoluya/tavern-player/issues) 反馈问题或建议，贡献方式见 [CONTRIBUTING](CONTRIBUTING.md)。
 
 SillyTavern 建立了这个生态。我们想做一个更适合消费它的 Player。
 
