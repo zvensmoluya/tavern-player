@@ -32,6 +32,8 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 
 ## 接口范围
 
+网页尺寸同步（2026-09-16）：宿主 ResizeObserver 的测量与高度写入合并到下一动画帧；内外 iframe 高度未变时不重复写入，测量结果未变时不上报。页面销毁会断开监听并取消待执行任务。浏览器的 `ResizeObserver loop completed with undelivered notifications.` 与旧式 `ResizeObserver loop limit exceeded` 按精确文字识别：网页侧保留控制台 warning，Android 控制台入口保留日志，不插入影响布局的错误文字或显示加载失败／重试按钮。其他错误沿原路径报告；不吞掉包含该关键词的任意异常。此措施不保证任意作者布局收敛，也不改变作者 CSS 的现有 vh 处理范围。调查和验证见 [C-07 尺寸通知记录](resize-observer-investigation-20260916.md)。
+
 `errorCatched(fn)` 可包装同步或异步初始化函数：正常时保留参数、返回值和同步/异步行为，失败时显示诊断并继续抛出原错误。支持作者页面常用的 `$(errorCatched(...))` 启动方式。
 
 参照提交和文件记录在 [upstream-contract.json](../tools/web-runtime/upstream-contract.json)。Tavern Helper 基线为 `3de7ef981f378517779eb32ab5ecb82c033e4db4`，ST 基线为 `8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8`。MVU、Schema 辅助库和 EJS 使用已有 [公共程序锁](../tools/mvu-probe/upstream-lock.json)。浏览器库由 npm lock 固定，构建产物附带许可证和文件哈希清单。

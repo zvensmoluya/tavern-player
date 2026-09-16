@@ -3,12 +3,14 @@ import { createHost } from './host.mjs';
 import { createSession } from './session.mjs';
 import DOMPurify from 'dompurify';
 import { patchChildren } from './dom-patch.mjs';
+import { isResizeObserverNotification, observeFrameSize } from './resize-observer.mjs';
 
 function main() {
   const config = JSON.parse(document.getElementById('configuration').textContent);
   const page = document.getElementById('page'), pending = new Map();
   let sequence = 0, disposed = false, viewportHeight = Number(config.viewportHeight) || 800;
   let staticReady = false, staticHead = null, staticHtml = config.html, renderedStaticHtml = null;
+  let stopSizeObserver = null, lastReportedHeight = null;
   const send = data => window.parent.postMessage({ ...data, channel: 'player-frame', epoch: config.epoch }, config.rootOrigin);
   function notify(level, message) {
     if (level === 'error') { document.getElementById('error').textContent = String(message); measure(); }
@@ -51,6 +53,7 @@ function main() {
     if (input) input.value = state.draft ?? '';
   });
   host.onDispose(() => {
+    stopSizeObserver?.(); stopSizeObserver = null;
     disposed = true; page.remove();
     for (const item of pending.values()) item.reject(new Error('Runtime disposed'));
     pending.clear();
@@ -81,13 +84,23 @@ function main() {
         host.install(target);
         target.addEventListener('pagehide', () => host.dispose(), { once: true });
       }
-      target.addEventListener('error', event => notify('error', event.message || '网页资源或程序执行失败'));
+      target.addEventListener('error', event => {
+        if (isResizeObserverNotification(event.message)) {
+          // Keep diagnostics out of the document: inserting an error would change its size again.
+          event.preventDefault();
+          console.warn(event.message);
+          return;
+        }
+        notify('error', event.message || '网页资源或程序执行失败');
+      });
       target.addEventListener('unhandledrejection', event => notify('error', event.reason?.message || '网页操作失败'));
       target.addEventListener('load', () => {
+        if (disposed) return;
         if (config.kind === 'static') {
           staticHead = target.document.head.cloneNode(true); staticReady = true; renderStatic();
         }
-        new target.ResizeObserver(measure).observe(target.document.body);
+        stopSizeObserver?.();
+        stopSizeObserver = observeFrameSize(target, measure);
         measure(); send({ type: 'loaded' });
       });
     },
@@ -97,8 +110,15 @@ function main() {
     if (disposed) return;
     try {
       const body = page.contentDocument?.body;
-      if (body) page.style.height = Math.min(100000, Math.max(1, body.scrollHeight, body.offsetHeight)) + 'px';
-      send({ type: 'resize', height: Math.min(100000, document.body.scrollHeight) });
+      if (body) {
+        const height = Math.min(100000, Math.max(1, body.scrollHeight, body.offsetHeight)) + 'px';
+        if (page.style.height !== height) page.style.height = height;
+      }
+      const height = Math.min(100000, document.body.scrollHeight);
+      if (height !== lastReportedHeight) {
+        lastReportedHeight = height;
+        send({ type: 'resize', height });
+      }
     } catch { notify('error', '页面导航超出兼容运行范围'); }
   }
 

@@ -59,6 +59,62 @@ async function authorFrame(page, selector) {
   throw new Error('Author frame with ' + selector + ' not found');
 }
 
+test('resize notifications do not alter layout while real script errors remain visible', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const { page } = await open(browser, { width: 420, height: 700 },
+      [card('<body><div id="panel" style="height:200px"></div></body>')]);
+    const frame = await authorFrame(page, '#panel');
+    await page.waitForFunction(() => document.querySelector('article iframe:not(.frame-pending)')?.style.height === '200px');
+    const parent = page.frames().find(f => f.url().startsWith(origin + '/frame/') && f.name() !== 'player_author_session');
+    const warnings = [];
+    page.on('console', message => { if (message.type() === 'warning') warnings.push(message.text()); });
+    await frame.evaluate(() => {
+      for (const message of ['ResizeObserver loop completed with undelivered notifications.', 'ResizeObserver loop limit exceeded']) {
+        window.dispatchEvent(new ErrorEvent('error', { message, cancelable: true }));
+      }
+    });
+    assert.equal(await parent.locator('#error').textContent(), '');
+    assert.equal(await page.locator('#notice').textContent(), '');
+    assert.equal(warnings.length, 2);
+    // Trigger the browser's actual loop protection, not just a synthetic ErrorEvent.
+    await frame.evaluate(() => new Promise(resolve => {
+      const panel = document.getElementById('panel');
+      const observer = new ResizeObserver(() => { panel.style.width = (panel.offsetWidth + 1) + 'px'; });
+      const onError = event => {
+        if (event.message !== 'ResizeObserver loop completed with undelivered notifications.') return;
+        observer.disconnect(); window.removeEventListener('error', onError); resolve();
+      };
+      window.addEventListener('error', onError);
+      observer.observe(panel);
+    }));
+    assert.equal(await parent.locator('#error').textContent(), '');
+    assert.equal(await page.locator('#notice').textContent(), '');
+    for (const height of [600, 120]) {
+      await frame.evaluate(height => { document.getElementById('panel').style.height = height + 'px'; }, height);
+      await page.waitForFunction(height => document.querySelector('article iframe')?.style.height === height + 'px', height);
+    }
+    // A same-height viewport refresh must not write or report unchanged dimensions.
+    await parent.evaluate(() => {
+      window.__heightWrites = 0;
+      new MutationObserver(records => window.__heightWrites += records.length)
+        .observe(document.getElementById('page'), { attributes: true, attributeFilter: ['style'] });
+    });
+    await page.evaluate(() => {
+      window.__resizeReports = 0;
+      window.addEventListener('message', event => { if (event.data?.type === 'resize') window.__resizeReports++; });
+    });
+    await page.setViewportSize({ width: 420, height: 500 });
+    await frame.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--player-frame-vh') === '5px');
+    await parent.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await parent.evaluate(() => window.__heightWrites), 0);
+    assert.equal(await page.evaluate(() => window.__resizeReports), 0);
+    await frame.evaluate(() => setTimeout(() => { throw new Error('Author execution failed'); }, 0));
+    await parent.waitForFunction(() => document.getElementById('error').textContent.includes('Author execution failed'));
+    await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Author execution failed'));
+  } finally { await browser.close(); }
+});
+
 test('author vh layout follows the visible viewport without reloading the page', async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {

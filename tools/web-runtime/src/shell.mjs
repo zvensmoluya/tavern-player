@@ -369,7 +369,9 @@ window.addEventListener('message', async event => {
     const height = Number(data.height);
     if (Number.isFinite(height) && height > 0) {
       // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
-      frame.height = Math.min(height, 100000); frame.element.style.height = frame.height + 'px';
+      frame.height = Math.min(height, 100000);
+      if (frame.element.style.height === frame.height + 'px') return;
+      frame.element.style.height = frame.height + 'px';
       if (frame.revealed !== false) { if (following && !focusInFrame()) followBottom(); recordBottom(); }
     }
   } else if (data.type === 'loaded') {

@@ -72,6 +72,10 @@ class BrowserSession(
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false)
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                if (isResizeObserverNotification(consoleMessage.message())) {
+                    android.util.Log.w("PlayerWeb", consoleMessage.message())
+                    return true
+                }
                 if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
                     onFailure("网页程序报告错误：${consoleMessage.message().take(240)}")
                 return true
