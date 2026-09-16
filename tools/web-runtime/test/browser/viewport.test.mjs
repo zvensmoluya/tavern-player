@@ -59,6 +59,39 @@ async function authorFrame(page, selector) {
   throw new Error('Author frame with ' + selector + ' not found');
 }
 
+test('collapsed streaming reasoning lets the reader leave the bottom in small steps', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const { page, push } = await open(browser, { width: 420, height: 700 },
+      Array.from({ length: 15 }, (_, i) => `History ${i}\n\nA previous conversation paragraph.`));
+    await push({ ...message('', 15), status: 'STREAMING', reasoning: ['Thinking'] });
+    await page.waitForFunction(() => document.querySelectorAll('article').length === 16 &&
+      document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 1);
+    assert.equal(await page.locator('article details').evaluate(node => node.open), false);
+    const initial = await page.evaluate(() => window.scrollY);
+    const update = async index => {
+      await page.evaluate(index => Player.receive({ type: 'delta', epoch: 'viewport', changes: {}, flags: { busy: true, running: true },
+        messages: [{ ...window.__streamMessage, reasoning: ['Thinking '.repeat(index)] }] }), index);
+    };
+    await page.evaluate(value => { window.__streamMessage = value; },
+      { ...message('', 15), status: 'STREAMING', reasoning: ['Thinking'] });
+    await page.mouse.move(200, 350);
+    await page.mouse.wheel(0, -20);
+    await page.waitForFunction(initial => window.scrollY < initial, initial);
+    const reading = await page.evaluate(() => window.scrollY);
+    assert.ok(initial - reading < 80);
+    for (let i = 2; i <= 6; i++) {
+      await update(i);
+      await page.waitForFunction(i => document.querySelector('article details div')?.textContent === 'Thinking '.repeat(i), i);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await page.evaluate(() => window.scrollY), reading);
+    }
+    assert.equal(await page.locator('#bottom').isVisible(), true);
+    await page.locator('#bottom').click();
+    await page.waitForFunction(() => document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 1);
+  } finally { await browser.close(); }
+});
+
 test('resize notifications do not alter layout while real script errors remain visible', async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {

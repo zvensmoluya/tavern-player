@@ -43,7 +43,10 @@ function button(text, action, disabled = false) {
   return node;
 }
 const ui = (action, id) => rpc('ui.' + action, id ? { id } : {});
-function bottom() { window.scrollTo({ top: document.documentElement.scrollHeight }); }
+function bottom() {
+  window.scrollTo({ top: document.documentElement.scrollHeight });
+  observedScrollY = window.scrollY;
+}
 function followBottom() {
   requestAnimationFrame(() => { if (following && !focusInFrame()) bottom(); });
 }
@@ -67,7 +70,9 @@ window.addEventListener('scroll', () => {
   const atBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
   // A queued scroll notification at the same position is not a reader scrolling away.
   // In particular, it must not cancel the bottom adjustment queued by a keyboard resize.
-  if (atBottom || window.scrollY !== observedScrollY) following = atBottom;
+  // Even a small upward movement leaves follow mode before the next streaming update.
+  if (window.scrollY < observedScrollY) following = false;
+  else if (window.scrollY > observedScrollY) following = atBottom;
   observedScrollY = window.scrollY;
   document.getElementById('bottom').hidden = following;
 }, { passive: true });
