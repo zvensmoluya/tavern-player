@@ -9,6 +9,7 @@
 | [项目 README](../README.md) | 产品介绍、当前可用能力与验证入口 |
 | [产品与兼容性边界](product-direction.md) | 当前选择、交付范围与明确限制 |
 | [实现架构](architecture.md) | 仓库实际运行方式、模块和状态归属 |
+| [首页布局探索与首版验证](design-explorations/2026-09-17-navigation-layout/README.md) | 四项底栏、全局对话与角色双视图；概念图不代表视觉风格定稿 |
 | [网页运行契约](web-runtime.md) | 原程序接口、资源固定、状态与恢复的已实现范围 |
 | [本地试验版安装包](experimental-build.md) | 构建入口、独立包名、调试签名与覆盖更新限制 |
 | [HTML Surface 与免编译游玩](html-surface-discussion-20260909.md) | 路线讨论与背景；实现状态以网页运行契约为准 |

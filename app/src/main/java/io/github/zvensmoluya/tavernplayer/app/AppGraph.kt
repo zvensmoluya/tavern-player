@@ -20,10 +20,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 private val Context.gatewayDataStore by preferencesDataStore(name = "model_gateway_connections")
+private val Context.playerUiDataStore by preferencesDataStore(name = "player_ui")
 
 class AppGraph(context: Context) {
     private val appContext = context.applicationContext
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val libraryPreferences by lazy { io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryPreferences(appContext.playerUiDataStore) }
 
     val credentialStore by lazy { AndroidKeystoreCredentialStore(appContext) }
     val gateway by lazy {

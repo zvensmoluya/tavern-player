@@ -1,5 +1,11 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.IconButton
+import io.github.zvensmoluya.tavernplayer.ui.LibraryHeader
+import io.github.zvensmoluya.tavernplayer.ui.LibraryEmptyState
+import io.github.zvensmoluya.tavernplayer.ui.PlayerIcon
+import io.github.zvensmoluya.tavernplayer.ui.PlayerSymbol
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -102,6 +108,11 @@ fun ModelConnectionsScreen(
     onBackToChat: (() -> Unit)? = null,
 ) {
     val editor = state.editor
+    BackHandler(enabled = editor != null || onBackToChat != null) {
+        if (editor != null) {
+            if (!editor.saving) actions.closeEditor()
+        } else onBackToChat?.invoke()
+    }
     if (editor == null) {
         ConnectionList(state, actions, onBackToChat)
     } else {
@@ -123,20 +134,17 @@ private fun ConnectionList(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("模型") },
-                actions = {
+            LibraryHeader("模型", "管理连接，选择故事的讲述者") {
                     onBackToChat?.let { onBack ->
                         TextButton(onClick = onBack) { Text("返回聊天") }
                     }
                     if (state.connections.isNotEmpty()) {
-                        TextButton(
+                        IconButton(
                             modifier = Modifier.testTag("addConnection"),
                             onClick = { actions.add(ConnectionTemplates.openAiResponses.id) },
-                        ) { Text("添加") }
+                        ) { PlayerIcon(PlayerSymbol.ADD, "添加模型") }
                     }
-                },
-            )
+            }
         },
     ) { padding ->
         when {
@@ -145,17 +153,13 @@ private fun ConnectionList(
                 contentAlignment = Alignment.Center,
             ) { CircularProgressIndicator() }
 
-            state.connections.isEmpty() -> Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+            state.connections.isEmpty() -> LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
             ) {
-                Text("添加一个模型", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(20.dp))
-                Button(
-                    modifier = Modifier.testTag("addConnection"),
-                    onClick = { actions.add(ConnectionTemplates.openAiResponses.id) },
-                ) { Text("添加模型") }
+                item { LibraryEmptyState(PlayerSymbol.MODEL, "连接你的第一个模型", "配置服务地址与模型，让故事开始回应。") {
+                    Button(modifier = Modifier.testTag("addConnection"),
+                        onClick = { actions.add(ConnectionTemplates.openAiResponses.id) }) { Text("添加模型") }
+                } }
             }
 
             else -> LazyColumn(
@@ -230,7 +234,7 @@ private fun ConnectionEditor(
         topBar = {
             TopAppBar(
                 title = { Text(if (stored == null) "添加模型" else "模型设置") },
-                navigationIcon = { TextButton(onClick = actions.closeEditor) { Text("返回") } },
+                navigationIcon = { TextButton(onClick = actions.closeEditor, enabled = !editor.saving) { Text("返回") } },
                 actions = {
                     if (stored != null) {
                         TextButton(onClick = { confirmDelete = true }) { Text("删除") }

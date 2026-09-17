@@ -33,7 +33,7 @@ class ModelConnectionsScreenTest {
             }
         }
 
-        compose.onNodeWithText("添加一个模型").assertIsDisplayed()
+        compose.onNodeWithText("连接你的第一个模型").assertIsDisplayed()
         compose.onNodeWithTag("addConnection").performClick()
         assertTrue(addCalled)
     }

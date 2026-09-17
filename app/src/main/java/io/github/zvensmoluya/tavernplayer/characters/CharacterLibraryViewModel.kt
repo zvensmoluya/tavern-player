@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
@@ -31,6 +32,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
+    val layout: CharacterLibraryLayout = CharacterLibraryLayout.GRID,
+    val openingConversation: Boolean = false,
     val loadingCharacters: Boolean = true,
     val loadingConversations: Boolean = true,
     val characters: List<CharacterAsset> = emptyList(),
@@ -50,7 +53,7 @@ data class CharacterLibraryUiState(
     val imageErrors: Map<String, String> = emptyMap(),
 ) {
     val initialLoading: Boolean get() = loadingCharacters || loadingConversations
-    val busy: Boolean get() = importing || compilingCharacterId != null
+    val busy: Boolean get() = importing || openingConversation || compilingCharacterId != null
     val selectedCharacter: CharacterAsset?
         get() = characters.firstOrNull { it.id == selectedCharacterId }
 
@@ -67,6 +70,7 @@ class CharacterLibraryViewModel(
     private val compilationService: (() -> NativeCompilationService)? = null,
     private val connectionRepository: (() -> ConnectionRepository)? = null,
     private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
+    private val preferences: CharacterLibraryPreferences? = null,
 ) : ViewModel() {
     constructor(
         characterRepository: CharacterRepository,
@@ -94,6 +98,12 @@ class CharacterLibraryViewModel(
 
     init {
         viewModelScope.launch {
+            try {
+                preferences?.layout?.first()?.let { layout -> _uiState.update { it.copy(layout = layout) } }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                _uiState.update { it.copy(message = "无法读取布局偏好，暂用两列视图") }
+            }
             try {
                 characterRepository.initialize()
                 defaultPersonaSource.initialize()
@@ -132,8 +142,18 @@ class CharacterLibraryViewModel(
         loadConversations()
     }
 
-    // The library surface shows a conversation count on every card, so conversations belong to the
-    // first screen even though the repository behind them is still created on demand.
+    fun setLayout(layout: CharacterLibraryLayout) {
+        _uiState.update { it.copy(layout = layout) }
+        viewModelScope.launch {
+            try { preferences?.setLayout(layout)
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                _uiState.update { it.copy(message = "布局已切换，但未能保存，下次启动可能恢复默认") }
+            }
+        }
+    }
+
+    // Global conversation history is the first screen; subscribe to summaries without opening full records.
     private fun loadConversations() {
         if (conversationJob?.isActive != true) conversationJob = viewModelScope.launch {
             try {
@@ -390,6 +410,7 @@ class CharacterLibraryViewModel(
     fun createConversation(characterId: String, native: Boolean = false) {
         if (_uiState.value.busy) return
         val character = characterRepository.get(characterId) ?: return
+        _uiState.update { it.copy(openingConversation = true) }
         viewModelScope.launch {
             val persona = defaultPersonaSource.captureDefault()
             runCatching {
@@ -400,16 +421,22 @@ class CharacterLibraryViewModel(
                     if (native) io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.LEGACY_NATIVE
                     else io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.BROWSER)
             }
-                .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, message = null) } }
-                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "无法创建对话") } }
+                .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, openingConversation = false, message = null) } }
+                .onFailure { error -> _uiState.update { it.copy(openingConversation = false, message = error.message ?: "无法创建对话") } }
         }
     }
 
     fun openConversation(conversationId: String) {
+        if (_uiState.value.busy) return
+        _uiState.update { it.copy(openingConversation = true, message = null) }
         viewModelScope.launch {
-            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
-            if (repository.contains(conversationId)) {
-                _uiState.update { it.copy(openConversationId = conversationId) }
+            try {
+                val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
+                check(repository.contains(conversationId)) { "这场对话已不存在" }
+                _uiState.update { it.copy(openConversationId = conversationId, openingConversation = false) }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(openingConversation = false, message = error.message ?: "无法打开对话") }
             }
         }
     }
@@ -432,6 +459,7 @@ class CharacterLibraryViewModel(
         private val compilationService: (() -> NativeCompilationService)? = null,
         private val connectionRepository: (() -> ConnectionRepository)? = null,
         private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
+        private val preferences: CharacterLibraryPreferences? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
@@ -444,6 +472,7 @@ class CharacterLibraryViewModel(
                 compilationService,
                 connectionRepository,
                 worldBookRepository,
+                preferences,
             ) as T
     }
 }

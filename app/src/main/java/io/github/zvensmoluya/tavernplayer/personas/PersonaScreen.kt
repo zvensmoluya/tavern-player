@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -54,6 +55,7 @@ fun PersonaRoute(
     onBack: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    BackHandler { if (!state.busy) onBack() }
     val context = LocalContext.current
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -155,9 +157,10 @@ fun PersonaScreen(
 }
 
 @Composable
-private fun PersonaAvatar(uriOrPath: String?, name: String, modifier: Modifier = Modifier) {
+internal fun PersonaAvatar(uriOrPath: String?, name: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val image by produceState<ImageBitmap?>(initialValue = null, uriOrPath) {
+        value = null
         value = withContext(Dispatchers.IO) { context.readPersonaAvatar(uriOrPath) }
     }
     Box(

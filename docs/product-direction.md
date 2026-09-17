@@ -1,6 +1,6 @@
 # Tavern Player 产品方向与边界
 
-更新：2026-09-15。本页维护产品方向、稳定原则与当前能力边界；实现细节和参数只在架构文档维护。具体代码边界见[实现架构](architecture.md)，当前路线讨论见[HTML Surface 与免编译游玩](html-surface-discussion-20260909.md)。历次暂停、编译版本与旧阶段决定见[归档快照](archive/product-decisions-through-20260909.md)，不再作为并列的当前要求。
+更新：2026-09-17。本页维护产品方向、稳定原则与当前能力边界；实现细节和参数只在架构文档维护。具体代码边界见[实现架构](architecture.md)，当前路线讨论见[HTML Surface 与免编译游玩](html-surface-discussion-20260909.md)。历次暂停、编译版本与旧阶段决定见[归档快照](archive/product-decisions-through-20260909.md)，不再作为并列的当前要求。
 
 ## 保存与最近会话
 
@@ -26,6 +26,14 @@
 - 只支持结构化 role messages 的对话管线，不支持 Text Completion 字符串续写管线。
 - 简化发生在支持能力的集合上，不发生在已选择能力的语义上：先明确不支持的 ST 能力；能力一旦被选择，就以 ST 的可观察行为作为语义基线。
 - 只复刻行为，不复制 ST 的源码结构、全局状态、ToolManager、事件系统或扩展架构，也不为了内部结构更优雅而重新解释已选择的能力。
+
+## 首页与导航
+
+- 首页底部固定四个区域：「对话｜角色｜模型｜我的」，冷启动默认进入对话页。具体聊天、角色详情和编辑页收起底栏；模型编辑结束后回到模型列表。
+- 对话页汇总全部已保存会话，按最近更新时间排序，同一角色的不同会话各占一行，点击直接续聊。由对话页进入的聊天返回列表，由角色详情进入的聊天返回详情；不要求先选中角色才能打开已保存会话。
+- 角色页提供两列封面与单列名册，默认两列并记住上次选择；共用名字/标签搜索与原有排序。辅助信息使用原卡标签，缺少标签时显示作者，再缺少则提示查看详情，不生成简介或展示角色提示词片段。
+- 模型区域负责服务连接、模型与连接测试；「我的」集中默认身份、预设和全局世界书入口。聊天内继续提供模型、预设切换和管理入口。没有新增账号体系。
+- 本轮交付先验证布局和导航。概念图的纸纹、插画和配色不构成全局视觉规范；对话命名、对话搜索仍未加入。
 
 ## 2. 内容资产与配置
 
@@ -69,7 +77,7 @@
 
 ### Persona
 
-- 当前只维护一份全局默认 Persona，保留 name、avatar 与可选 description，并在角色库提供显式编辑入口。默认值仍是 name 为“旅人”、description 为空。
+- 当前只维护一份全局默认 Persona，保留 name、avatar 与可选 description，并在「我的」提供显式编辑入口。默认值仍是 name 为“旅人”、description 为空。
 - name 是 `{{user}}` 和用户消息身份的数据来源，description 是 `{{persona}}` 与 Preset `personaDescription` marker 的动态内容源；具体编排完全由当前 Preset 决定，不另行实现 Persona 自有的 placement / depth / role。
 - 新建 Conversation 捕获当时的默认 Persona 快照；之后修改默认身份不改写已有 Conversation 及其历史消息。当前不提供多 Persona 列表或创建对话时的选择器，也不支持 Persona Lorebook、Persona 参与 World Book 扫描、Character → Persona 绑定、Conversation 临时 Persona 等拓扑。
 

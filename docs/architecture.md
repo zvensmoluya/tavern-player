@@ -154,7 +154,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `PresetRepository` 以一个原子 app-private manifest 保存当前 Preset、初始 source 树和全局 active ID；内置默认的初始版本由代码注入。它提供导入并激活、显式保存、恢复初始版本、从当前草稿另存为并激活、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
-`PersonaRepository` 原子保存一份全局默认 Persona。角色库中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
+`PersonaRepository` 原子保存一份全局默认 Persona。「我的」中的身份编辑器允许修改 name、description 与可选头像；创建 Conversation 时捕获当前值，之后修改默认身份不会改写已有 Conversation。当前没有身份列表、选择器或 Character 绑定。
 
 `ConversationRepository` 通过 `RoomConversationStore` 保存 Character Snapshot、Persona、turn/variants、运行检查点、世界书意图和生成诊断，不保存 Conversation 级 Preset 绑定。会话头、摘要、草稿、消息、候选、生成计划分片、原生操作、原始流日志与不可变内容引用分表；相同正文和检查点按内容哈希复用。角色列表只读摘要，打开会话才重建该会话对象，读取中共享相同检查点和正文实例。Persona description 的编排语义保持不变。
 
@@ -162,7 +162,7 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 `ConversationSession` 是业务写入所有者：持有 `commitRevision` 和独立 `draftSeq`，所有持久业务提交通过统一提交锁，存储拒绝过期版本。普通打字仅更新 draft 表，不改最近活动时间。流式事件先按序进入独立日志，预览最多约每 50 ms 更新，进度每 500 ms 或达到批次门槛写入。Finished 只记录结束原因，继续接收尾随 usage；最终投影、MVU 结果、正文、用量、运行状态与日志删除在同一事务提交，成功后发布 COMPLETE。保存失败保留待提交结果并阻止后续业务写入，用户可重试保存。切会话与关闭先结束任务并等待落盘；进程意外退出后按原始事件重建 INTERRUPTED 正文，不重新调用模型、MVU 或作者动作。详细边界见[会话存储与事务实现](conversation-storage.md)。
 
-应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。角色库首屏会在后台 I/O 初始化 Room/旧数据导入并持续订阅已有对话摘要，以显示每张卡的对话数量，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
+应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。首页会在后台 I/O 初始化 Room/旧数据导入并持续订阅已有对话摘要，供全局对话列表和角色详情共用，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
 
 Conversation State 属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`UpdateVariableSetV1Adapter` 与 `UpdateVariableJsonPatchV1Adapter` 只把唯一、完整 assistant update envelope 中白名单路径的 scalar 更新解码为 `ConversationStatePatch`，`NativeAdaptationRuntime` 在消息候选完成时一次应用；完整空块是已确认的 no-op，缺块不是状态事实，缺失内层或外层闭合标签的畸形块不会被宽松修复。原始 `sourceText` 保留机器块用于摄入与诊断；声明对应 Adapter 后，Player 在聊天 storage/display 的 Macro / Regex 投影前剥离已识别的完整机器块，并在流式阶段暂时隐藏未闭合块。畸形块不直接写入状态；单个畸形块只有在独立确认成功后才从 canonical 展示移除，歧义的多个块保持可见。Adapter 不负责 UI 或 Prompt。`PromptCompiler` 把适配声明的 label/type/description 与当前值按稳定顺序编码为固定 JSON system projection；该投影不经过卡片模板、Macro 或 Regex，也不允许 Adaptation 指定 role、位置或格式。声明 Adapter 时，Player 另生成固定 dialect 与白名单回写契约，并要求每轮以完整块确认更新或 no-op。
 
@@ -174,19 +174,29 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 
-界面主流程是角色库 → 角色详情 / 兼容性报告 → 新建或恢复 Conversation → Chat。角色库可进入单一默认身份编辑器；角色库和 Chat 都可以进入 Preset 中心，Chat 另有运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出；选择列表项会先激活再编辑。详情默认只展示实际 order 中的普通 Prompt 与 Regex 快速开关，Prompt 开关只改 `enabled`，不会改变成员关系或相对顺序；单项内容、兼容字段、结构设置和请求参数使用独立全屏次级页面。全部修改显式保存，带未保存修改返回时提供保存、放弃和继续编辑；不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。聊天气泡直接提供“保存文字”和“从这里重新生成 / 继续”；只有后者会在存在后续消息或其他 swipe 时确认将被丢弃的事实。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
+界面以「对话｜角色｜模型｜我的」四个主区域组织。冷启动进入全局对话列表，每个 Conversation 独立展示并直接续聊；角色页 → 角色详情仍提供新建和已有对话入口。「我的」提供单一默认身份编辑器、Preset 中心和全局世界书入口；Chat 仍可进入 Preset 中心，并保留运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出；选择列表项会先激活再编辑。详情默认只展示实际 order 中的普通 Prompt 与 Regex 快速开关，Prompt 开关只改 `enabled`，不会改变成员关系或相对顺序；单项内容、兼容字段、结构设置和请求参数使用独立全屏次级页面。全部修改显式保存，带未保存修改返回时提供保存、放弃和继续编辑；不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。聊天气泡直接提供“保存文字”和“从这里重新生成 / 继续”；只有后者会在存在后续消息或其他 swipe 时确认将被丢弃的事实。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
-网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。聊天页的系统返回与顶部返回按钮共用导航操作，回到角色详情；忙碌时消费系统返回而不离开，保持与顶部返回按钮禁用状态一致。键盘在场时先由输入法处理返回。
+网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。聊天页的系统返回与顶部返回按钮共用导航操作，回到进入时的全局对话列表或角色详情；忙碌时消费系统返回而不离开，保持与顶部返回按钮禁用状态一致。键盘在场时先由输入法处理返回。
 
 ## EJS 提示词执行
 
 网页模式从原世界书读取 EJS 入口并绑定原文哈希，无需编译；Native 编译契约通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
 
+## 首页布局与导航状态
+
+`TavernPlayerApp` 保存当前页面、聊天来源、会话 ID 与详情角色 ID；主区域由 `HomeScaffold` 统一提供底栏。详情、聊天和各编辑页面收起底栏。模型编辑的系统返回关闭编辑器，身份编辑的系统返回与页面返回一致；从其他主区域按系统返回先回到对话页。页面的搜索和滚动状态由 `SaveableStateHolder` 保存，切换主区域后可以恢复。
+
+全局对话列表沿用 Room 的摘要流，不读取完整消息历史，也不按角色折叠。行内展示角色名、最新摘要、更新时间、消息数和创建时间；创建时间用于区分同角色的多场对话，不生成故事标题。缺少原角色资产时保留入口与占位身份，仍可加载会话自身的快照；当前摘要表不含快照角色名，因此此时列表显示「已保存的角色」。打开新会话期间显示等待或错误状态，不展示上一场对话或演示内容。
+
+角色页共用同一数据源和名字/标签过滤，切换两列封面或单列名册。显示偏好保存在 `player_ui` Preferences DataStore 的 `character_library_layout` 字段，值为 `grid` / `list`，缺省或未知值使用 `grid`。偏好读取失败不阻断角色加载，保存失败在页面提示。角色卡辅助信息取最多三个非空标签，再回退到作者或「查看角色详情」。顶部「＋」菜单复用文件导入与 Shelf 扫码；原角色页中的模型、预设、身份和世界书快捷入口已移到新的导航位置。
+
+角色头像在 I/O 线程按最大边不超过 768 px 的采样尺寸解码，坏图或无图使用占位；共享线性图标由 Compose 绘制，未引入新图片、字体或动画资源。页面视觉仍为可迭代首版，不将布局探索图作为主题规范。
+
 ## 启动扉页
 
 首次角色库初始化期间展示 Compose 绘制的童话书扉页：浅纸色、固定细纸纹、书页与枝叶线描、逐渐显现的字标，以及低幅度明灭的星星。纸色沿用现有主题背景，不引入图片、视频、外部字体、动画 SDK 或网络资源；纹理坐标按尺寸缓存，不逐帧生成随机噪声。
 
-`CharacterLibraryUiState.initialLoading` 等待角色/默认身份初始化结束及对话摘要首次返回（空库也算完成）。异常终止对应等待并沿用角色库错误提示，不让动画掩盖读取失败。没有最低播放时长，数据就绪后用 180 ms 淡化进入页面；加载更快时可直接跳过扉页。后台返回、导航回库和导入不会重置首次加载标记。动画沿用 Compose 的系统动画时长缩放；系统禁用动画时显示静态完成画面。Android 系统启动窗口仍由系统管理，窗口底色与扉页一致。
+`CharacterLibraryUiState.initialLoading` 等待角色/默认身份初始化结束及对话摘要首次返回（空库也算完成）。异常终止对应等待并沿用角色库错误提示，不让动画掩盖读取失败。没有最低播放时长，数据就绪后用 180 ms 淡化进入默认的对话页；加载更快时可直接跳过扉页。后台返回、导航回库和导入不会重置首次加载标记。动画沿用 Compose 的系统动画时长缩放；系统禁用动画时显示静态完成画面。Android 系统启动窗口仍由系统管理，窗口底色与扉页一致。
 
 静态预览入口为 `StorybookPagePreview` / `StorybookPageLandscapePreview`。设备验收需覆盖冷启动快/慢加载、空库、错误提示、后台恢复、系统关闭动画、横屏与大字体，以及帧率和启动耗时；主机测试不作为这些效果的实测证据。
 

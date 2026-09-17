@@ -1,19 +1,16 @@
 package io.github.zvensmoluya.tavernplayer.characters
 
 import android.Manifest
+import io.github.zvensmoluya.tavernplayer.ui.CharacterPortrait
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,14 +23,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,16 +35,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -62,7 +51,6 @@ import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
 import io.github.zvensmoluya.tavernplayer.content.CompatibilitySeverity
 import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
-import io.github.zvensmoluya.tavernplayer.conversation.Persona
 import io.github.zvensmoluya.tavernplayer.conversation.SafeMarkdownText
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -80,10 +68,6 @@ fun CharacterLibraryRoute(
     state: CharacterLibraryUiState,
     viewModel: CharacterLibraryViewModel,
     onSelectCharacter: (String) -> Unit,
-    onOpenModels: () -> Unit,
-    onOpenPresets: () -> Unit,
-    onOpenPersona: () -> Unit,
-    onOpenGlobalWorldBooks: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -108,12 +92,6 @@ fun CharacterLibraryRoute(
             viewModel.importFromShelf(url)
         }
     }
-    val shelfScanner = remember(context) {
-        val options = GmsBarcodeScannerOptions.Builder()
-            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-            .build()
-        GmsBarcodeScanning.getClient(context, options)
-    }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -133,7 +111,9 @@ fun CharacterLibraryRoute(
             launcher.launch(arrayOf("image/png", "application/json", "text/json", "application/octet-stream"))
         },
         onImportFromShelf = {
-            shelfScanner.startScan()
+            runCatching {
+                val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+                GmsBarcodeScanning.getClient(context, options).startScan()
                 .addOnSuccessListener { barcode ->
                     barcode.rawValue?.takeIf(String::isNotBlank)?.let(::receiveShelfUrl)
                         ?: viewModel.reportMessage("二维码中没有可用的 Shelf 地址")
@@ -141,183 +121,11 @@ fun CharacterLibraryRoute(
                 .addOnFailureListener { error ->
                     viewModel.reportMessage(error.message ?: "无法启动二维码扫描")
                 }
+            }.onFailure { error -> viewModel.reportMessage(error.message ?: "无法启动二维码扫描") }
         },
         onSelectCharacter = onSelectCharacter,
-        onOpenModels = onOpenModels,
-        onOpenPresets = onOpenPresets,
-        onOpenPersona = onOpenPersona,
-        onOpenGlobalWorldBooks = onOpenGlobalWorldBooks,
+        onLayoutChange = viewModel::setLayout,
     )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CharacterLibraryScreen(
-    state: CharacterLibraryUiState,
-    avatarPath: (String) -> String?,
-    onImport: () -> Unit,
-    onImportFromShelf: () -> Unit,
-    onSelectCharacter: (String) -> Unit,
-    onOpenModels: () -> Unit,
-    onOpenPresets: () -> Unit,
-    onOpenPersona: () -> Unit,
-    onOpenGlobalWorldBooks: () -> Unit = {},
-) {
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = { Text("角色") },
-                    actions = {
-                        TextButton(
-                            onClick = onImportFromShelf,
-                            enabled = !state.busy,
-                            modifier = Modifier.testTag("importFromShelf"),
-                        ) { Text("Shelf") }
-                        TextButton(
-                            onClick = onImport,
-                            enabled = !state.busy,
-                            modifier = Modifier.testTag("importCharacter"),
-                        ) { Text("导入") }
-                    },
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onOpenPresets, modifier = Modifier.testTag("openPresetsFromLibrary")) { Text("预设") }
-                    TextButton(onClick = onOpenModels, modifier = Modifier.testTag("openModelsFromLibrary")) { Text("模型") }
-                    TextButton(onClick = onOpenGlobalWorldBooks, modifier = Modifier.testTag("openGlobalWorldBooks")) { Text("全局世界书") }
-                }
-            }
-        },
-    ) { padding ->
-        if (state.characters.isEmpty()) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text("还没有角色", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "导入 PNG 或 JSON Character Card。没有模型连接也可以先浏览角色内容。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(20.dp))
-                Button(onClick = onImport, enabled = !state.busy) {
-                    if (state.importing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    else Text("选择角色卡")
-                }
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = onImportFromShelf, enabled = !state.busy) {
-                    Text("扫描 Tavern Shelf")
-                }
-                Spacer(Modifier.height(10.dp))
-                TextButton(onClick = onOpenPersona, modifier = Modifier.testTag("openPersona")) {
-                    Text("编辑我的身份 · ${state.persona.name}")
-                }
-                state.message?.let {
-                    Spacer(Modifier.height(12.dp))
-                    Text(it, modifier = Modifier.testTag("libraryNotice"), color = MaterialTheme.colorScheme.error)
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item("persona") {
-                    PersonaSummaryCard(state.persona, onOpenPersona)
-                }
-                state.message?.let { notice ->
-                    item("notice") {
-                        Text(
-                            notice,
-                            modifier = Modifier.fillMaxWidth().testTag("libraryNotice"),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                items(state.characters, key = CharacterAsset::id) { character ->
-                    CharacterCardRow(
-                        character = character,
-                        avatarPath = avatarPath(character.id),
-                        conversationCount = state.conversationsFor(character.id).size,
-                        onClick = { onSelectCharacter(character.id) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PersonaSummaryCard(persona: Persona, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("openPersona"),
-        onClick = onClick,
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.tertiaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(persona.name.trim().take(1).ifBlank { "我" }, fontWeight = FontWeight.Bold)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("我的身份 · ${persona.name}", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    persona.description.trim().takeIf(String::isNotEmpty) ?: "还没有填写身份描述",
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Text("编辑", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
-
-@Composable
-private fun CharacterCardRow(
-    character: CharacterAsset,
-    avatarPath: String?,
-    conversationCount: Int,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("character-${character.id}"),
-        onClick = onClick,
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CharacterAvatar(avatarPath, character.name, Modifier.size(76.dp))
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(character.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                val subtitle = buildList {
-                    add(character.cardGeneration.name)
-                    if (character.worldBooks.sumOf { it.entries.size } > 0) {
-                        add("${character.worldBooks.sumOf { it.entries.size }} 条世界书")
-                    }
-                    if (character.regexScripts.isNotEmpty()) add("${character.regexScripts.size} 个 Regex")
-                }.joinToString(" · ")
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    if (conversationCount == 0) "尚未开始对话" else "$conversationCount 个对话",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -350,7 +158,7 @@ fun CharacterDetailScreen(
         ) {
             item("identity") {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CharacterAvatar(avatarPath, character.name, Modifier.size(112.dp))
+                    CharacterPortrait(avatarPath, character.name, Modifier.size(112.dp))
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(character.name, style = MaterialTheme.typography.headlineSmall)
                         if (character.promptName != character.name) {
@@ -518,31 +326,6 @@ private fun DiagnosticRow(diagnostic: CompatibilityDiagnostic) {
             },
         )
         Text(diagnostic.message, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-@Composable
-private fun CharacterAvatar(path: String?, name: String, modifier: Modifier = Modifier) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, path) {
-        value = path?.let { file ->
-            withContext(Dispatchers.IO) { BitmapFactory.decodeFile(file)?.asImageBitmap() }
-        }
-    }
-    val shape = RoundedCornerShape(14.dp)
-    if (bitmap != null) {
-        Image(
-            bitmap = bitmap!!,
-            contentDescription = "$name 头像",
-            modifier = modifier.clip(shape),
-            contentScale = ContentScale.Crop,
-        )
-    } else {
-        Box(
-            modifier = modifier.clip(shape).background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(name.take(1), style = MaterialTheme.typography.headlineMedium)
-        }
     }
 }
 

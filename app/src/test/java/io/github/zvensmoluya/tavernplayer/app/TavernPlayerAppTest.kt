@@ -17,7 +17,7 @@ class TavernPlayerAppTest {
     }
 
     @Test
-    fun `detail and chat fall back when no character is selected`() {
+    fun `details require a character but a saved chat opens independently`() {
         assertEquals(AppSurface.CHARACTER_LIBRARY, selectAppSurface(AppSurface.CHARACTER_RESOURCES, hasSelectedCharacter = false))
         assertEquals(AppSurface.CHARACTER_LIBRARY, selectAppSurface(AppSurface.CHARACTER_WORLD_BOOKS, hasSelectedCharacter = false))
         assertEquals(
@@ -25,7 +25,7 @@ class TavernPlayerAppTest {
             selectAppSurface(AppSurface.CHARACTER_DETAIL, hasSelectedCharacter = false),
         )
         assertEquals(
-            AppSurface.CHARACTER_LIBRARY,
+            AppSurface.CHAT,
             selectAppSurface(AppSurface.CHAT, hasSelectedCharacter = false),
         )
     }

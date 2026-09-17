@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
             { graph.nativeCompilationService },
             { graph.connectionRepository },
             { graph.worldBookRepository },
+            graph.libraryPreferences,
         )
     }
     private val presetViewModel by viewModels<PresetViewModel> {
