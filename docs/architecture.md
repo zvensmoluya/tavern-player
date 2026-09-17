@@ -182,6 +182,14 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 网页模式从原世界书读取 EJS 入口并绑定原文哈希，无需编译；Native 编译契约通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
 
+## 启动扉页
+
+首次角色库初始化期间展示 Compose 绘制的童话书扉页：浅纸色、固定细纸纹、书页与枝叶线描、逐渐显现的字标，以及低幅度明灭的星星。纸色沿用现有主题背景，不引入图片、视频、外部字体、动画 SDK 或网络资源；纹理坐标按尺寸缓存，不逐帧生成随机噪声。
+
+`CharacterLibraryUiState.initialLoading` 等待角色/默认身份初始化结束及对话摘要首次返回（空库也算完成）。异常终止对应等待并沿用角色库错误提示，不让动画掩盖读取失败。没有最低播放时长，数据就绪后用 180 ms 淡化进入页面；加载更快时可直接跳过扉页。后台返回、导航回库和导入不会重置首次加载标记。动画沿用 Compose 的系统动画时长缩放；系统禁用动画时显示静态完成画面。Android 系统启动窗口仍由系统管理，窗口底色与扉页一致。
+
+静态预览入口为 `StorybookPagePreview` / `StorybookPageLandscapePreview`。设备验收需覆盖冷启动快/慢加载、空库、错误提示、后台恢复、系统关闭动画、横屏与大字体，以及帧率和启动耗时；主机测试不作为这些效果的实测证据。
+
 ## 当前尚未实现
 
 当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。

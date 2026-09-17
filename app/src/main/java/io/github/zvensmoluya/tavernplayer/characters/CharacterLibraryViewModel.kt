@@ -31,6 +31,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
+    val loadingCharacters: Boolean = true,
+    val loadingConversations: Boolean = true,
     val characters: List<CharacterAsset> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),
     val persona: Persona = PersonaRepository.defaultPersona(),
@@ -47,6 +49,7 @@ data class CharacterLibraryUiState(
     val imageWorkingIds: Set<String> = emptySet(),
     val imageErrors: Map<String, String> = emptyMap(),
 ) {
+    val initialLoading: Boolean get() = loadingCharacters || loadingConversations
     val busy: Boolean get() = importing || compilingCharacterId != null
     val selectedCharacter: CharacterAsset?
         get() = characters.firstOrNull { it.id == selectedCharacterId }
@@ -91,8 +94,20 @@ class CharacterLibraryViewModel(
 
     init {
         viewModelScope.launch {
-            characterRepository.initialize()
-            defaultPersonaSource.initialize()
+            try {
+                characterRepository.initialize()
+                defaultPersonaSource.initialize()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(message = "角色库读取失败：${error.message ?: "请检查本地存储"}") }
+            } finally {
+                _uiState.update { it.copy(
+                    characters = characterRepository.characters.value,
+                    persona = defaultPersonaSource.persona.value,
+                    loadingCharacters = false,
+                ) }
+            }
         }
         viewModelScope.launch {
             characterRepository.imageResources.states.collect { states ->
@@ -124,11 +139,11 @@ class CharacterLibraryViewModel(
             try {
                 val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { conversationRepository() }
                 repository.conversations.collect { conversations ->
-                    _uiState.update { it.copy(conversations = conversations) }
+                    _uiState.update { it.copy(conversations = conversations, loadingConversations = false) }
                 }
             } catch (cancelled: CancellationException) { throw cancelled
             } catch (error: Exception) {
-                _uiState.update { it.copy(message = "对话读取失败：${error.message ?: "请检查本地存储"}") }
+                _uiState.update { it.copy(loadingConversations = false, message = "对话读取失败：${error.message ?: "请检查本地存储"}") }
             }
         }
     }

@@ -35,6 +35,48 @@ class CharacterLibraryViewModelTest {
     val temporary = TemporaryFolder()
 
     @Test
+    fun `opening waits for initialization and finishes for an empty library`() = runTest {
+        val root = temporary.newFolder()
+        val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val source = object : DefaultPersonaSource {
+            override val persona = MutableStateFlow(Persona("default-persona", "旅人"))
+            override suspend fun initialize() { ready.await() }
+        }
+        val repository = ConversationRepository(root, PromptCompiler())
+        val model = CharacterLibraryViewModel(CharacterRepository(root), { repository }, source,
+            { error("Presets must stay deferred") }, ShelfTransferReceiver { error("unused") })
+        try {
+            withContext(Dispatchers.Default) {
+                withTimeout(5_000) { model.uiState.first { !it.loadingConversations } }
+            }
+            assertTrue(model.uiState.value.initialLoading)
+            ready.complete(Unit)
+            val loaded = withContext(Dispatchers.Default) {
+                withTimeout(5_000) { model.uiState.first { !it.initialLoading } }
+            }
+            assertTrue(loaded.characters.isEmpty())
+            assertTrue(loaded.conversations.isEmpty())
+        } finally { clear(model); repository.close() }
+    }
+
+    @Test
+    fun `storage failures dismiss the opening and expose a notice`() = runTest {
+        val source = object : DefaultPersonaSource {
+            override val persona = MutableStateFlow(Persona("default-persona", "旅人"))
+            override suspend fun initialize() { error("persona unavailable") }
+        }
+        val model = CharacterLibraryViewModel(CharacterRepository(temporary.newFolder()),
+            { error("conversation unavailable") }, source,
+            { error("Presets must stay deferred") }, ShelfTransferReceiver { error("unused") })
+        try {
+            val loaded = withContext(Dispatchers.Default) {
+                withTimeout(5_000) { model.uiState.first { !it.initialLoading } }
+            }
+            assertNotNull(loaded.message)
+        } finally { clear(model) }
+    }
+
+    @Test
     fun `Shelf character is routed into the character repository`() = runTest {
         val source = """
             {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"Lantern"}}
@@ -130,7 +172,7 @@ class CharacterLibraryViewModelTest {
             // A fresh library must publish saved conversations before any detail page is opened.
             // Repository loading uses real I/O, so its deadline must not advance with virtual time.
             val initial = withContext(Dispatchers.Default) {
-                withTimeout(5_000) { viewModel.uiState.first { it.conversations.size == 2 } }
+                withTimeout(5_000) { viewModel.uiState.first { !it.initialLoading && it.conversations.size == 2 } }
             }
             assertNull(initial.selectedCharacterId)
             assertEquals(listOf(existing.id), initial.conversationsFor(saved.character.id).map { it.id })

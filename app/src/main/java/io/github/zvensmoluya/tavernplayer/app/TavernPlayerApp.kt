@@ -74,85 +74,87 @@ fun TavernPlayerApp(
         if (surface != displayedSurface) surface = displayedSurface
     }
 
-    when (displayedSurface) {
-        AppSurface.CHARACTER_LIBRARY -> CharacterLibraryRoute(
-            state = libraryState,
-            viewModel = characterLibraryViewModel,
-            onSelectCharacter = { characterId ->
-                characterLibraryViewModel.selectCharacter(characterId)
-                surface = AppSurface.CHARACTER_DETAIL
-            },
-            onOpenModels = ::openModels,
-            onOpenPresets = ::openPresets,
-            onOpenGlobalWorldBooks = ::openWorldBooks,
-            onOpenPersona = ::openPersona,
-        )
-        AppSurface.CHARACTER_DETAIL -> {
-            val character = libraryState.selectedCharacter
-            if (character != null) {
-                CharacterDetailScreen(
-                    character = character,
-                    conversations = libraryState.conversationsFor(character.id),
-                    avatarPath = characterLibraryViewModel.avatarPath(character.id),
-                    onBack = {
-                        characterLibraryViewModel.selectCharacter(null)
-                        surface = AppSurface.CHARACTER_LIBRARY
-                    },
-                    onNewConversation = { characterLibraryViewModel.createConversation(character.id) },
-                    onOpenConversation = characterLibraryViewModel::openConversation,
-                    importing = libraryState.busy,
-                    onReadWorldBooks = { surface = AppSurface.CHARACTER_WORLD_BOOKS },
-                    onOpenResources = { surface = AppSurface.CHARACTER_RESOURCES },
-                    message = libraryState.message,
+    StorybookStartup(loading = libraryState.initialLoading) {
+        when (displayedSurface) {
+            AppSurface.CHARACTER_LIBRARY -> CharacterLibraryRoute(
+                state = libraryState,
+                viewModel = characterLibraryViewModel,
+                onSelectCharacter = { characterId ->
+                    characterLibraryViewModel.selectCharacter(characterId)
+                    surface = AppSurface.CHARACTER_DETAIL
+                },
+                onOpenModels = ::openModels,
+                onOpenPresets = ::openPresets,
+                onOpenGlobalWorldBooks = ::openWorldBooks,
+                onOpenPersona = ::openPersona,
+            )
+            AppSurface.CHARACTER_DETAIL -> {
+                val character = libraryState.selectedCharacter
+                if (character != null) {
+                    CharacterDetailScreen(
+                        character = character,
+                        conversations = libraryState.conversationsFor(character.id),
+                        avatarPath = characterLibraryViewModel.avatarPath(character.id),
+                        onBack = {
+                            characterLibraryViewModel.selectCharacter(null)
+                            surface = AppSurface.CHARACTER_LIBRARY
+                        },
+                        onNewConversation = { characterLibraryViewModel.createConversation(character.id) },
+                        onOpenConversation = characterLibraryViewModel::openConversation,
+                        importing = libraryState.busy,
+                        onReadWorldBooks = { surface = AppSurface.CHARACTER_WORLD_BOOKS },
+                        onOpenResources = { surface = AppSurface.CHARACTER_RESOURCES },
+                        message = libraryState.message,
+                    )
+                }
+            }
+            AppSurface.CHARACTER_WORLD_BOOKS -> libraryState.selectedCharacter?.let { character ->
+                WorldBookReaderScreen(character, onBack = { surface = AppSurface.CHARACTER_DETAIL })
+            }
+            AppSurface.CHARACTER_RESOURCES -> libraryState.selectedCharacter?.let { character ->
+                LaunchedEffect(character.id) { characterLibraryViewModel.loadImages(character.id) }
+                io.github.zvensmoluya.tavernplayer.characters.CharacterResourcesScreen(
+                    state = libraryState.imageStates[character.id],
+                    working = character.id in libraryState.imageWorkingIds,
+                    error = libraryState.imageErrors[character.id],
+                    onPrepare = { characterLibraryViewModel.prepareImages(character.id) },
+                    onCancel = { characterLibraryViewModel.cancelImages(character.id) },
+                    onReload = { characterLibraryViewModel.loadImages(character.id) },
+                    resolvePath = { characterLibraryViewModel.imagePath(character.id, it) },
+                    onBack = { surface = AppSurface.CHARACTER_DETAIL },
                 )
             }
-        }
-        AppSurface.CHARACTER_WORLD_BOOKS -> libraryState.selectedCharacter?.let { character ->
-            WorldBookReaderScreen(character, onBack = { surface = AppSurface.CHARACTER_DETAIL })
-        }
-        AppSurface.CHARACTER_RESOURCES -> libraryState.selectedCharacter?.let { character ->
-            LaunchedEffect(character.id) { characterLibraryViewModel.loadImages(character.id) }
-            io.github.zvensmoluya.tavernplayer.characters.CharacterResourcesScreen(
-                state = libraryState.imageStates[character.id],
-                working = character.id in libraryState.imageWorkingIds,
-                error = libraryState.imageErrors[character.id],
-                onPrepare = { characterLibraryViewModel.prepareImages(character.id) },
-                onCancel = { characterLibraryViewModel.cancelImages(character.id) },
-                onReload = { characterLibraryViewModel.loadImages(character.id) },
-                resolvePath = { characterLibraryViewModel.imagePath(character.id, it) },
+            AppSurface.CHAT -> ChatRoute(
+                viewModel = chatViewModel(),
+                presetViewModel = presetViewModel(),
+                resolveAssetPath = characterLibraryViewModel::assetPath,
                 onBack = { surface = AppSurface.CHARACTER_DETAIL },
+                onOpenModels = ::openModels,
+                onOpenPresets = ::openPresets,
+                onOpenGlobalWorldBooks = ::openWorldBooks,
+            )
+            AppSurface.MODEL_CONFIGURATION -> ModelConnectionsRoute(
+                viewModel = connectionsViewModel(),
+                onBackToChat = { surface = returnFromModels },
+            )
+            AppSurface.PRESET_CENTER -> PresetRoute(
+                viewModel = presetViewModel(),
+                onBack = {
+                    presetViewModel().cancelEditor()
+                    surface = returnFromPresets
+                },
+            )
+            AppSurface.GLOBAL_WORLD_BOOKS -> worldBookRepository?.let {
+                io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookLibraryScreen(it(), onBack = { surface = returnFromWorldBooks })
+            }
+            AppSurface.PERSONA -> PersonaRoute(
+                viewModel = personaViewModel(),
+                onBack = {
+                    personaViewModel().cancelEditing()
+                    surface = returnFromPersona
+                },
             )
         }
-        AppSurface.CHAT -> ChatRoute(
-            viewModel = chatViewModel(),
-            presetViewModel = presetViewModel(),
-            resolveAssetPath = characterLibraryViewModel::assetPath,
-            onBack = { surface = AppSurface.CHARACTER_DETAIL },
-            onOpenModels = ::openModels,
-            onOpenPresets = ::openPresets,
-            onOpenGlobalWorldBooks = ::openWorldBooks,
-        )
-        AppSurface.MODEL_CONFIGURATION -> ModelConnectionsRoute(
-            viewModel = connectionsViewModel(),
-            onBackToChat = { surface = returnFromModels },
-        )
-        AppSurface.PRESET_CENTER -> PresetRoute(
-            viewModel = presetViewModel(),
-            onBack = {
-                presetViewModel().cancelEditor()
-                surface = returnFromPresets
-            },
-        )
-        AppSurface.GLOBAL_WORLD_BOOKS -> worldBookRepository?.let {
-            io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookLibraryScreen(it(), onBack = { surface = returnFromWorldBooks })
-        }
-        AppSurface.PERSONA -> PersonaRoute(
-            viewModel = personaViewModel(),
-            onBack = {
-                personaViewModel().cancelEditing()
-                surface = returnFromPersona
-            },
-        )
     }
 }
 
