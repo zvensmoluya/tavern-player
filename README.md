@@ -82,7 +82,7 @@ SillyTavern 和社区已经积累了非常丰富的内容生态：角色卡、�
 - 在角色详情的“角色资源”中识别并准备静态图片，持久保存在应用私有目录，支持离线查看、暂停与失败重试；无需配置模型，不参与 Native 编译；
 - 编辑一份全局默认用户身份，包括名字、描述和可选头像；新对话会捕获当时的身份；
 - 导入、切换、调整、恢复、另存为、删除和无损导出 ST OpenAI / Chat Completion Preset；
-- 使用卡片开场和备用开场创建独立 Conversation；新对话默认使用原生输入栏与单个 WebView 消息区，角色详情同时提供原生模式入口，旧对话保留原执行模式；
+- 使用卡片开场和备用开场创建独立 Conversation；新对话统一使用原生输入栏与单个 WebView 消息区，旧对话保留原执行模式；
 - 在声明的宿主范围内直接运行作者 HTML/JS，免编译准备 MVU/EJS，按需保存网页依赖并复用角色原图；
 - 在发送时执行卡片 World Book、Character Regex、Macro、Prompt 编排与 context 预算；
 - 将当前全局 Preset 捕获到单次生成，并向五种 OpenAI、Anthropic 或 Gemini 协议安全映射参数；
@@ -104,13 +104,13 @@ Preset 列表选择的就是当前正在使用和编辑的 Preset。详情以实
 </details>
 
 <details>
-<summary><strong>网页运行、Shelf 与实验性原生适配</strong></summary>
+<summary><strong>网页运行与 Shelf</strong></summary>
 
-导入与 Shelf 接收不执行程序或调用编译模型。进入默认网页对话后，启用的助手脚本和符合渲染规则的作者页面按 `player-web-1` 运行；普通 HTML 禁止脚本，缺失能力明确报告。原生模式入口对每张卡保留，不要求先完成 Native 适配。原程序范围、资源版本及恢复限制见[网页运行契约](docs/web-runtime.md)。Preset 中 Provider、endpoint、自定义 headers/body 和凭据形字段仍是惰性内容，不会改变播放器连接。
+导入与 Shelf 接收不执行程序或调用编译模型。进入默认网页对话后，启用的助手脚本和符合渲染规则的作者页面按 `player-web-1` 运行；普通 HTML 禁止脚本，缺失能力明确报告。新建对话不需要 Native 适配。原程序范围、资源版本及恢复限制见[网页运行契约](docs/web-runtime.md)。Preset 中 Provider、endpoint、自定义 headers/body 和凭据形字段仍是惰性内容，不会改变播放器连接。
 
 Shelf 接收入口位于角色库首页。Android 17 会在首次接收前请求本地网络权限；独立 World Book 导入全局世界书列表，默认不启用。
 
-Native 适配提供实验性的“准备游玩”入口：模型理解相关源码，复用 MVU/EJS 公共程序，并生成 JS 动态投影和受控的高层原生 Surface。自定义操作通过声明的宿主接口执行，持久变更保存后更新界面；操作检查点与消息结束状态分开，可恢复所属候选分支。简单状态绑定和原草稿表单继续可用，手工适配导入保留。可安装不代表整卡行为等价，当前接口与取消语义见[实现架构](docs/architecture.md)，阶段验证记录由[文档导航](docs/README.md)索引。
+原生对话与 Native 适配暂作为后续增强功能，当前收起原生新建、模型适配和适配文件导入入口。已有原生会话仍可打开，数据与执行模式保持不变；网页模式使用的 MVU/EJS 和会话能力继续保留。
 
 </details>
 

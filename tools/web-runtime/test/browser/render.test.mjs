@@ -80,6 +80,30 @@ async function rebuilt(page, created) {
 const pages = created => created.filter(item => item.kind === 'page').length;
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+test('history restart deltas remove the old suffix before adding a new reply', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const initial = ['opening', 'old question', 'old answer', 'later question', 'later answer']
+      .map((text, index) => message(text, index, { role: index % 2 ? 'user' : 'assistant' }));
+    const { page } = await open(browser, { width: 420, height: 700 }, initial);
+    await page.waitForFunction(() => document.querySelectorAll('#messages article').length === 5);
+    const edited = message('edited question', 1, { role: 'user' });
+    const reply = message('new answer', 5);
+    await page.evaluate(({ edited, reply, epoch }) => {
+      Player.receive({ type: 'delta', epoch, changes: { revision: 'r1' }, messages: [edited],
+        order: ['t0', 't1'], flags: { busy: true, running: true } });
+      Player.receive({ type: 'delta', epoch, changes: { revision: 'r2' }, messages: [reply],
+        order: ['t0', 't1', 't5'], flags: { busy: false, running: false } });
+    }, { edited, reply, epoch });
+    await page.waitForFunction(() => document.querySelectorAll('#messages article').length === 3 &&
+      document.getElementById('messages').textContent.includes('new answer'));
+    const text = await page.locator('#messages').innerText();
+    assert.match(text, /edited question/);
+    assert.doesNotMatch(text, /old question|old answer|later question|later answer/);
+    assert.equal((text.match(/new answer/g) ?? []).length, 1);
+  } finally { await browser.close(); }
+});
+
 const tall = 'Filler\n\n<div style="height:900px">filler block</div>';
 const rich = extra => `Intro ${extra}\n\n<div id="tall" style="height:520px">tall</div>`;
 const fence = prose => prose + '\n\n```html\n<body><input id="field"><div id="hit">hit</div>' +

@@ -79,17 +79,17 @@ Your default identity, global world books, and imported presets are optional. To
 </details>
 
 <details>
-<summary><strong>Web execution, Shelf, and experimental Native adaptation</strong></summary>
+<summary><strong>Web execution and Shelf</strong></summary>
 
 Importing and Shelf reception do not execute programs or call a compilation model. In a web conversation, enabled helper scripts and eligible author pages run under `player-web-1`. Ordinary HTML does not execute scripts; missing capabilities are reported. Web dependencies are saved as needed and character images are reused.
 
-New conversations use the web message surface; existing ones retain their execution mode. Every character retains a native-mode entry without requiring Native adaptation first. Provider, endpoint, custom headers/body, and credential-shaped fields in presets remain inert imported content and do not change the player's connection.
+New conversations use the web message surface; existing ones retain their execution mode. New conversations do not require Native adaptation. Provider, endpoint, custom headers/body, and credential-shaped fields in presets remain inert imported content and do not change the player's connection.
 
 Shelf reception is available from the character library. Android 17 requests local network permission before the first reception.
 
-Experimental Native adaptation uses a model to interpret source, reuse MVU/EJS libraries, and produce JS projections and controlled native surfaces. Custom actions use declared host interfaces; persistent changes are saved before updating the UI. Action checkpoints are separate from message-end state and recover with their associated variants. Simple state bindings, existing draft forms, and manual adaptation import remain available.
+Native conversations and adaptation are deferred enhancements. Native conversation creation, model-based adaptation, and adaptation-file import are currently hidden. Existing native conversations remain accessible with their data and execution mode unchanged; shared MVU/EJS and conversation capabilities remain available to web mode.
 
-An installable adaptation does not imply behavioral equivalence for an entire card. See the [architecture](docs/architecture.md) for interfaces and cancellation semantics, the [web runtime contract](docs/web-runtime.md) for execution and recovery limits, and the [documentation index](docs/README.md) for verification records.
+See the [architecture](docs/architecture.md) for implementation details, the [web runtime contract](docs/web-runtime.md) for execution and recovery limits, and the [documentation index](docs/README.md) for verification records.
 
 </details>
 

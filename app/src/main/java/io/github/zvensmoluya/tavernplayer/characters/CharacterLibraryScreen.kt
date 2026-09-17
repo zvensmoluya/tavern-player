@@ -25,9 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -59,8 +56,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader
-import io.github.zvensmoluya.tavernplayer.content.hasAuthorRuntime
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
@@ -334,42 +329,12 @@ fun CharacterDetailScreen(
     onBack: () -> Unit,
     onNewConversation: () -> Unit,
     onOpenConversation: (String) -> Unit,
-    onInstallAdaptation: (ByteArray) -> Unit = {},
-    onImportError: (String) -> Unit = {},
     importing: Boolean = false,
     message: String? = null,
-    compiling: Boolean = false,
-    compilationSaving: Boolean = false,
-    compilationConnections: List<io.github.zvensmoluya.tavernplayer.connections.StoredConnection> = emptyList(),
-    compilationConnectionId: String? = null,
-    onSelectCompilationConnection: (String) -> Unit = {},
-    onCompile: () -> Unit = {},
-    onCancelCompilation: () -> Unit = {},
-    onOpenModels: () -> Unit = {},
     onReadWorldBooks: () -> Unit = {},
     onOpenResources: () -> Unit = {},
-    onNewNativeConversation: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val adaptationPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            runCatching { withContext(Dispatchers.IO) {
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    val result = ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        require(result.size() + count <= 1024 * 1024) { "适配文件超过 1 MiB" }
-                        result.write(buffer, 0, count)
-                    }
-                    result.toByteArray()
-                } ?: error("无法读取适配文件")
-            } }.onSuccess(onInstallAdaptation).onFailure { onImportError(it.message ?: "无法读取适配文件") }
-        }
-    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -410,31 +375,6 @@ fun CharacterDetailScreen(
                         style = MaterialTheme.typography.bodySmall)
                 }
             }
-            item("new-native") {
-                // 两条路线都默认可达：纯文字卡和已适配卡都能进原生；原生走不通时玩家可以再按网页模式新建一条。
-                val adaptation = character.nativeAdaptation
-                // 提示只描述这次确实读到的东西。读不出来和读得出来是两种情况：助手容器畸形时网页模式同样建不出会话，
-                // 不能把玩家指过去。键用卡身份加“有没有适配”：有适配时本就不提示，也就没必要再解析一次卡片程序。
-                val notice = remember(character.id, character.sourceSha256, adaptation != null) {
-                    if (adaptation != null) null else runCatching {
-                        BrowserProgramReader.character(character).hasAuthorRuntime
-                    }.fold({ if (it) AUTHOR_RUNTIME_NOTICE else null }, { UNREADABLE_PROGRAM_NOTICE })
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedButton(onClick = onNewNativeConversation, enabled = !importing,
-                        modifier = Modifier.fillMaxWidth().testTag("newNativeConversation")) {
-                        Text(if (adaptation != null) "使用原生适配开始对话" else "使用原生模式开始对话")
-                    }
-                    if (notice != null) {
-                        Text(
-                            notice,
-                            modifier = Modifier.testTag("nativeEntryNotice"),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
             item("world-books") {
                 Card(
                     onClick = onReadWorldBooks,
@@ -463,67 +403,6 @@ fun CharacterDetailScreen(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("角色资源", style = MaterialTheme.typography.titleMedium)
                         Text("保存和查看角色图片", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-            item("native-adaptation") {
-                DetailSection("原生适配") {
-                    var choosingModel by remember { mutableStateOf(false) }
-                    val connection = compilationConnections.firstOrNull { it.id == compilationConnectionId }
-                    Text("将卡片中的表单、状态和资料准备为原生玩法。", style = MaterialTheme.typography.bodySmall)
-                    Box {
-                        TextButton(onClick = { choosingModel = true }, enabled = !importing && compilationConnections.isNotEmpty(),
-                            modifier = Modifier.testTag("compilationModel")) {
-                            Text(connection?.let { "适配模型：${it.selectedModel} · ${it.name}" } ?: "尚未选择适配模型")
-                        }
-                        DropdownMenu(expanded = choosingModel, onDismissRequest = { choosingModel = false }) {
-                            compilationConnections.forEach { option ->
-                                DropdownMenuItem(text = { Text("${option.selectedModel} · ${option.name}") }, onClick = {
-                                    choosingModel = false
-                                    onSelectCompilationConnection(option.id)
-                                })
-                            }
-                        }
-                    }
-                    if (compilationConnections.isEmpty()) {
-                        TextButton(onClick = onOpenModels, enabled = !importing) { Text("配置模型") }
-                    }
-                    if (compiling) {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        TextButton(onClick = onCancelCompilation, enabled = !compilationSaving,
-                            modifier = Modifier.testTag("cancelCompilation")) { Text(if (compilationSaving) "正在保存…" else "停止适配") }
-                    } else {
-                        Button(onClick = onCompile, enabled = !importing && connection != null,
-                            modifier = Modifier.testTag("compileNativeAdaptation")) {
-                            Text(if (character.nativeAdaptation == null) "准备游玩" else "重新适配")
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { adaptationPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
-                        enabled = !importing,
-                        modifier = Modifier.testTag("installNativeAdaptation"),
-                    ) { Text("导入原生适配文件") }
-                    val adaptation = character.nativeAdaptation
-                    if (adaptation == null) {
-                        Text("暂无原生适配；卡片可以直接用原生模式开始对话。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        Text(adaptation.report.summary.ifBlank { "已安装经过本地校验的原生适配。" })
-                        var reportExpanded by remember(character.id, adaptation) { mutableStateOf(false) }
-                        if (adaptation.report.unsupportedBehaviors.isNotEmpty()) {
-                            Text("待支持 ${adaptation.report.unsupportedBehaviors.distinct().size} 项功能", style = MaterialTheme.typography.bodySmall)
-                        }
-                        TextButton(onClick = { reportExpanded = !reportExpanded }) { Text(if (reportExpanded) "收起适配说明" else "查看适配说明") }
-                        if (reportExpanded) {
-                            listOf("已映射" to adaptation.report.restoredBehaviors,
-                                "表现调整" to adaptation.report.degradedPresentation,
-                                "暂不支持" to adaptation.report.unsupportedBehaviors,
-                                "验证说明" to adaptation.report.warnings).forEach { (title, entries) ->
-                                if (entries.isNotEmpty()) {
-                                    Text(title, style = MaterialTheme.typography.labelLarge)
-                                    entries.distinct().forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -694,11 +573,5 @@ private fun formatTimestamp(epochMillis: Long): String = runCatching {
 /** 已有对话保留创建时的执行路线，列表里必须能一眼分辨，否则两种入口开出来的对话长得一样。 */
 private fun ConversationExecutionMode.displayName(): String =
     if (this == ConversationExecutionMode.BROWSER) "网页模式" else "原生模式"
-
-/** 只声明这次读到的声明内容；作者页面也可能出现在消息正文或模型回复里，入口不假装能穷举。 */
-private const val AUTHOR_RUNTIME_NOTICE = "这张卡为网页模式声明了作者脚本或世界书模板；原生模式不会运行它们，需要时用网页模式新建。"
-
-/** 卡片程序读不出来时网页模式同样建不出会话，因此这里只说明原生模式会跳过什么，不指路。 */
-private const val UNREADABLE_PROGRAM_NOTICE = "无法读取这张卡的助手容器；原生模式不会运行其中的内容。"
 
 private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
