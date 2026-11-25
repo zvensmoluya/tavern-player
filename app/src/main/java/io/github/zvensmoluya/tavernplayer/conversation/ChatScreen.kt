@@ -351,11 +351,18 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
                 minLines = 1,
                 maxLines = 5,
             )
-            if (state.running || state.browserGenerating) {
+            if (state.generationPhase != GenerationPhase.IDLE) {
                 OutlinedButton(
                     modifier = Modifier.testTag("cancelGeneration"),
                     onClick = actions.cancel,
-                ) { Text("停止") }
+                    enabled = state.generationPhase == GenerationPhase.ACTIVE,
+                ) {
+                    Text(when (state.generationPhase) {
+                        GenerationPhase.STOPPING -> "正在停止…"
+                        GenerationPhase.FINISHING -> "正在保存…"
+                        else -> "停止"
+                    })
+                }
             } else {
                 Button(
                     modifier = Modifier.testTag("sendMessage"),

@@ -44,6 +44,20 @@ class ChatScreenTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Test fun `composer shows stop throughout generation and reports finalization`() {
+        var screen by mutableStateOf(state().copy(browserOperationRunning = true))
+        var stops = 0
+        compose.setContent { TavernPlayerTheme { ChatScreen(screen, actions(cancel = { stops++ })) } }
+        compose.onAllNodesWithTag("cancelGeneration").assertCountEquals(0)
+        compose.runOnIdle { screen = screen.copy(generationPhase = GenerationPhase.ACTIVE) }
+        compose.onNodeWithTag("cancelGeneration").assertIsDisplayed().performClick()
+        assertEquals(1, stops)
+        compose.runOnIdle { screen = screen.copy(generationPhase = GenerationPhase.STOPPING) }
+        compose.onNodeWithText("正在停止…").assertIsNotEnabled()
+        compose.runOnIdle { screen = screen.copy(generationPhase = GenerationPhase.FINISHING) }
+        compose.onNodeWithText("正在保存…").assertIsNotEnabled()
+    }
+
     @Test fun `save retry stays available while business actions are blocked`() {
         val screen = state().copy(storageFailed = true)
         var retries = 0
@@ -54,7 +68,7 @@ class ChatScreenTest {
     }
 
     @Test fun `world book opens as a full reader during generation and returns to chat`() {
-        val screen = state().copy(running = true, character = state().character.copy(worldBooks = listOf(
+        val screen = state().copy(generationPhase = GenerationPhase.ACTIVE, character = state().character.copy(worldBooks = listOf(
             WorldBookDefinition("book", entries = listOf(WorldBookEntryDefinition("entry", comment = "中性内容", content = "阅读正文"))))))
         compose.setContent { TavernPlayerTheme { ChatScreen(state = screen, actions = actions()) } }
         compose.onNodeWithTag("openWorldBook").performClick()
@@ -263,7 +277,7 @@ class ChatScreenTest {
         readyConnections = readyConnections,
         selectedConnectionId = readyConnections.firstOrNull()?.id,
         loadingConnections = false,
-        running = running,
+        generationPhase = if (running) GenerationPhase.ACTIVE else GenerationPhase.IDLE,
         lastTrace = lastTrace,
         conversationState = conversationState,
     )

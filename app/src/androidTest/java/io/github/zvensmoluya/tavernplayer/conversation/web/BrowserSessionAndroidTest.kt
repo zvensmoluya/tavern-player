@@ -194,7 +194,8 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         lateinit var web: WebView
         lateinit var session: BrowserSession
         fun state(running: Boolean = false) = ChatUiState(conversationId = record.id, character = character,
-            executionMode = ConversationExecutionMode.BROWSER, browserSnapshot = BrowserConversation.snapshot(record), running = running, loadingConnections = false)
+            executionMode = ConversationExecutionMode.BROWSER, browserSnapshot = BrowserConversation.snapshot(record),
+            generationPhase = if (running) GenerationPhase.ACTIVE else GenerationPhase.IDLE, loadingConnections = false)
         fun evaluate(script: String): String {
             val ready = java.util.concurrent.CountDownLatch(1)
             val result = AtomicReference("")

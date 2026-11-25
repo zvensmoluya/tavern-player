@@ -14,6 +14,9 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.job
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +36,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 
 enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTED }
+
+enum class GenerationPhase { IDLE, ACTIVE, STOPPING, FINISHING }
 
 enum class MessageEditMode { TEXT_ONLY, RESTART }
 
@@ -74,7 +79,7 @@ data class ChatUiState(
     val executionMode: ConversationExecutionMode = ConversationExecutionMode.BROWSER,
     val browserSnapshot: JsonObject = JsonObject(emptyMap()),
     val browserOperationRunning: Boolean = false,
-    val browserGenerating: Boolean = false,
+    val generationPhase: GenerationPhase = GenerationPhase.IDLE,
     val browserGeneration: JsonObject = JsonObject(emptyMap()),
     val conversationId: String? = null,
     val character: CharacterSnapshot = EMPTY_CHARACTER,
@@ -90,7 +95,7 @@ data class ChatUiState(
     val activePresetName: String = "",
     val loadingConnections: Boolean = true,
     val loadingConversation: Boolean = false,
-    val running: Boolean = false,
+    val editingMessage: Boolean = false,
     val retryAvailable: Boolean = false,
     val regenerateAvailable: Boolean = false,
     val variantNavigationAvailable: Boolean = false,
@@ -98,7 +103,9 @@ data class ChatUiState(
     val lastTrace: GenerationTraceState? = null,
     val conversationState: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
 ) {
-    val busy: Boolean get() = storageFailed || running || worldBookSaving || loadingConversation || browserOperationRunning
+    val running: Boolean get() = !browserOperationRunning && generationPhase != GenerationPhase.IDLE
+    val browserGenerating: Boolean get() = browserOperationRunning && generationPhase != GenerationPhase.IDLE
+    val busy: Boolean get() = generationPhase != GenerationPhase.IDLE || storageFailed || editingMessage || worldBookSaving || loadingConversation || browserOperationRunning
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
 }
@@ -136,7 +143,6 @@ class ConversationSession(
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
     private val browserHostMutex = Mutex()
-    private var browserGenerationJob: Job? = null
     private var browserGenerationId: String? = null
     private var pendingBrowserDraft: String? = null
     private var generationJob: Job? = null
@@ -208,11 +214,12 @@ class ConversationSession(
     }
 
     fun loadConversation(conversationId: String) {
-        if (_uiState.value.busy && generationJob == null) return
+        val state = _uiState.value
+        if (state.loadingConversation || state.browserOperationRunning || (state.busy && generationJob == null)) return
         _uiState.update { it.copy(loadingConversation = true) }
         scope.launch {
             try {
-                generationJob?.cancelAndJoin()
+                stopGenerationAndJoin()
                 if (persistedRecord != null) persistNow()
                 val loaded = conversationRepository?.open(conversationId) ?: return@launch
                 epoch++
@@ -283,6 +290,47 @@ class ConversationSession(
         }
     }
 
+    private suspend fun <T> withGeneration(browserId: String? = null, stream: Boolean = false, block: suspend () -> T): T = coroutineScope {
+        check(generationJob == null)
+        generationJob = currentCoroutineContext().job
+        browserGenerationId = browserId
+        _uiState.update { state ->
+            if (browserId == null) state.copy(generationPhase = GenerationPhase.ACTIVE, message = null)
+            else state.copy(generationPhase = GenerationPhase.ACTIVE, browserOperationRunning = true,
+                browserGeneration = buildJsonObject {
+                    put("id", browserId); put("text", ""); put("stream", stream); put("status", "running")
+                })
+        }
+        try {
+            currentCoroutineContext().ensureActive()
+            block()
+        } finally {
+            generationJob = null
+            browserGenerationId = null
+            _uiState.update { it.copy(generationPhase = GenerationPhase.IDLE, browserOperationRunning = false) }
+        }
+    }
+
+    private fun launchChatOperation(generates: Boolean = true, block: suspend () -> Unit) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            suspend fun execute() {
+                try {
+                    block()
+                } catch (cancelled: CancellationException) {
+                    if (storageFailure == null) abortBeforeStreaming("已停止生成")
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (storageFailure == null) abortBeforeStreaming(error.userMessage())
+                }
+            }
+            if (generates) withGeneration { execute() }
+            else {
+                _uiState.update { it.copy(editingMessage = true, message = null) }
+                try { execute() } finally { _uiState.update { it.copy(editingMessage = false) } }
+            }
+        }
+    }
+
     fun send() {
         val state = _uiState.value
         val connection = state.selectedConnection
@@ -293,70 +341,62 @@ class ConversationSession(
         }
         val inputText = state.input
         val capturedPreset = presetSource.captureActive()
-        _uiState.update { it.copy(running = true, message = null) }
-        scope.launch {
-            try {
-                val generationId = idGenerator()
-                record = mvuRuntime.initialize(record, capturedPreset, compiler)
-                val historyBefore = record.promptMessages()
-                val runtimeBeforeInput = record.runtimeState
-                val projected = compiler.projectUserInput(
-                    text = inputText,
+        launchChatOperation {
+            val generationId = idGenerator()
+            record = mvuRuntime.initialize(record, capturedPreset, compiler)
+            val historyBefore = record.promptMessages()
+            val runtimeBeforeInput = record.runtimeState
+            val projected = compiler.projectUserInput(
+                text = inputText,
+                character = record.character,
+                persona = record.persona,
+                preset = capturedPreset,
+                runtimeState = record.runtimeState,
+                history = historyBefore,
+                conversationId = record.id,
+                generationId = generationId,
+                modelId = connection.selectedModel,
+            ) as TextExpansionResult.Success
+            val userMessage = ConversationMessage(
+                id = idGenerator(),
+                role = MessageRole.USER,
+                content = projected.text,
+                sourceText = inputText,
+                authorName = record.persona.name,
+                createdAtEpochMillis = now(),
+            )
+            val displayed = withContext(projectionDispatcher) {
+                compiler.projectDisplayText(
+                    text = userMessage.content,
+                    role = MessageRole.USER,
                     character = record.character,
                     persona = record.persona,
                     preset = capturedPreset,
-                    runtimeState = record.runtimeState,
+                    runtimeState = projected.runtimeState,
                     history = historyBefore,
                     conversationId = record.id,
                     generationId = generationId,
                     modelId = connection.selectedModel,
                 ) as TextExpansionResult.Success
-                val userMessage = ConversationMessage(
-                    id = idGenerator(),
-                    role = MessageRole.USER,
-                    content = projected.text,
-                    sourceText = inputText,
-                    authorName = record.persona.name,
-                    createdAtEpochMillis = now(),
-                )
-                val displayed = withContext(projectionDispatcher) {
-                    compiler.projectDisplayText(
-                        text = userMessage.content,
-                        role = MessageRole.USER,
-                        character = record.character,
-                        persona = record.persona,
-                        preset = capturedPreset,
-                        runtimeState = projected.runtimeState,
-                        history = historyBefore,
-                        conversationId = record.id,
-                        generationId = generationId,
-                        modelId = connection.selectedModel,
-                    ) as TextExpansionResult.Success
-                }
-                displayCache[userMessage.id] = displayed.text
-                val userTurn = ConversationTurn(
-                    id = idGenerator(),
-                    role = MessageRole.USER,
-                    variants = listOf(
-                        MessageVariant(
-                            id = idGenerator(),
-                            message = userMessage,
-                            runtimeStateBefore = runtimeBeforeInput,
-                            projectionRuntimeStateBefore = runtimeBeforeInput,
-                            runtimeStateAfter = projected.runtimeState,
-                        ),
-                    ),
-                )
-                record = record.copy(turns = record.turns + userTurn, runtimeState = projected.runtimeState)
-                syncRecord(input = "", message = null, retryAvailable = false, running = true)
-                persistNow()
-                generate(connection, generationId, appendAssistantTurn = true, preset = capturedPreset)
-            } catch (cancelled: CancellationException) {
-                abortBeforeStreaming("已停止生成")
-                throw cancelled
-            } catch (error: Exception) {
-                abortBeforeStreaming(error.userMessage())
             }
+            displayCache[userMessage.id] = displayed.text
+            val userTurn = ConversationTurn(
+                id = idGenerator(),
+                role = MessageRole.USER,
+                variants = listOf(
+                    MessageVariant(
+                        id = idGenerator(),
+                        message = userMessage,
+                        runtimeStateBefore = runtimeBeforeInput,
+                        projectionRuntimeStateBefore = runtimeBeforeInput,
+                        runtimeStateAfter = projected.runtimeState,
+                    ),
+                ),
+            )
+            record = record.copy(turns = record.turns + userTurn, runtimeState = projected.runtimeState)
+            syncRecord(input = "", message = null, retryAvailable = false)
+            withContext(NonCancellable) { persistNow() }
+            generate(connection, generationId, appendAssistantTurn = true, preset = capturedPreset)
         }
     }
 
@@ -365,16 +405,8 @@ class ConversationSession(
         val connection = state.selectedConnection ?: return
         if (state.busy || !state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER) return
         val capturedPreset = presetSource.captureActive()
-        _uiState.update { it.copy(running = true, message = null) }
-        scope.launch {
-            try {
-                generate(connection, idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
-            } catch (cancelled: CancellationException) {
-                abortBeforeStreaming("已停止生成")
-                throw cancelled
-            } catch (error: Exception) {
-                abortBeforeStreaming(error.userMessage())
-            }
+        launchChatOperation {
+            generate(connection, idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
         }
     }
 
@@ -384,16 +416,8 @@ class ConversationSession(
         val last = record.turns.lastOrNull() ?: return
         if (state.busy || last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER) return
         val capturedPreset = presetSource.captureActive()
-        _uiState.update { it.copy(running = true, message = null) }
-        scope.launch {
-            try {
-                generate(connection, idGenerator(), appendAssistantTurn = false, preset = capturedPreset)
-            } catch (cancelled: CancellationException) {
-                abortBeforeStreaming("已停止生成")
-                throw cancelled
-            } catch (error: Exception) {
-                abortBeforeStreaming(error.userMessage())
-            }
+        launchChatOperation {
+            generate(connection, idGenerator(), appendAssistantTurn = false, preset = capturedPreset)
         }
     }
 
@@ -408,185 +432,176 @@ class ConversationSession(
         val capturedPreset = presetSource.captureActive()
         val connection = state.selectedConnection
         val shouldGenerate = mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection != null
-        _uiState.update { it.copy(running = true, message = null) }
-        scope.launch {
-            try {
-                val generationId = idGenerator()
-                val historyBefore = record.turns.take(turnIndex).map { it.selected.message }
-                val runtimeBefore = selected.runtimeStateBefore
-                    ?: record.turns.getOrNull(turnIndex - 1)?.selected?.nativeHead()
-                    ?: ConversationRuntimeState()
-                val modelId = connection?.selectedModel ?: selected.model.orEmpty()
-                val editedVariant = when (turn.role) {
-                    MessageRole.USER -> {
-                        val projected = compiler.projectUserInput(
-                            text = sourceText,
-                            character = record.character,
-                            persona = record.persona,
-                            preset = capturedPreset,
-                            runtimeState = runtimeBefore,
-                            history = historyBefore,
-                            conversationId = record.id,
-                            generationId = generationId,
-                            modelId = modelId,
-                        ) as TextExpansionResult.Success
-                        if (mode == MessageEditMode.TEXT_ONLY) {
-                            selected.copy(
-                                message = selected.message.copy(content = projected.text, sourceText = sourceText),
-                                edited = true,
-                            )
-                        } else {
-                            selected.copy(
-                                message = selected.message.copy(
-                                    content = projected.text,
-                                    sourceText = sourceText,
-                                    reasoning = emptyList(),
-                                    adapterId = null,
-                                ),
-                                status = PersistedMessageStatus.COMPLETE,
-                                presetId = null,
-                                presetName = null,
-                                presetContentSha256 = null,
-                                adapterId = null,
-                                model = null,
-                                finishReason = null,
-                                inputTokens = null,
-                                outputTokens = null,
-                                totalTokens = null,
-                                cachedTokens = null,
-                                reasoningTokens = null,
-                                generationPlan = null,
-                                edited = true,
-                                runtimeStateBefore = runtimeBefore,
-                                projectionRuntimeStateBefore = runtimeBefore,
-                                runtimeStateAfter = projected.runtimeState,
-                                nativeOperations = emptyList(),
-                                browserHead = null,
-                                browserVariables = JsonObject(emptyMap()),
-                                browserOwnVariables = false,
-                            )
-                        }
-                    }
-                    MessageRole.ASSISTANT -> {
-                        val projectionRuntime = selected.projectionRuntimeStateBefore
-                            ?: selected.generationPlan?.runtimeState
-                            ?: runtimeBefore
-                        fun project(text: String) = compiler.projectAssistantOutput(
-                            rawText = text,
-                            rawReasoning = emptyList(),
-                            character = record.character,
-                            persona = record.persona,
-                            preset = capturedPreset,
-                            runtimeState = projectionRuntime,
-                            history = historyBefore,
-                            conversationId = record.id,
-                            generationId = generationId,
-                            modelId = modelId,
+        launchChatOperation(generates = shouldGenerate) {
+            val generationId = idGenerator()
+            val historyBefore = record.turns.take(turnIndex).map { it.selected.message }
+            val runtimeBefore = selected.runtimeStateBefore
+                ?: record.turns.getOrNull(turnIndex - 1)?.selected?.nativeHead()
+                ?: ConversationRuntimeState()
+            val modelId = connection?.selectedModel ?: selected.model.orEmpty()
+            val editedVariant = when (turn.role) {
+                MessageRole.USER -> {
+                    val projected = compiler.projectUserInput(
+                        text = sourceText,
+                        character = record.character,
+                        persona = record.persona,
+                        preset = capturedPreset,
+                        runtimeState = runtimeBefore,
+                        history = historyBefore,
+                        conversationId = record.id,
+                        generationId = generationId,
+                        modelId = modelId,
+                    ) as TextExpansionResult.Success
+                    if (mode == MessageEditMode.TEXT_ONLY) {
+                        selected.copy(
+                            message = selected.message.copy(content = projected.text, sourceText = sourceText),
+                            edited = true,
                         )
-                        var projected = project(sourceText)
-                        var projectedRuntime = projected.runtimeState
-                        if (mode == MessageEditMode.RESTART) {
-                            applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)?.let { result ->
-                                projected = project(result.processedText)
-                                projectedRuntime = result.applyTo(projected.runtimeState)
-                            }
-                        }
-                        if (mode == MessageEditMode.TEXT_ONLY) {
-                            selected.copy(
-                                message = selected.message.copy(
-                                    content = projected.storageText,
-                                    sourceText = sourceText,
-                                ),
-                                edited = true,
-                            )
-                        } else {
-                            selected.copy(
-                                message = selected.message.copy(
-                                    content = projected.storageText,
-                                    sourceText = sourceText,
-                                    stateConfirmation = null,
-                                    reasoning = emptyList(),
-                                    adapterId = null,
-                                ),
-                                status = PersistedMessageStatus.COMPLETE,
-                                presetId = capturedPreset.id,
-                                presetName = capturedPreset.name,
-                                presetContentSha256 = capturedPreset.contentSha256,
+                    } else {
+                        selected.copy(
+                            message = selected.message.copy(
+                                content = projected.text,
+                                sourceText = sourceText,
+                                reasoning = emptyList(),
                                 adapterId = null,
-                                model = null,
-                                finishReason = null,
-                                inputTokens = null,
-                                outputTokens = null,
-                                totalTokens = null,
-                                cachedTokens = null,
-                                reasoningTokens = null,
-                                generationPlan = null,
-                                edited = true,
-                                runtimeStateBefore = runtimeBefore,
-                                projectionRuntimeStateBefore = projectionRuntime,
-                                runtimeStateAfter = projectedRuntime,
-                                playerChoiceCommits = emptyList(),
-                                nativeOperations = emptyList(),
-                                browserHead = null,
-                                browserVariables = JsonObject(emptyMap()),
-                                browserOwnVariables = false,
-                            )
+                            ),
+                            status = PersistedMessageStatus.COMPLETE,
+                            presetId = null,
+                            presetName = null,
+                            presetContentSha256 = null,
+                            adapterId = null,
+                            model = null,
+                            finishReason = null,
+                            inputTokens = null,
+                            outputTokens = null,
+                            totalTokens = null,
+                            cachedTokens = null,
+                            reasoningTokens = null,
+                            generationPlan = null,
+                            edited = true,
+                            runtimeStateBefore = runtimeBefore,
+                            projectionRuntimeStateBefore = runtimeBefore,
+                            runtimeStateAfter = projected.runtimeState,
+                            nativeOperations = emptyList(),
+                            browserHead = null,
+                            browserVariables = JsonObject(emptyMap()),
+                            browserOwnVariables = false,
+                        )
+                    }
+                }
+                MessageRole.ASSISTANT -> {
+                    val projectionRuntime = selected.projectionRuntimeStateBefore
+                        ?: selected.generationPlan?.runtimeState
+                        ?: runtimeBefore
+                    fun project(text: String) = compiler.projectAssistantOutput(
+                        rawText = text,
+                        rawReasoning = emptyList(),
+                        character = record.character,
+                        persona = record.persona,
+                        preset = capturedPreset,
+                        runtimeState = projectionRuntime,
+                        history = historyBefore,
+                        conversationId = record.id,
+                        generationId = generationId,
+                        modelId = modelId,
+                    )
+                    var projected = project(sourceText)
+                    var projectedRuntime = projected.runtimeState
+                    if (mode == MessageEditMode.RESTART) {
+                        applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)?.let { result ->
+                            projected = project(result.processedText)
+                            projectedRuntime = result.applyTo(projected.runtimeState)
                         }
                     }
-                    MessageRole.SYSTEM -> return@launch
-                }
-                val editedTurn = if (mode == MessageEditMode.TEXT_ONLY) {
-                    turn.copy(
-                        variants = turn.variants.mapIndexed { index, variant ->
-                            if (index == turn.selectedVariantIndex) editedVariant else variant
-                        },
-                    )
-                } else {
-                    turn.copy(variants = listOf(editedVariant), selectedVariantIndex = 0)
-                }
-                record = if (mode == MessageEditMode.TEXT_ONLY) {
-                    record.copy(
-                        turns = record.turns.mapIndexed { index, item -> if (index == turnIndex) editedTurn else item },
-                    )
-                } else {
-                    record.copy(
-                        turns = record.turns.take(turnIndex) + editedTurn,
-                        runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore,
-                    )
-                }
-                val retainedMessageIds = record.turns
-                    .flatMap { item -> item.variants.map { it.message.id } }
-                    .toSet()
-                displayCache.keys.retainAll(retainedMessageIds)
-                displayReasoningCache.keys.retainAll(retainedMessageIds)
-                displayCache.remove(editedVariant.message.id)
-                displayReasoningCache.remove(editedVariant.message.id)
-                val notice = if (mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection == null) {
-                    "修改已保存；请先配置可用模型"
-                } else null
-                try { persistNow() } catch (error: Exception) {
-                    record = conversationRepository?.get(record.id) ?: record
-                    throw error
-                }
-                syncRecord(
-                    running = shouldGenerate,
-                    retryAvailable = if (mode == MessageEditMode.TEXT_ONLY) {
-                        state.retryAvailable
+                    if (mode == MessageEditMode.TEXT_ONLY) {
+                        selected.copy(
+                            message = selected.message.copy(
+                                content = projected.storageText,
+                                sourceText = sourceText,
+                            ),
+                            edited = true,
+                        )
                     } else {
-                        turn.role == MessageRole.USER && !shouldGenerate
-                    },
-                    message = notice,
-                    trace = if (mode == MessageEditMode.TEXT_ONLY) state.lastTrace else null,
-                )
-                refreshDisplayCache(capturedPreset)
-                if (shouldGenerate) {
-                    generate(checkNotNull(connection), idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
+                        selected.copy(
+                            message = selected.message.copy(
+                                content = projected.storageText,
+                                sourceText = sourceText,
+                                stateConfirmation = null,
+                                reasoning = emptyList(),
+                                adapterId = null,
+                            ),
+                            status = PersistedMessageStatus.COMPLETE,
+                            presetId = capturedPreset.id,
+                            presetName = capturedPreset.name,
+                            presetContentSha256 = capturedPreset.contentSha256,
+                            adapterId = null,
+                            model = null,
+                            finishReason = null,
+                            inputTokens = null,
+                            outputTokens = null,
+                            totalTokens = null,
+                            cachedTokens = null,
+                            reasoningTokens = null,
+                            generationPlan = null,
+                            edited = true,
+                            runtimeStateBefore = runtimeBefore,
+                            projectionRuntimeStateBefore = projectionRuntime,
+                            runtimeStateAfter = projectedRuntime,
+                            playerChoiceCommits = emptyList(),
+                            nativeOperations = emptyList(),
+                            browserHead = null,
+                            browserVariables = JsonObject(emptyMap()),
+                            browserOwnVariables = false,
+                        )
+                    }
                 }
-            } catch (cancelled: CancellationException) {
-                abortBeforeStreaming("已停止生成")
-                throw cancelled
-            } catch (error: Exception) {
-                abortBeforeStreaming(error.userMessage())
+                MessageRole.SYSTEM -> return@launchChatOperation
+            }
+            val editedTurn = if (mode == MessageEditMode.TEXT_ONLY) {
+                turn.copy(
+                    variants = turn.variants.mapIndexed { index, variant ->
+                        if (index == turn.selectedVariantIndex) editedVariant else variant
+                    },
+                )
+            } else {
+                turn.copy(variants = listOf(editedVariant), selectedVariantIndex = 0)
+            }
+            record = if (mode == MessageEditMode.TEXT_ONLY) {
+                record.copy(
+                    turns = record.turns.mapIndexed { index, item -> if (index == turnIndex) editedTurn else item },
+                )
+            } else {
+                record.copy(
+                    turns = record.turns.take(turnIndex) + editedTurn,
+                    runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore,
+                )
+            }
+            val retainedMessageIds = record.turns
+                .flatMap { item -> item.variants.map { it.message.id } }
+                .toSet()
+            displayCache.keys.retainAll(retainedMessageIds)
+            displayReasoningCache.keys.retainAll(retainedMessageIds)
+            displayCache.remove(editedVariant.message.id)
+            displayReasoningCache.remove(editedVariant.message.id)
+            val notice = if (mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection == null) {
+                "修改已保存；请先配置可用模型"
+            } else null
+            try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
+                record = conversationRepository?.get(record.id) ?: record
+                throw error
+            }
+            syncRecord(
+                retryAvailable = if (mode == MessageEditMode.TEXT_ONLY) {
+                    state.retryAvailable
+                } else {
+                    turn.role == MessageRole.USER && !shouldGenerate
+                },
+                message = notice,
+                trace = if (mode == MessageEditMode.TEXT_ONLY) state.lastTrace else null,
+            )
+            refreshDisplayCache(capturedPreset)
+            if (shouldGenerate) {
+                generate(checkNotNull(connection), idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
             }
         }
     }
@@ -596,8 +611,16 @@ class ConversationSession(
     fun nextVariant() = selectVariant(1)
 
     fun cancel() {
-        browserGenerationJob?.cancel()
-        generationJob?.cancel()
+        val job = generationJob ?: return
+        if (_uiState.value.generationPhase != GenerationPhase.ACTIVE) return
+        _uiState.update { it.copy(generationPhase = GenerationPhase.STOPPING) }
+        job.cancel()
+    }
+
+    private suspend fun stopGenerationAndJoin() {
+        val job = generationJob ?: return
+        cancel()
+        job.join()
     }
 
     private var browserRegexRefreshJob: Job? = null
@@ -620,8 +643,7 @@ class ConversationSession(
             BrowserConversation.authorize(record, actor, BrowserConversation.revision(record))
             require(args.keys.all { it == "id" }) { "未支持的停止参数" }
             val requested = args["id"]?.jsonPrimitive?.contentOrNull
-            if (requested == null || requested == browserGenerationId) browserGenerationJob?.cancel()
-            if (requested == null) generationJob?.cancel()
+            if (requested == null || requested == browserGenerationId) cancel()
             return buildJsonObject { put("snapshot", BrowserConversation.snapshot(record)); put("value", JsonNull) }
         }
         return browserHostMutex.withLock {
@@ -633,66 +655,91 @@ class ConversationSession(
                 send()
                 return@withLock buildJsonObject { put("snapshot", BrowserConversation.snapshot(record)); put("value", JsonNull) }
             }
-            _uiState.update { it.copy(browserOperationRunning = true) }
-            var result: JsonElement = JsonNull
-            var regexChanged = false
-            try {
-                try { persistNow() } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    record = conversationRepository?.get(record.id) ?: record
-                    throw BrowserPersistenceException(error)
-                }
-                BrowserConversation.authorize(record, actor, revision)
-                when (method) {
-                    "resources.reprepare" -> {
-                        require(actor.id == "native-resource-preparation" && args.isEmpty()) { "资源更新只能从原生界面操作" }
-                        result = JsonPrimitive(requireNotNull(browserEnvironment).resources.reprepare(record.id, record.character.sourceSha256))
-                    }
-                    "worldbook.entries.read" -> result = BrowserConversation.readWorldBookEntries(record, args)
-                    "generation.generate", "generation.raw" -> {
-                        browserGenerationJob = currentCoroutineContext()[Job]
-                        browserGenerationId = args["generation_id"]?.jsonPrimitive?.contentOrNull ?: idGenerator()
-                        _uiState.update { it.copy(browserGenerating = true, browserGeneration = buildJsonObject { put("id", browserGenerationId); put("text", ""); put("stream", args["should_stream"]?.jsonPrimitive?.booleanOrNull == true); put("status", "running") }) }
-                        result = JsonPrimitive(generateBrowserText(method, args))
-                        _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("status" to JsonPrimitive("complete")))) }
-                    }
-                    else -> {
-                        val proposed = BrowserConversation.apply(record, actor, method, args)
-                        regexChanged = method == "regex.replace" && proposed.character.regexScripts != record.character.regexScripts
-                        withContext(NonCancellable) {
-                            record = try { commit(proposed) }
-                            catch (error: Exception) { throw BrowserPersistenceException(error) }
-                            if (method != "regex.replace" && (!method.startsWith("messages.") || args["refresh"]?.jsonPrimitive?.content != "none")) refreshDisplayCache()
-                            if (regexChanged) scheduleBrowserRegexRefresh()
-                            syncRecord(input = record.draft)
+            val result = try {
+                if (method == "generation.generate" || method == "generation.raw") {
+                    val id = args["generation_id"]?.jsonPrimitive?.contentOrNull ?: idGenerator()
+                    withGeneration(id, args["should_stream"]?.jsonPrimitive?.booleanOrNull == true) {
+                        try {
+                            executeBrowserCommand(actor, revision, method, args)
+                        } catch (cancelled: CancellationException) {
+                            setBrowserGenerationStatus("cancelled")
+                            throw cancelled
+                        } catch (error: Exception) {
+                            setBrowserGenerationStatus("error")
+                            throw error
                         }
+                    }
+                } else {
+                    _uiState.update { it.copy(browserOperationRunning = true) }
+                    try {
+                        executeBrowserCommand(actor, revision, method, args)
+                    } finally {
+                        _uiState.update { it.copy(browserOperationRunning = false) }
                     }
                 }
             } finally {
-                browserGenerationJob = null; browserGenerationId = null
-                _uiState.update { it.copy(browserOperationRunning = false, browserGenerating = false) }
                 syncRecord(input = record.draft)
                 pendingBrowserDraft?.let { draft -> pendingBrowserDraft = null; updateInput(draft) }
             }
-            buildJsonObject {
-                val snapshot = BrowserConversation.snapshot(record)
-                val display = _uiState.value.messages.associateBy { it.message.id }
-                put("snapshot", JsonObject(snapshot + ("messages" to JsonArray(snapshot.getValue("messages").jsonArray.map { raw ->
-                    val message = raw.jsonObject
-                    val projected = display[message.getValue("id").jsonPrimitive.content]
-                    JsonObject(message + mapOf("display" to JsonPrimitive(projected?.displayContent ?: message.getValue("message").jsonPrimitive.content),
-                        "reasoning" to JsonArray(projected?.displayReasoning.orEmpty().map(::JsonPrimitive))))
-                }))))
-                put("value", result)
-                if (method.startsWith("messages.")) putJsonObject("refresh") {
-                    put("mode", args["refresh"] ?: JsonPrimitive("affected"))
-                    put("messageIds", if (method == "messages.set") JsonArray(args.getValue("messages").jsonArray.map {
-                        val index = it.jsonObject.getValue("message_id").jsonPrimitive.int
-                        JsonPrimitive(if (index < 0) record.turns.size + index else index)
-                    }) else JsonArray(emptyList()))
+            browserCommandResult(method, args, result)
+        }
+    }
+
+    private suspend fun executeBrowserCommand(actor: BrowserActor, revision: String, method: String, args: JsonObject): JsonElement {
+        var result: JsonElement = JsonNull
+        try { persistNow() } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            record = conversationRepository?.get(record.id) ?: record
+            throw BrowserPersistenceException(error)
+        }
+        currentCoroutineContext().ensureActive()
+        BrowserConversation.authorize(record, actor, revision)
+        when (method) {
+            "resources.reprepare" -> {
+                require(actor.id == "native-resource-preparation" && args.isEmpty()) { "资源更新只能从原生界面操作" }
+                result = JsonPrimitive(requireNotNull(browserEnvironment).resources.reprepare(record.id, record.character.sourceSha256))
+            }
+            "worldbook.entries.read" -> result = BrowserConversation.readWorldBookEntries(record, args)
+            "generation.generate", "generation.raw" -> {
+                result = JsonPrimitive(generateBrowserText(method, args))
+                setBrowserGenerationStatus("complete")
+            }
+            else -> {
+                val proposed = BrowserConversation.apply(record, actor, method, args)
+                val regexChanged = method == "regex.replace" && proposed.character.regexScripts != record.character.regexScripts
+                withContext(NonCancellable) {
+                    record = try { commit(proposed) }
+                    catch (error: Exception) { throw BrowserPersistenceException(error) }
+                    if (method != "regex.replace" && (!method.startsWith("messages.") || args["refresh"]?.jsonPrimitive?.content != "none")) refreshDisplayCache()
+                    if (regexChanged) scheduleBrowserRegexRefresh()
+                    syncRecord(input = record.draft)
                 }
             }
         }
+        return result
+    }
+
+    private fun browserCommandResult(method: String, args: JsonObject, result: JsonElement): JsonObject = buildJsonObject {
+        val snapshot = BrowserConversation.snapshot(record)
+        val display = _uiState.value.messages.associateBy { it.message.id }
+        put("snapshot", JsonObject(snapshot + ("messages" to JsonArray(snapshot.getValue("messages").jsonArray.map { raw ->
+            val message = raw.jsonObject
+            val projected = display[message.getValue("id").jsonPrimitive.content]
+            JsonObject(message + mapOf("display" to JsonPrimitive(projected?.displayContent ?: message.getValue("message").jsonPrimitive.content),
+                "reasoning" to JsonArray(projected?.displayReasoning.orEmpty().map(::JsonPrimitive))))
+        }))))
+        put("value", result)
+        if (method.startsWith("messages.")) putJsonObject("refresh") {
+            put("mode", args["refresh"] ?: JsonPrimitive("affected"))
+            put("messageIds", if (method == "messages.set") JsonArray(args.getValue("messages").jsonArray.map {
+                val index = it.jsonObject.getValue("message_id").jsonPrimitive.int
+                JsonPrimitive(if (index < 0) record.turns.size + index else index)
+            }) else JsonArray(emptyList()))
+        }
+    }
+
+    private fun setBrowserGenerationStatus(status: String) {
+        _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("status" to JsonPrimitive(status)))) }
     }
 
     private suspend fun generateBrowserText(method: String, args: JsonObject): String {
@@ -728,13 +775,14 @@ class ConversationSession(
             require(count == null || count >= 0) { "max_chat_history 必须为非负整数" }
             var history = record.promptMessages().let { if (count == null) it else it.takeLast(count) }
             if (input.isNotBlank()) history = history + ConversationMessage(idGenerator(), MessageRole.USER, input, record.persona.name)
-            val compiled = ejsRuntime.compile(compiler, globalBooks.apply(NormalGenerationInput(
+            val compileInput = globalBooks.apply(NormalGenerationInput(
                 character = record.character, persona = record.persona, history = history, preset = preset,
                 worldBookState = record.worldBookState,
                 runtimeState = record.runtimeState, conversationId = record.id, generationId = browserGenerationId.orEmpty(),
                 modelId = connection.selectedModel, modelContextTokens = limits.contextTokens?.toIntSafe(),
                 modelOutputTokens = limits.outputTokens?.toIntSafe(),
-            )), mutableMapOf())
+            ))
+            val compiled = withContext(projectionDispatcher) { ejsRuntime.compile(compiler, compileInput, mutableMapOf()) }
             when (compiled) {
                 is CompilationResult.Success -> compiled.plan
                 is CompilationResult.Failure -> error(compiled.diagnostics.firstOrNull { it.severity == DiagnosticSeverity.ERROR }?.message ?: "辅助生成编排失败")
@@ -742,7 +790,8 @@ class ConversationSession(
         }
         val text = StringBuilder()
         var finished = false
-        val budget = generator.validateTokens(connection, plan)
+        val budget = withContext(projectionDispatcher) { generator.validateTokens(connection, plan) }
+        currentCoroutineContext().ensureActive()
         val declaredContext = plan.declaredContextTokens
         require(declaredContext == null || (budget != null && budget.inputTokens.toLong() + plan.maxOutputTokens <= declaredContext)) { "辅助生成超过上下文预算" }
         val prepared = BrowserConversation.withRuntime(record, plan.runtimeState)
@@ -751,6 +800,7 @@ class ConversationSession(
             catch (error: Exception) { throw BrowserPersistenceException(error) }
             syncRecord()
         }
+        currentCoroutineContext().ensureActive()
         generator.stream(connection, plan).collect { event -> when (event) {
             is GenerationEvent.TextDelta -> { require(text.length + event.text.length <= 2 * 1024 * 1024) { "生成正文超过限制" }; text.append(event.text); _uiState.update { it.copy(browserGeneration = JsonObject(it.browserGeneration + ("text" to JsonPrimitive(text.toString())))) } }
             is GenerationEvent.Finished -> finished = event.reason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")
@@ -772,12 +822,12 @@ class ConversationSession(
     }
 
     fun resetConversation() {
-        if (_uiState.value.running && generationJob == null) return
+        if (_uiState.value.editingMessage) return
         if (_uiState.value.browserOperationRunning || _uiState.value.loadingConversation) return
         _uiState.update { it.copy(loadingConversation = true) }
         scope.launch {
             try {
-                generationJob?.cancelAndJoin()
+                stopGenerationAndJoin()
                 persistenceJob?.cancelAndJoin()
                 val previous = record
                 val reset = fallbackRecord(
@@ -833,6 +883,7 @@ class ConversationSession(
         appendAssistantTurn: Boolean,
         preset: PresetAsset,
     ) {
+        currentCoroutineContext().ensureActive()
         val globalBooks = globalWorldBooks()
         record = mvuRuntime.initialize(record, preset, compiler)
         val evaluationInstant = Instant.ofEpochMilli(now())
@@ -845,6 +896,7 @@ class ConversationSession(
         }
         mvuRuntime.validateCheckpoint(record.character, runtimeBeforeGeneration)
         val modelTokenLimits = connection.effectiveTokenLimits()
+        val priorRuntime = record.runtimeState
         val lastVisibleTurn = record.turns.lastOrNull()
         val baseInput = globalBooks.apply(NormalGenerationInput(
             character = record.character,
@@ -873,7 +925,9 @@ class ConversationSession(
         var plan: GenerationPlan? = null
         val ejsCache = mutableMapOf<EjsTemplateRequest, String>()
         for (attempt in 0..MAX_PROVIDER_RECLIPS) {
-            val compilation = ejsRuntime.compile(compiler, baseInput.copy(maxInputTokens = localInputLimit), ejsCache)
+            val compilation = withContext(projectionDispatcher) {
+                ejsRuntime.compile(compiler, baseInput.copy(maxInputTokens = localInputLimit), ejsCache)
+            }
             if (compilation is CompilationResult.Failure) {
                 showCompilationFailure(
                     compilation.diagnostics + validationDiagnostics,
@@ -884,7 +938,9 @@ class ConversationSession(
             }
             val candidate = (compilation as CompilationResult.Success).plan
             val validation = try {
-                generator.validateTokens(connection, candidate)
+                withContext(projectionDispatcher) { generator.validateTokens(connection, candidate) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 val diagnostic = CompilationDiagnostic(
                     DiagnosticSeverity.ERROR,
@@ -894,6 +950,7 @@ class ConversationSession(
                 showCompilationFailure(candidate.diagnostics + validationDiagnostics + diagnostic, candidate.trace + validationTrace, appendAssistantTurn)
                 return
             }
+            currentCoroutineContext().ensureActive()
             val accounting = candidate.tokenAccounting
             if (validation == null || accounting == null) {
                 plan = candidate
@@ -936,6 +993,7 @@ class ConversationSession(
                 accounting.inputTokens - overflow - PROVIDER_RECLIP_SAFETY_TOKENS
                 ).coerceAtLeast(0).toInt()
         }
+        currentCoroutineContext().ensureActive()
         val finalPlan = checkNotNull(plan)
         val adapterId = connection.protocol.name
         val assistantMessage = ConversationMessage(
@@ -983,7 +1041,6 @@ class ConversationSession(
         displayCache[assistantMessage.id] = ""
         displayReasoningCache[assistantMessage.id] = emptyList()
         syncRecord(
-            running = true,
             retryAvailable = false,
             message = null,
             trace = GenerationTraceState(
@@ -992,11 +1049,10 @@ class ConversationSession(
                 compileTrace = finalPlan.trace,
             ),
         )
-        persistNow()
-
         val activeJournal = StreamJournal(generationId, variant.id)
         try {
             withContext(NonCancellable) {
+                persistNow()
                 conversationRepository?.startStream(generationId, record, variant.id,
                     StreamContext(generationId, preset, connection.selectedModel, evaluationInstant.toString(), evaluationZoneId.id))
                 journal = activeJournal
@@ -1011,72 +1067,73 @@ class ConversationSession(
         streamFinishSeen = false
         streamFinishReason = null
         lastPreviewAt = 0
-        generationJob = scope.launch {
-            var replyCompleted = false
-            suspend fun finish(cancelled: Boolean? = null, error: Exception? = null) {
+        val priorSelection = if (appendAssistantTurn) null else lastVisibleTurn?.selectedVariantIndex
+        suspend fun finish(cancelled: Boolean? = null, error: Exception? = null) {
+            previewJob?.cancelAndJoin()
+            previewJob = null
+            persistNow() // Preserve raw input before executing terminal projection or MVU.
+            deferPublication = true
+            completedMvuResult = null
+            reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId)
+            if (cancelled == null) {
+                if (record.character.mvuProgram != null) {
+                    check(streamFinishSeen && streamFinishReason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")) {
+                        "回复未完整结束，MVU 变量未更新"
+                    }
+                }
+                completedMvuResult = applyMvuUpdate(rawAssistant, pendingAssistantRuntime ?: record.runtimeState)
+                if (completedMvuResult != null) reprojectAssistantOutput(variant.id, generationId, connection, preset,
+                    evaluationInstant, evaluationZoneId)
+                finishIfStreamEnded(variant.id, priorSelection)
+                updateVariant(variant.id) { it.copy(finishReason = streamFinishReason) }
+            } else finishFailure(variant.id, cancelled, error, priorSelection)
+            if (priorSelection != null && record.findVariant(variant.id) == null) {
+                record = record.copy(runtimeState = priorRuntime)
+            }
+            record = commit(record, finishStream = generationId)
+            journal = null
+            deferPublication = false
+            syncRecord()
+        }
+        try {
+            currentCoroutineContext().ensureActive()
+            generator.stream(connection, finalPlan).collect { event ->
+                activeJournal.receive(event)
+                applyEvent(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, event)
+                schedulePersist()
+                if (activeJournal.pendingChars >= 64 * 1024 || activeJournal.pending.size >= 256) persistNow()
+            }
+            currentCoroutineContext().ensureActive()
+            _uiState.update { it.copy(generationPhase = GenerationPhase.FINISHING) }
+            withContext(NonCancellable) { finish() }
+        } catch (cancelled: CancellationException) {
+            if (storageFailure == null) withContext(NonCancellable) {
+                try { finish(cancelled = true) } catch (error: Exception) { reportStorageFailure(error) }
+            }
+        } catch (error: Exception) {
+            _uiState.update { it.copy(generationPhase = GenerationPhase.FINISHING) }
+            if (storageFailure == null) {
+                try { withContext(NonCancellable) { finish(cancelled = false, error = error) } } catch (failure: Exception) { reportStorageFailure(failure) }
+            }
+        } finally {
+            deferPublication = false
+            withContext(NonCancellable) {
                 previewJob?.cancelAndJoin()
                 previewJob = null
-                persistNow() // Preserve raw input before executing terminal projection or MVU.
-                deferPublication = true
-                completedMvuResult = null
-                reprojectAssistantOutput(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId)
-                if (cancelled == null) {
-                    if (record.character.mvuProgram != null) {
-                        check(streamFinishSeen && streamFinishReason in setOf("completed", "stop", "end_turn", "STOP", "stop_sequence")) {
-                            "回复未完整结束，MVU 变量未更新"
-                        }
-                    }
-                    completedMvuResult = applyMvuUpdate(rawAssistant, pendingAssistantRuntime ?: record.runtimeState)
-                    if (completedMvuResult != null) reprojectAssistantOutput(variant.id, generationId, connection, preset,
-                        evaluationInstant, evaluationZoneId)
-                    finishIfStreamEnded(variant.id)
-                    updateVariant(variant.id) { it.copy(finishReason = streamFinishReason) }
-                } else finishFailure(variant.id, cancelled, error)
-                record = commit(record, finishStream = generationId)
-                journal = null
-                deferPublication = false
-                syncRecord()
+                if (storageFailure == null) try {
+                    persistNow()
+                    refreshDisplayCache(currentPreset)
+                } catch (error: Exception) { reportStorageFailure(error) }
             }
-            try {
-                generator.stream(connection, finalPlan).collect { event ->
-                    activeJournal.receive(event)
-                    applyEvent(variant.id, generationId, connection, preset, evaluationInstant, evaluationZoneId, event)
-                    schedulePersist()
-                    if (activeJournal.pendingChars >= 64 * 1024 || activeJournal.pending.size >= 256) persistNow()
-                }
-                finish()
-                replyCompleted = record.findVariant(variant.id)?.status == PersistedMessageStatus.COMPLETE
-            } catch (cancelled: CancellationException) {
-                if (!replyCompleted && storageFailure == null) withContext(NonCancellable) {
-                    try { finish(cancelled = true) } catch (error: Exception) { reportStorageFailure(error) }
-                }
-                throw cancelled
-            } catch (error: Exception) {
-                if (!replyCompleted && storageFailure == null) {
-                    try { finish(cancelled = false, error = error) } catch (failure: Exception) { reportStorageFailure(failure) }
-                } else if (replyCompleted) _uiState.update { it.copy(message = "正文后的保存或记忆更新失败：${error.userMessage()}") }
-            } finally {
-                deferPublication = false
-                withContext(NonCancellable) {
-                    previewJob?.cancelAndJoin()
-                    previewJob = null
-                    if (storageFailure == null) try {
-                        persistNow()
-                        refreshDisplayCache(currentPreset)
-                    } catch (error: Exception) { reportStorageFailure(error) }
-                }
-                generationJob = null
-                assistantBuffer.setLength(0)
-                rawReasoning.clear()
-                rawStateConfirmation = null
-                completedMvuResult = null
-                pendingAssistantRuntime = null
-                _uiState.update { it.copy(running = false) }
-                if (storageFailure == null) {
-                    scope.launch {
-                        delay(1000)
-                        if (!_uiState.value.busy) runCatching { conversationRepository?.collectUnusedBlobs() }
-                    }
+            assistantBuffer.setLength(0)
+            rawReasoning.clear()
+            rawStateConfirmation = null
+            completedMvuResult = null
+            pendingAssistantRuntime = null
+            if (storageFailure == null) {
+                scope.launch {
+                    delay(1000)
+                    if (!_uiState.value.busy) runCatching { conversationRepository?.collectUnusedBlobs() }
                 }
             }
         }
@@ -1274,7 +1331,7 @@ class ConversationSession(
         }
     }
 
-    private fun finishIfStreamEnded(variantId: String) {
+    private fun finishIfStreamEnded(variantId: String, priorSelection: Int?) {
         pendingPlanRuntime = null
         val variant = record.findVariant(variantId) ?: return
         if (variant.message.content.isBlank()) {
@@ -1282,7 +1339,7 @@ class ConversationSession(
                 record = record.copy(runtimeState = promptRuntime)
             }
             pendingAssistantRuntime = null
-            removeVariant(variantId)
+            removeVariant(variantId, priorSelection)
             _uiState.update { it.copy(retryAvailable = true, message = "模型没有返回正文") }
             updateTrace { copy(error = "模型没有返回正文") }
         } else {
@@ -1299,11 +1356,13 @@ class ConversationSession(
         }
     }
 
-    private fun finishFailure(variantId: String, cancelled: Boolean, error: Exception?) {
+    private fun finishFailure(variantId: String, cancelled: Boolean, error: Exception?, priorSelection: Int?) {
         pendingPlanRuntime = null
         pendingAssistantRuntime = null
         val variant = record.findVariant(variantId)
-        val hasPartial = variant?.message?.content?.isNotBlank() == true
+        val hasPartial = variant?.message?.let { message ->
+            message.content.isNotBlank() || (cancelled && (message.sourceText.isNotBlank() || message.reasoning.any { it.text.isNotBlank() }))
+        } == true
         if (hasPartial) {
             updateVariant(variantId) {
                 it.copy(
@@ -1312,10 +1371,10 @@ class ConversationSession(
                 )
             }
         } else {
-            removeVariant(variantId)
+            removeVariant(variantId, priorSelection)
         }
         val userMessage = if (cancelled) "已停止生成" else error?.userMessage().orEmpty().ifBlank { "生成失败" }
-        _uiState.update { it.copy(retryAvailable = !hasPartial, message = userMessage) }
+        _uiState.update { it.copy(retryAvailable = record.turns.lastOrNull()?.role == MessageRole.USER, message = userMessage) }
         updateTrace { copy(error = userMessage) }
     }
 
@@ -1361,12 +1420,13 @@ class ConversationSession(
         syncRecord()
     }
 
-    private fun removeVariant(id: String) {
+    private fun removeVariant(id: String, priorSelection: Int?) {
         record = record.copy(
             turns = record.turns.mapNotNull { turn ->
+                if (turn.variants.none { it.id == id }) return@mapNotNull turn
                 val variants = turn.variants.filterNot { it.id == id }
                 variants.takeIf(List<MessageVariant>::isNotEmpty)?.let {
-                    turn.copy(variants = it, selectedVariantIndex = turn.selectedVariantIndex.coerceAtMost(it.lastIndex))
+                    turn.copy(variants = it, selectedVariantIndex = priorSelection ?: turn.selectedVariantIndex.coerceAtMost(it.lastIndex))
                 }
             },
         )
@@ -1377,7 +1437,6 @@ class ConversationSession(
         // 草稿归属会话：刷新只把它读回界面，只有 updateInput 才会用输入框内容改写它，
         // 否则网页刚写入的草稿会被尚未同步的旧输入框文本覆盖。
         input: String = record.draft,
-        running: Boolean = _uiState.value.running,
         retryAvailable: Boolean = _uiState.value.retryAvailable,
         message: String? = _uiState.value.message,
         trace: GenerationTraceState? = _uiState.value.lastTrace,
@@ -1391,7 +1450,6 @@ class ConversationSession(
             activePreset = currentPreset,
             readyConnections = current.readyConnections,
             selectedConnectionId = current.selectedConnectionId,
-            running = running,
             retryAvailable = retryAvailable,
             message = message,
             lastTrace = trace,
@@ -1399,7 +1457,8 @@ class ConversationSession(
             displayReasoning = displayReasoningCache,
         ).copy(loadingConversation = current.loadingConversation,
             worldBookSaving = current.worldBookSaving, worldBookMessage = current.worldBookMessage,
-            browserOperationRunning = current.browserOperationRunning, browserGenerating = current.browserGenerating, browserGeneration = current.browserGeneration, storageFailed = storageFailure != null)
+            generationPhase = current.generationPhase, editingMessage = current.editingMessage,
+            browserOperationRunning = current.browserOperationRunning, browserGeneration = current.browserGeneration, storageFailed = storageFailure != null)
     }
 
     private fun showCompilationFailure(
@@ -1411,7 +1470,6 @@ class ConversationSession(
             it.copy(
                 message = diagnostics.firstOrNull { item -> item.severity == DiagnosticSeverity.ERROR }?.message
                     ?: "Prompt 编排失败",
-                running = false,
                 retryAvailable = retryAvailable,
                 lastTrace = GenerationTraceState(
                     compileDiagnostics = diagnostics,
@@ -1425,7 +1483,6 @@ class ConversationSession(
     private fun abortBeforeStreaming(message: String) {
         _uiState.update { state ->
             state.copy(
-                running = false,
                 retryAvailable = record.turns.lastOrNull()?.role == MessageRole.USER,
                 message = message,
             )
@@ -1591,7 +1648,7 @@ class ConversationSession(
     fun close() {
         if (closing) return
         closing = true
-        val jobs = scope.coroutineContext[Job]!!.children.toList()
+        val jobs = scope.coroutineContext[Job]!!.children.toList() + listOfNotNull(generationJob)
         jobs.forEach { it.cancel() }
         scope.launch {
             try {
@@ -1692,7 +1749,6 @@ private fun ConversationRecord.toUiState(
     activePreset: PresetAsset,
     readyConnections: List<StoredConnection> = emptyList(),
     selectedConnectionId: String? = null,
-    running: Boolean = false,
     retryAvailable: Boolean = false,
     message: String? = null,
     lastTrace: GenerationTraceState? = null,
@@ -1746,7 +1802,6 @@ private fun ConversationRecord.toUiState(
     activePresetId = activePreset.id,
     activePresetName = activePreset.name,
     loadingConnections = loadingConnections,
-    running = running,
     retryAvailable = retryAvailable,
     regenerateAvailable = turns.lastOrNull()?.role == MessageRole.ASSISTANT &&
         turns.dropLast(1).lastOrNull()?.role == MessageRole.USER,

@@ -19,7 +19,15 @@ import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
 import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +66,9 @@ class ChatViewModelTest {
                 conversations.store.beforeCommit = {
                     val last = conversations.store.dao.turns(saved.id).last()
                     if (conversations.store.dao.variants(last.id).last().metadata.contains("\"status\":\"COMPLETE\"")) {
+                        assertEquals(GenerationPhase.FINISHING, vm.uiState.value.generationPhase)
+                        vm.cancel()
+                        assertEquals(GenerationPhase.FINISHING, vm.uiState.value.generationPhase)
                         throw IOException("terminal commit failed")
                     }
                 }
@@ -87,6 +98,85 @@ class ChatViewModelTest {
             androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() }
         }
         directory.deleteRecursively()
+    }
+
+    @Test fun `stop during token validation leaves the user turn retryable and never starts the stream`() = runTest {
+        val release = CompletableDeferred<Unit>()
+        var validations = 0
+        var streams = 0
+        val generator = object : ConversationGenerator {
+            override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan): ProviderTokenValidation? {
+                if (++validations == 1) withContext(NonCancellable) { release.await() }
+                return null
+            }
+            override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow {
+                streams++
+                emit(GenerationEvent.TextDelta("Reply"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val vm = viewModel(generator)
+        vm.updateInput("Question")
+        vm.send()
+        assertEquals(1, validations)
+        assertEquals(GenerationPhase.ACTIVE, vm.uiState.value.generationPhase)
+        vm.cancel()
+        vm.cancel()
+        vm.retry()
+        assertEquals(GenerationPhase.STOPPING, vm.uiState.value.generationPhase)
+        release.complete(Unit)
+        assertEquals(0, streams)
+        assertEquals(GenerationPhase.IDLE, vm.uiState.value.generationPhase)
+        assertEquals("已停止生成", vm.uiState.value.message)
+        assertTrue(vm.uiState.value.retryAvailable)
+        vm.retry()
+        assertEquals(1, streams)
+        assertEquals(1, vm.uiState.value.messages.count { it.message.role == MessageRole.USER })
+        assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
+    }
+
+    @Test fun `browser generation can be stopped by id during the initial save`() = kotlinx.coroutines.runBlocking {
+        val directory = Files.createTempDirectory("browser-generation-stop").toFile()
+        val conversations = ConversationRepository(directory, PromptCompiler())
+        val saved = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+        val generator = FakeGenerator { _, _ -> error("Cancelled request reached the model") }
+        val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
+        val release = CountDownLatch(1)
+        try {
+            vm.loadConversation(saved.id)
+            awaitMvuIdle(vm)
+            val actor = BrowserActor("page", saved.turns.first().id, saved.turns.first().selected.id)
+            val revision = vm.uiState.value.browserSnapshot.getValue("revision").jsonPrimitive.content
+            val args = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"generation_id":"aux","ordered_prompts":[{"role":"user","content":"test"}]}""").jsonObject
+            val saving = CompletableDeferred<Unit>()
+            conversations.store.beforeCommit = { saving.complete(Unit); check(release.await(10, TimeUnit.SECONDS)) }
+            val request = launch(Dispatchers.Default) {
+                try {
+                    vm.invokeBrowser(actor, revision, "generation.raw", args)
+                    throw AssertionError("Cancelled generation returned successfully")
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                }
+            }
+            withTimeout(5_000) { saving.await() }
+            suspend fun stop(id: String) = vm.invokeBrowser(actor, revision, "generation.stop", JsonObject(mapOf("id" to JsonPrimitive(id))))
+            stop("other")
+            assertEquals(GenerationPhase.ACTIVE, vm.uiState.value.generationPhase)
+            assertTrue(vm.uiState.value.browserGenerating)
+            stop("aux")
+            assertEquals(GenerationPhase.STOPPING, vm.uiState.value.generationPhase)
+            release.countDown()
+            withTimeout(5_000) { request.join() }
+            assertFalse(vm.uiState.value.busy)
+            assertEquals("cancelled", vm.uiState.value.browserGeneration.getValue("status").jsonPrimitive.content)
+            assertEquals(0, generator.calls)
+        } finally {
+            conversations.store.beforeCommit = null
+            release.countDown()
+            androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() }
+            directory.deleteRecursively()
+        }
     }
 
     @Test fun `browser writes save literally and reject stale or failed operations`() = kotlinx.coroutines.runBlocking {
@@ -814,6 +904,7 @@ class ChatViewModelTest {
         val generator = FakeGenerator { _, _ ->
             flow {
                 response += 1
+                if (response == 3) awaitCancellation()
                 emit(GenerationEvent.TextDelta("回复$response"))
                 emit(GenerationEvent.Finished("stop"))
             }
@@ -832,6 +923,14 @@ class ChatViewModelTest {
 
         assertEquals(2, generator.calls)
         assertEquals("回复1", viewModel.uiState.value.messages.last().message.content)
+
+        viewModel.regenerate()
+        viewModel.cancel()
+        val restored = viewModel.uiState.value.messages.last()
+        assertEquals("回复1", restored.message.content)
+        assertEquals(0, restored.variantIndex)
+        assertEquals(2, restored.variantCount)
+        assertFalse(viewModel.uiState.value.retryAvailable)
     }
 
     @Test
@@ -1329,7 +1428,7 @@ class ChatViewModelTest {
     }
 
     private fun viewModel(
-        generator: FakeGenerator,
+        generator: ConversationGenerator,
         character: CharacterAsset = DemoConversationContent.character,
     ): ChatViewModel {
         var id = 0

@@ -8,12 +8,14 @@ import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.SecretValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.job
-import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -56,10 +58,7 @@ class GatewayTransport(
     ): Flow<SseFrame> = channelFlow {
         target.validate()
         val credential = resolveAndAuthorize(target, url)
-        val callRef = AtomicReference<Call?>()
-        val requestJob = currentCoroutineContext().job
-        requestJob.invokeOnCompletion { callRef.get()?.cancel() }
-        withContext(Dispatchers.IO) {
+        withHttpCall { callRef, requestJob ->
             val request = buildRequest(
                 target = target,
                 url = url,
@@ -101,10 +100,7 @@ class GatewayTransport(
     ): String {
         target.validate()
         val credential = resolveAndAuthorize(target, url)
-        return withContext(Dispatchers.IO) {
-            val callRef = AtomicReference<Call?>()
-            val requestJob = currentCoroutineContext().job
-            requestJob.invokeOnCompletion { callRef.get()?.cancel() }
+        return withHttpCall { callRef, requestJob ->
             val request = buildRequest(target, url, credential, headers, method = "GET", jsonBody = null)
             val response = executeFollowingRedirects(request, target, credential, callRef, requestJob)
             response.use {
@@ -129,10 +125,7 @@ class GatewayTransport(
     ): String {
         target.validate()
         val credential = resolveAndAuthorize(target, url)
-        return withContext(Dispatchers.IO) {
-            val callRef = AtomicReference<Call?>()
-            val requestJob = currentCoroutineContext().job
-            requestJob.invokeOnCompletion { callRef.get()?.cancel() }
+        return withHttpCall { callRef, requestJob ->
             val request = buildRequest(
                 target,
                 url,
@@ -153,6 +146,19 @@ class GatewayTransport(
                     throw GatewayException.Network(error)
                 }
             }
+        }
+    }
+
+    // Keep cancellation attached until the response body has been consumed, including redirects.
+    private suspend fun <T> withHttpCall(block: suspend (AtomicReference<Call?>, Job) -> T): T = coroutineScope {
+        val callRef = AtomicReference<Call?>()
+        val requestJob = currentCoroutineContext().job
+        val reader = async(Dispatchers.IO) { block(callRef, requestJob) }
+        try {
+            reader.await()
+        } catch (cancelled: CancellationException) {
+            callRef.get()?.cancel()
+            throw cancelled
         }
     }
 
@@ -214,13 +220,14 @@ class GatewayTransport(
         target: ConnectionTarget,
         credential: SecretValue?,
         callRef: AtomicReference<Call?>,
-        requestJob: kotlinx.coroutines.Job,
+        requestJob: Job,
     ): Response {
         var request = initial
         var redirects = 0
         while (true) {
             val call = client.newCall(request)
             callRef.set(call)
+            requestJob.ensureActive()
             val response = try {
                 call.execute()
             } catch (error: IOException) {

@@ -8,7 +8,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.yield
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeout
+import okhttp3.Call
+import okhttp3.EventListener
+import okhttp3.Response
 import mockwebserver3.MockResponse
 import okhttp3.Headers.Companion.headersOf
 import org.junit.Assert.assertEquals
@@ -261,23 +265,33 @@ class CatalogAndSecurityTest {
     }
 
     @Test
-    fun `coroutine cancellation propagates without becoming a gateway error`() = runBlocking {
+    fun `cancelling while waiting for the first SSE frame closes the HTTP call`() = runBlocking {
         HttpsTestServer().use { test ->
             test.server.enqueue(
                 MockResponse.Builder()
                     .addHeader("Content-Type", "text/event-stream")
                     .body("data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n")
-                    .bodyDelay(30, TimeUnit.SECONDS)
+                    .bodyDelay(5, TimeUnit.SECONDS)
                     .build(),
             )
+            val headers = CompletableDeferred<Unit>()
+            val disconnected = CompletableDeferred<Unit>()
+            val client = test.client.newBuilder().eventListener(object : EventListener() {
+                override fun responseHeadersEnd(call: Call, response: Response) { headers.complete(Unit) }
+                override fun canceled(call: Call) { disconnected.complete(Unit) }
+            }).build()
+            val gateway = ModelGateway(CredentialResolver { SecretValue("test") }, client)
             val job = async {
-                test.gateway().responses.stream(
+                gateway.responses.stream(
                     test.target(ModelProtocol.OPENAI_RESPONSES, "/responses"),
                     ResponsesRequest("model", listOf(ResponsesInputMessage(ResponsesRole.USER, "hi"))),
                 ).toList()
             }
-            while (test.server.requestCount == 0) yield()
-            job.cancelAndJoin()
+            withTimeout(5_000) { headers.await() }
+            withTimeout(2_000) {
+                job.cancelAndJoin()
+                disconnected.await()
+            }
             assertTrue(job.isCancelled)
         }
     }
