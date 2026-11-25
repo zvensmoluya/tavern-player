@@ -5,10 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
-import io.github.zvensmoluya.tavernplayer.content.NativeCompilationResult
-import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
-import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
-import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.Persona
@@ -26,9 +22,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
@@ -41,10 +34,6 @@ data class CharacterLibraryUiState(
     val persona: Persona = PersonaRepository.defaultPersona(),
     val selectedCharacterId: String? = null,
     val importing: Boolean = false,
-    val compilingCharacterId: String? = null,
-    val compilationSaving: Boolean = false,
-    val compilationConnections: List<StoredConnection> = emptyList(),
-    val compilationConnectionId: String? = null,
     val importDiagnostics: List<CompatibilityDiagnostic> = emptyList(),
     val message: String? = null,
     val openConversationId: String? = null,
@@ -53,7 +42,7 @@ data class CharacterLibraryUiState(
     val imageErrors: Map<String, String> = emptyMap(),
 ) {
     val initialLoading: Boolean get() = loadingCharacters || loadingConversations
-    val busy: Boolean get() = importing || openingConversation || compilingCharacterId != null
+    val busy: Boolean get() = importing || openingConversation
     val selectedCharacter: CharacterAsset?
         get() = characters.firstOrNull { it.id == selectedCharacterId }
 
@@ -67,8 +56,6 @@ class CharacterLibraryViewModel(
     private val defaultPersonaSource: DefaultPersonaSource,
     private val presetRepository: () -> PresetRepository,
     private val shelfTransferReceiver: ShelfTransferReceiver,
-    private val compilationService: (() -> NativeCompilationService)? = null,
-    private val connectionRepository: (() -> ConnectionRepository)? = null,
     private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
     private val preferences: CharacterLibraryPreferences? = null,
 ) : ViewModel() {
@@ -78,20 +65,14 @@ class CharacterLibraryViewModel(
         defaultPersonaSource: DefaultPersonaSource,
         presetRepository: PresetRepository,
         shelfTransferReceiver: ShelfTransferReceiver,
-        compilationService: NativeCompilationService? = null,
-        connectionRepository: ConnectionRepository? = null,
     ) : this(
         characterRepository,
         { conversationRepository },
         defaultPersonaSource,
         { presetRepository },
         shelfTransferReceiver,
-        compilationService?.let { service -> { service } },
-        connectionRepository?.let { repository -> { repository } },
     )
-    private var compilationJob: Job? = null
     private var conversationJob: Job? = null
-    private var connectionJob: Job? = null
     private val imageJobs = mutableMapOf<String, Job>()
     private val _uiState = MutableStateFlow(CharacterLibraryUiState())
     val uiState: StateFlow<CharacterLibraryUiState> = _uiState.asStateFlow()
@@ -168,26 +149,6 @@ class CharacterLibraryViewModel(
         }
     }
 
-    private fun loadCompilationConnections() {
-        val connectionSource = connectionRepository ?: return
-        if (connectionJob == null) connectionJob = viewModelScope.launch {
-            val repository = withContext(kotlinx.coroutines.Dispatchers.IO) { connectionSource() }
-            repository.state.collect { state ->
-                val choices = state.connections.filter { it.selectedModel.isNotBlank() }
-                _uiState.update { current -> current.copy(
-                    compilationConnections = choices,
-                    compilationConnectionId = current.compilationConnectionId?.takeIf { id -> choices.any { it.id == id } }
-                        ?: state.recentConnectionId?.takeIf { id -> choices.any { it.id == id } } ?: choices.firstOrNull()?.id,
-                ) }
-            }
-        }
-    }
-
-    private fun loadDetailDependencies() {
-        loadConversations()
-        loadCompilationConnections()
-    }
-
     fun import(bytes: ByteArray, fileName: String) {
         if (_uiState.value.busy) return
         _uiState.update { it.copy(importing = true, message = null, importDiagnostics = emptyList()) }
@@ -196,7 +157,7 @@ class CharacterLibraryViewModel(
                 .onSuccess { result ->
                     when (result) {
                         is CharacterSaveResult.Saved -> {
-                            loadDetailDependencies()
+                            loadConversations()
                             _uiState.update {
                                 it.copy(
                                     importing = false,
@@ -249,7 +210,7 @@ class CharacterLibraryViewModel(
     private suspend fun importShelfCharacter(bytes: ByteArray, fileName: String) {
         when (val result = characterRepository.import(bytes, fileName)) {
             is CharacterSaveResult.Saved -> {
-                loadDetailDependencies()
+                loadConversations()
                 _uiState.update {
                     it.copy(
                         importing = false,
@@ -269,28 +230,6 @@ class CharacterLibraryViewModel(
                     importDiagnostics = result.diagnostics,
                     message = result.diagnostics.firstOrNull()?.message ?: "Shelf 角色卡无法导入",
                 )
-            }
-        }
-    }
-
-    fun installNativeAdaptation(characterId: String, bytes: ByteArray) {
-        if (_uiState.value.busy) return
-        _uiState.update { it.copy(importing = true, message = null) }
-        viewModelScope.launch {
-            try {
-                require(bytes.size <= 1024 * 1024) { "适配文件超过 1 MiB" }
-                val adaptation = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                    kotlinx.serialization.json.Json.decodeFromString<io.github.zvensmoluya.tavernplayer.content.NativeAdaptation>(bytes.decodeToString())
-                }
-                val message = when (val result = characterRepository.installNativeAdaptation(characterId, adaptation)) {
-                    is NativeAdaptationInstallResult.Installed -> "原生适配已安装，开始新对话即可使用"
-                    is NativeAdaptationInstallResult.Rejected -> "适配未安装：${result.issues.firstOrNull()?.message.orEmpty()}"
-                }
-                _uiState.update { it.copy(message = message) }
-            } catch (error: Exception) {
-                _uiState.update { it.copy(message = "适配文件无法导入：${error.message.orEmpty().take(200)}") }
-            } finally {
-                _uiState.update { it.copy(importing = false) }
             }
         }
     }
@@ -319,7 +258,7 @@ class CharacterLibraryViewModel(
     }
 
     fun selectCharacter(characterId: String?) {
-        if (characterId != null) loadDetailDependencies()
+        if (characterId != null) loadConversations()
         _uiState.update { it.copy(selectedCharacterId = characterId, message = null) }
     }
 
@@ -347,67 +286,7 @@ class CharacterLibraryViewModel(
         _uiState.update { it.copy(message = message) }
     }
 
-    fun selectCompilationConnection(id: String) {
-        if (_uiState.value.busy || _uiState.value.compilationConnections.none { it.id == id }) return
-        _uiState.update { it.copy(compilationConnectionId = id) }
-    }
-
-    fun compileNativeAdaptation(characterId: String) {
-        if (_uiState.value.busy) return
-        val serviceSource = compilationService ?: return reportMessage("自动适配尚未配置")
-        val character = characterRepository.get(characterId) ?: return
-        val connection = _uiState.value.compilationConnections.singleOrNull { it.id == _uiState.value.compilationConnectionId }
-            ?: return reportMessage("请先配置并选择用于适配的模型")
-        _uiState.update { it.copy(compilingCharacterId = characterId, message = "正在准备适配…") }
-        compilationJob = viewModelScope.launch {
-            var installed = false
-            try {
-                val service = withContext(kotlinx.coroutines.Dispatchers.IO) { serviceSource() }
-                val attempt = service.compile(character, characterRepository.availableAssetIds(characterId), connection,
-                    onProgress = { progress -> _uiState.update { it.copy(message = progress) } })
-                currentCoroutineContext().ensureActive()
-                when (val result = attempt.result) {
-                    is NativeCompilationResult.Rejected -> reportMessage(
-                        "适配未安装：${result.issues.take(3).joinToString("；") { it.message }}",
-                    )
-                    is NativeCompilationResult.Ready -> withContext(NonCancellable) {
-                        _uiState.update { it.copy(compilationSaving = true, message = "正在保存适配…") }
-                        when (val installation = characterRepository.installNativeAdaptation(characterId, result.adaptation)) {
-                            is NativeAdaptationInstallResult.Installed -> {
-                                installed = true
-                                reportMessage("适配已准备好，查看下方说明后即可开始新对话")
-                            }
-                            is NativeAdaptationInstallResult.Rejected -> reportMessage("适配未安装：${installation.issues.firstOrNull()?.message.orEmpty()}")
-                        }
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                if (!installed) reportMessage("适配已停止，已有角色与适配保留")
-                throw cancelled
-            } catch (error: Exception) {
-                val reason = when (error) {
-                    is GatewayException.Authentication, is GatewayException.AuthenticationFailure -> "模型连接认证失败"
-                    is GatewayException.Security -> "请在模型连接中确认凭据授权"
-                    is GatewayException.HttpFailure -> "模型服务返回 HTTP ${error.status}"
-                    is GatewayException.Network -> "网络连接失败或超时"
-                    is GatewayException.Configuration -> "请检查模型连接配置"
-                    is GatewayException.Protocol -> "模型响应协议错误"
-                    is GatewayException.ResponseTooLarge -> "模型响应超过大小限制"
-                    is IllegalArgumentException -> error.message ?: "输入或输出不符合适配要求"
-                    else -> "无法完成适配，请重试"
-                }
-                reportMessage("适配未安装：$reason")
-            } finally {
-                _uiState.update { it.copy(compilingCharacterId = null, compilationSaving = false) }
-            }
-        }
-    }
-
-    fun cancelCompilation() {
-        if (!_uiState.value.compilationSaving) compilationJob?.cancel()
-    }
-
-    fun createConversation(characterId: String, native: Boolean = false) {
+    fun createConversation(characterId: String) {
         if (_uiState.value.busy) return
         val character = characterRepository.get(characterId) ?: return
         _uiState.update { it.copy(openingConversation = true) }
@@ -417,9 +296,7 @@ class CharacterLibraryViewModel(
                 val dependencies = withContext(kotlinx.coroutines.Dispatchers.IO) {
                     conversationRepository() to presetRepository().captureActive()
                 }
-                dependencies.first.create(character, persona, dependencies.second,
-                    if (native) io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.LEGACY_NATIVE
-                    else io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode.BROWSER)
+                dependencies.first.create(character, persona, dependencies.second)
             }
                 .onSuccess { record -> _uiState.update { it.copy(openConversationId = record.id, openingConversation = false, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(openingConversation = false, message = error.message ?: "无法创建对话") } }
@@ -447,8 +324,6 @@ class CharacterLibraryViewModel(
 
     fun avatarPath(characterId: String): String? = characterRepository.avatarFile(characterId)?.absolutePath
 
-    fun assetPath(characterId: String, assetId: String): String? =
-        characterRepository.assetFile(characterId, assetId)?.absolutePath
 
     class Factory(
         private val characterRepository: CharacterRepository,
@@ -456,8 +331,6 @@ class CharacterLibraryViewModel(
         private val defaultPersonaSource: DefaultPersonaSource,
         private val presetRepository: () -> PresetRepository,
         private val shelfTransferReceiver: ShelfTransferReceiver,
-        private val compilationService: (() -> NativeCompilationService)? = null,
-        private val connectionRepository: (() -> ConnectionRepository)? = null,
         private val worldBookRepository: (() -> io.github.zvensmoluya.tavernplayer.worldbooks.WorldBookRepository)? = null,
         private val preferences: CharacterLibraryPreferences? = null,
     ) : ViewModelProvider.Factory {
@@ -469,8 +342,6 @@ class CharacterLibraryViewModel(
                 defaultPersonaSource,
                 presetRepository,
                 shelfTransferReceiver,
-                compilationService,
-                connectionRepository,
                 worldBookRepository,
                 preferences,
             ) as T

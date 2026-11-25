@@ -33,7 +33,6 @@ data class NativeAdaptation(
     val ejsTemplates: List<NativeWorldBookReference> = emptyList(),
     val stateBindings: List<NativeStateBinding> = emptyList(),
     val script: NativeScriptProgram? = null,
-    val compilationEvidence: List<NativeCompilationEvidence> = emptyList(),
 )
 
 /** Card code explicitly selected by adaptation; the framework bundle is supplied by Player. */

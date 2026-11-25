@@ -40,8 +40,6 @@ class MainActivity : ComponentActivity() {
             graph.personaRepository,
             { graph.presetRepository },
             graph.shelfTransferClient,
-            { graph.nativeCompilationService },
-            { graph.connectionRepository },
             { graph.worldBookRepository },
             graph.libraryPreferences,
         )

@@ -31,7 +31,7 @@ class BrowserProgramPreparerTest {
         val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
         val root = folder.newFolder()
         val repository = ConversationRepository(root, PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
-        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default)
         val program = requireNotNull(record.character.browserProgram)
         assertEquals(1, program.sources.size)
         assertEquals(setOf(program.sources.single().id), program.mvuSourceIds)
@@ -73,7 +73,7 @@ class BrowserProgramPreparerTest {
         for (hash in hashes) {
             val card = (CharacterCardImporter().import(originals.getValue(hash).readBytes(), "sample.png") as CharacterImportResult.Ready).character
             val repository = ConversationRepository(folder.newFolder(), PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
-            val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+            val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default)
             val program = requireNotNull(record.character.browserProgram)
             assertTrue("$hash: ${program.diagnostics}", program.blockedSourceIds.isEmpty())
             assertNotNull("$hash: missing MVU provider", program.mvu)
@@ -117,7 +117,7 @@ class BrowserProgramPreparerTest {
         val card = (CharacterCardImporter().import(file.readBytes(), "sample.png") as CharacterImportResult.Ready).character
         val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
         val repository = ConversationRepository(folder.newFolder(), PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
-        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default)
         assertNull(record.character.nativeAdaptation)
         val program = record.character.browserProgram!!
         assertEquals(4, program.ejsTemplates.size)

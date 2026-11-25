@@ -39,7 +39,7 @@ class MvuConversationRuntime(
             val next = variants.mapIndexed { index, variant ->
                 val result = initialized[index]
                 val projected = if (result.processedText == variant.message.sourceText) null else compiler.projectAssistantText(
-                    text = NativeAdaptationRuntime().projectAssistantMessage(record.character.nativeAdaptation, result.processedText).narrativeText,
+                    text = result.processedText,
                     projection = RegexProjection.STORAGE,
                     character = record.character,
                     persona = record.persona,
@@ -51,10 +51,7 @@ class MvuConversationRuntime(
                     modelId = "",
                     depth = 0,
                 ) as TextExpansionResult.Success
-                val projectedRuntime = if (projected == null) variant.runtimeStateAfter ?: record.runtimeState else
-                    record.character.nativeAdaptation?.let {
-                        NativeAdaptationRuntime().ingestAssistantMessage(it, variant.message.sourceText, projected.runtimeState).runtimeState
-                    } ?: projected.runtimeState
+                val projectedRuntime = projected?.runtimeState ?: variant.runtimeStateAfter ?: record.runtimeState
                 variant.copy(
                     message = variant.message.copy(content = projected?.text ?: variant.message.content),
                     runtimeStateBefore = base.applyTo(variant.runtimeStateBefore ?: record.runtimeState),

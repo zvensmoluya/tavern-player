@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation
 import io.github.zvensmoluya.tavernplayer.conversation.storage.StreamChunk
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,6 +22,28 @@ class RoomConversationRepositoryTest {
     private val compiler = PromptCompiler()
     private suspend fun create(repository: ConversationRepository) = repository.create(
         DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+
+    @Test fun `only web conversations are imported listed and opened`() = runBlocking {
+        val root = folder.newFolder()
+        val legacyJson = File(root, "tavern/conversations/native.json")
+        legacyJson.parentFile!!.mkdirs()
+        // Old native files can lack a mode and contain an obsolete record shape.
+        legacyJson.writeText("""{"id":"legacy-json","character":"obsolete"}""")
+        ConversationRepository(root, compiler).use { repository ->
+            val web = create(repository)
+            val old = web.copy(id = "legacy-room", executionMode = ConversationExecutionMode.LEGACY_NATIVE, turns = emptyList())
+            repository.store.save(old, null)
+            assertEquals(listOf(web.id), repository.forCharacter(web.character.assetId).map { it.id })
+            assertEquals(listOf(web.id), repository.conversations.first().map { it.id })
+            assertFalse(repository.contains(old.id))
+            assertNull(repository.open(old.id))
+            assertNull(repository.get(old.id))
+            assertNull(repository.store.dao.head("legacy-json"))
+            assertNotNull(repository.store.dao.head(old.id))
+            assertTrue(legacyJson.isFile)
+            assertEquals(web, repository.open(web.id))
+        }
+    }
 
     @Test fun `legacy import checks complete records and retains original bytes`() = runBlocking {
         val original = ConversationRepository(folder.newFolder(), compiler).use { create(it) }

@@ -10,6 +10,9 @@ import io.github.zvensmoluya.tavernplayer.conversation.MessageRole
 import io.github.zvensmoluya.tavernplayer.conversation.MessageVariant
 import io.github.zvensmoluya.tavernplayer.conversation.NormalGenerationInput
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
+import io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime
+import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime
+import io.github.zvensmoluya.tavernplayer.conversation.web.BrowserProgramPreparer
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -47,9 +50,15 @@ class CommunityCardCompatibilityTest {
 
         val compiler = PromptCompiler()
         var id = 0
+        val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))
+        val mvu = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
+        val ejs = QuickJsEjsRuntime(loadBundle = { File(assets.parentFile, "app-assets/ejs/runtime.js").readText() })
+        val preparer = BrowserProgramPreparer { File(System.getProperty("webRuntimeAssets"), "programs.js").readText() }
         val conversations = ConversationRepository(
             root,
             compiler,
+            mvuRuntime = mvu,
+            prepareBrowser = preparer::prepare,
             idFactory = { "community-${id++}" },
         )
         var record = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
@@ -62,7 +71,7 @@ class CommunityCardCompatibilityTest {
         record = record.copy(
             turns = record.turns + ConversationTurn("user-turn", MessageRole.USER, listOf(MessageVariant("user-v", user))),
         )
-        val compilation = compiler.compile(
+        val compilation = ejs.compile(compiler,
             NormalGenerationInput(
                 character = record.character,
                 persona = record.persona,
@@ -72,7 +81,7 @@ class CommunityCardCompatibilityTest {
                 conversationId = record.id,
                 generationId = "community-attempt",
                 modelId = "custom-compatible-model",
-            ),
+            ), mutableMapOf(),
         )
         assertTrue(
             (compilation as? CompilationResult.Failure)?.diagnostics?.joinToString { it.message }.orEmpty(),

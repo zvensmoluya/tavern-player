@@ -55,8 +55,11 @@ data class ImportRow(@PrimaryKey val id: String, val sha256: String)
 
 @Dao
 interface ConversationDao {
-    @Query("SELECT * FROM conversation_summary ORDER BY updatedAtEpochMillis DESC, id") fun observeSummaries(): Flow<List<ConversationSummary>>
-    @Query("SELECT * FROM conversation_summary ORDER BY updatedAtEpochMillis DESC, id") fun summaries(): List<ConversationSummary>
+    @Query("SELECT EXISTS(SELECT 1 FROM conversation_summary WHERE id = :id AND executionMode = 'BROWSER')")
+    fun containsBrowserConversation(id: String): Boolean
+
+    @Query("SELECT * FROM conversation_summary WHERE executionMode = 'BROWSER' ORDER BY updatedAtEpochMillis DESC, id") fun observeSummaries(): Flow<List<ConversationSummary>>
+    @Query("SELECT * FROM conversation_summary WHERE executionMode = 'BROWSER' ORDER BY updatedAtEpochMillis DESC, id") fun summaries(): List<ConversationSummary>
     @Query("SELECT * FROM conversation_turn WHERE id = :id") fun turn(id: String): TurnRow?
     @Query("SELECT * FROM conversation_head WHERE id = :id") fun head(id: String): HeadRow?
     @Query("SELECT * FROM conversation_draft WHERE id = :id") fun draft(id: String): DraftRow?

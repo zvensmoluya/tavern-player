@@ -11,7 +11,6 @@ import io.github.zvensmoluya.tavernplayer.connections.ProbeService
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ModelGatewayConversationGenerator
 import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
-import io.github.zvensmoluya.tavernplayer.conversation.StateConfirmingConversationGenerator
 import io.github.zvensmoluya.tavernplayer.personas.PersonaRepository
 import io.github.zvensmoluya.tavernplayer.presets.PresetRepository
 import io.github.zvensmoluya.tavernplayer.transfer.ShelfTransferClient
@@ -50,12 +49,6 @@ class AppGraph(context: Context) {
             appContext.assets.open("mvu/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
         }
     }
-    val nativeCompilationService by lazy {
-        io.github.zvensmoluya.tavernplayer.characters.NativeCompilationService(
-            ModelGatewayConversationGenerator(gateway, connectionRepository),
-            mvuRuntime = mvuRuntime,
-        )
-    }
     val ejsRuntime by lazy {
         io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime(loadBundle = {
             appContext.assets.open("ejs/runtime.js").bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -80,6 +73,6 @@ class AppGraph(context: Context) {
         )
     }
     val conversationGenerator by lazy {
-        StateConfirmingConversationGenerator(ModelGatewayConversationGenerator(gateway, connectionRepository))
+        ModelGatewayConversationGenerator(gateway, connectionRepository)
     }
 }

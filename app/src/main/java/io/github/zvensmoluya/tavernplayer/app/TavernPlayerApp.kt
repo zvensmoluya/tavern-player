@@ -238,7 +238,7 @@ private fun OpenedConversation(
         requested = true
     }
     if (state.conversationId == conversationId && !state.loadingConversation) {
-        ChatRoute(viewModel, presetViewModel(), resolveAssetPath = characterLibraryViewModel::assetPath,
+        ChatRoute(viewModel, presetViewModel(),
             onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets,
             onOpenGlobalWorldBooks = onOpenGlobalWorldBooks)
     } else {

@@ -4,6 +4,7 @@ import io.github.zvensmoluya.tavernplayer.content.*
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationStateReader
 import io.github.zvensmoluya.tavernplayer.conversation.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationMessage
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRecord
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRepository
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationRuntimeState
@@ -15,7 +16,6 @@ import io.github.zvensmoluya.tavernplayer.conversation.PromptCompiler
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.*
@@ -117,7 +117,7 @@ object MvuRuntimeContract {
             val turn = ConversationTurn("turn", MessageRole.ASSISTANT, listOf(
                 variant("first", result, initial), variant("alternative", secondResult, first),
             ))
-            val record = ConversationRecord(id = "mvu-checkpoints", character = CharacterAsset("sample", "Guide").snapshot(),
+            val record = ConversationRecord(id = "mvu-checkpoints", executionMode = ConversationExecutionMode.BROWSER, character = CharacterAsset("sample", "Guide").snapshot(),
                 persona = Persona("persona", "Traveler"), turns = listOf(turn), runtimeState = first,
                 createdAtEpochMillis = 1, updatedAtEpochMillis = 1)
             val repository = ConversationRepository(root, PromptCompiler())

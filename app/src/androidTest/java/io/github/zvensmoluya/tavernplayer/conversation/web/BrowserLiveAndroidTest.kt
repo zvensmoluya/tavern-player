@@ -20,7 +20,6 @@ import io.github.zvensmoluya.tavernplayer.app.AppGraph
 import io.github.zvensmoluya.tavernplayer.characters.CharacterSaveResult
 import io.github.zvensmoluya.tavernplayer.connections.*
 import io.github.zvensmoluya.tavernplayer.conversation.*
-import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.presets.*
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import java.io.File
@@ -143,7 +142,7 @@ class BrowserLiveAndroidTest {
                 mvuRuntime = app.mvuRuntime, prepareBrowser = app.browserEnvironment::prepare)
             suspend fun viewModel(repository: ConversationRepository, id: String): ChatViewModel {
                 val vm = withContext(Dispatchers.Main) {
-                    ChatViewModel(connections, app.promptCompiler, StateConfirmingConversationGenerator(generator),
+                    ChatViewModel(connections, app.promptCompiler, generator,
                         repository, app.presetRepository, mvuRuntime = app.mvuRuntime,
                         ejsRuntime = app.ejsRuntime, browserEnvironment = app.browserEnvironment).also {
                         models.add(it)
@@ -156,9 +155,7 @@ class BrowserLiveAndroidTest {
             val presetVm = withContext(Dispatchers.Main) { PresetViewModel(app.presetRepository).also { models.add(it) } }
             compose.setContent {
                 mounted?.let { vm -> key(vm) {
-                    TavernPlayerTheme { ChatRoute(vm, presetVm, {}, {}, {}, resolveAssetPath = { characterId, assetId ->
-                        app.characterRepository.assetFile(characterId, assetId)?.absolutePath
-                    }) }
+                    TavernPlayerTheme { ChatRoute(vm, presetVm, {}, {}, {}) }
                 } }
             }
             val repository = app.conversationRepository
@@ -186,8 +183,7 @@ class BrowserLiveAndroidTest {
                 val character = app.characterRepository.import(
                     sampleBytes, "sample-$sample.png") as CharacterSaveResult.Saved
                 check(character.character.nativeAdaptation == null) { "BL_NATIVE_ADAPTATION" }
-                id = repository.create(character.character, Persona("browser-live", "Visitor"), preset,
-                    ConversationExecutionMode.BROWSER).id
+                id = repository.create(character.character, Persona("browser-live", "Visitor"), preset).id
             }
             var vm = viewModel(if (recovering) freshRepository() else repository, id)
             compose.runOnUiThread { mounted = vm }

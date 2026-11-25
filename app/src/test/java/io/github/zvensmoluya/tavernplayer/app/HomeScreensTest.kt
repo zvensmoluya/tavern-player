@@ -67,7 +67,7 @@ class HomeScreensTest {
 
     @Test fun `global history preserves separate stories including missing character assets`() {
         val summaries = listOf(
-            ConversationSummary("old", "a", 0, 10, 2, "较早的一场故事", "LEGACY_NATIVE"),
+            ConversationSummary("old", "a", 0, 10, 2, "较早的一场故事", "BROWSER"),
             ConversationSummary("new", "a", 0, 30, 5, "<b>最新的故事</b>", "BROWSER"),
             ConversationSummary("missing", "removed", 0, 20, 1, "保留的聊天", "BROWSER"),
         )

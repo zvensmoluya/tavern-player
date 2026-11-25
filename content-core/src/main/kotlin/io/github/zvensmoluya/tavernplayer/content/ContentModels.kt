@@ -227,7 +227,7 @@ data class CharacterAsset(
     val extensions: JsonObject = JsonObject(emptyMap()),
     val rawCard: JsonObject = JsonObject(emptyMap()),
     val diagnostics: List<CompatibilityDiagnostic> = emptyList(),
-    val nativeAdaptation: NativeAdaptation? = null,
+    @kotlinx.serialization.Transient val nativeAdaptation: NativeAdaptation? = null,
 ) {
     val promptName: String
         get() = nickname?.takeIf(String::isNotBlank) ?: name

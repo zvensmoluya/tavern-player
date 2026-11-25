@@ -14,12 +14,6 @@ import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
 import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
 import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
-import io.github.zvensmoluya.tavernplayer.content.AssistantStateAdapterDefinition
-import io.github.zvensmoluya.tavernplayer.content.AssistantStateMapping
-import io.github.zvensmoluya.tavernplayer.content.ConversationStateDefinition
-import io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType
-import io.github.zvensmoluya.tavernplayer.content.LegacyStateDialect
-import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
 import io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition
 import io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
@@ -36,7 +30,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.double
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -100,7 +93,7 @@ class ChatViewModelTest {
         val directory = Files.createTempDirectory("browser-writes").toFile()
         val conversations = ConversationRepository(directory, PromptCompiler())
         val saved = conversations.create(DemoConversationContent.character, DemoConversationContent.persona,
-            DemoConversationContent.preset, ConversationExecutionMode.BROWSER)
+            DemoConversationContent.preset)
         val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> error("No generation expected") }, conversations, FixedPresetSource())
         try {
             vm.loadConversation(saved.id)
@@ -131,7 +124,7 @@ class ChatViewModelTest {
         val character = DemoConversationContent.character.copy(firstMessage = "Opening", regexScripts = listOf(
             RegexDefinition("r", "sample", "Opening", "After", disabled = true,
                 placements = setOf(RegexPlacement.AI_OUTPUT), markdownOnly = true)))
-        val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset, ConversationExecutionMode.BROWSER)
+        val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
         val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> error("No generation expected") }, conversations, FixedPresetSource())
         try {
             vm.loadConversation(saved.id)
@@ -154,172 +147,6 @@ class ChatViewModelTest {
         }
     }
 
-    @Test fun `native surfaces return after chat completion failure and cancellation`() = kotlinx.coroutines.runBlocking {
-        for (ending in listOf("complete", "failure", "cancel")) {
-            val directory = Files.createTempDirectory("native-chat-refresh").toFile()
-            try {
-                val program = nativeActionProgram("")
-                val character = DemoConversationContent.character.copy(firstMessage = "Opening",
-                    nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
-                val conversations = ConversationRepository(directory, PromptCompiler())
-                val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-                val started = CompletableDeferred<Unit>()
-                val release = CompletableDeferred<Unit>()
-                val generator = FakeGenerator { _, _ -> flow {
-                    emit(GenerationEvent.TextDelta("Reply"))
-                    started.complete(Unit)
-                    release.await()
-                    when (ending) {
-                        "complete" -> emit(GenerationEvent.Finished("stop"))
-                        "failure" -> error("Synthetic failure")
-                        else -> awaitCancellation()
-                    }
-                } }
-                val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
-                try {
-                    vm.loadConversation(saved.id)
-                    val original = awaitNative(vm).nativeSurfaces.single().revision
-                    vm.updateInput("Continue"); vm.send()
-                    kotlinx.coroutines.withTimeout(5000) { started.await() }
-                    assertTrue(vm.uiState.value.nativeSurfaces.isEmpty())
-                    if (ending == "cancel") vm.cancel() else release.complete(Unit)
-                    val completed = awaitNative(vm)
-                    assertFalse(completed.running)
-                    assertTrue("$ending must reproject the completed history", original != completed.nativeSurfaces.single().revision)
-                } finally { androidx.lifecycle.ViewModelStore().apply { put("test", vm); clear() } }
-            } finally { directory.deleteRecursively() }
-        }
-    }
-
-    @Test fun `native actions persist independent commits reject duplicate clicks and restore candidate heads`() = kotlinx.coroutines.runBlocking {
-        val directory = Files.createTempDirectory("native-actions").toFile()
-        try {
-            val program = nativeActionProgram("await c.program.replace({count:(c.programState.count || 0)+1}); await c.draft.replace('chosen');")
-            val character = DemoConversationContent.character.copy(firstMessage = "A", alternateFirstMessages = listOf("B"),
-                nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
-            val conversations = ConversationRepository(directory, PromptCompiler())
-            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations, FixedPresetSource())
-            vm.loadConversation(saved.id)
-            val before = awaitNative(vm)
-            val surface = before.nativeSurfaces.single()
-            val invocation = NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single())
-            vm.invokeNativeAction(invocation)
-            vm.invokeNativeAction(invocation)
-            awaitNative(vm, "1")
-            var disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
-            assertEquals("chosen", disk.draft)
-            assertEquals(1, disk.turns.single().selected.nativeOperations.size)
-            assertNull(disk.turns.single().selected.runtimeStateAfter!!.scriptState)
-            assertEquals(JsonPrimitive(1), disk.runtimeState.scriptState!!["count"])
-            vm.invokeNativeAction(invocation) // stale version, even though action contents are identical
-            assertFalse(vm.uiState.value.nativeActionRunning)
-            assertEquals(1, conversations.get(saved.id)!!.turns.single().selected.nativeOperations.size)
-            vm.nextVariant()
-            awaitNative(vm, "0")
-            assertEquals("", vm.uiState.value.input)
-            vm.previousVariant()
-            awaitNative(vm, "1")
-            vm.editMessage(vm.uiState.value.messages.single().message.id, "Edited", MessageEditMode.RESTART)
-            awaitNative(vm, "0")
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                kotlinx.coroutines.withTimeout(5000) { while (conversations.get(saved.id)!!.turns.single().selected.nativeOperations.isNotEmpty()) kotlinx.coroutines.delay(10) }
-            }
-            disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
-            assertTrue(disk.turns.single().selected.nativeOperations.isEmpty())
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `cancelled auxiliary generation retains previous durable write and prevents later write`() = kotlinx.coroutines.runBlocking {
-        val directory = Files.createTempDirectory("native-cancel").toFile()
-        try {
-            val program = nativeActionProgram("await c.program.replace({count:1}); await c.generation.text({prompt:'Describe'}); await c.program.replace({count:2});")
-            val character = DemoConversationContent.character.copy(firstMessage = "A", nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
-            val conversations = ConversationRepository(directory, PromptCompiler())
-            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            val started = CompletableDeferred<Unit>()
-            val generator = object : ConversationGenerator {
-                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan): ProviderTokenValidation {
-                    assertNull(plan.declaredContextTokens)
-                    return ProviderTokenValidation(2_100_000, TokenCountQuality.EXACT, "test")
-                }
-                override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
-                    started.complete(Unit)
-                    awaitCancellation()
-                }
-            }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
-            vm.loadConversation(saved.id)
-            val surface = awaitNative(vm).nativeSurfaces.single()
-            vm.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single()))
-            kotlinx.coroutines.withTimeout(5000) { started.await() }
-            vm.cancelNativeAction()
-            awaitNative(vm, "1")
-            val disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
-            assertEquals(JsonPrimitive(1), disk.runtimeState.scriptState!!["count"])
-            val operation = disk.turns.single().selected.nativeOperations.single()
-            assertEquals(NativeOperationStatus.CANCELLED, operation.status)
-            assertEquals(1, operation.commits.size)
-            assertEquals(1, operation.generationRequests.size)
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `failed native write never publishes success and can retry after storage recovers`() = kotlinx.coroutines.runBlocking {
-        val directory = Files.createTempDirectory("native-save-failure").toFile()
-        try {
-            val program = nativeActionProgram("await c.program.replace({count:1}); await c.generation.text({prompt:'Describe'}); await c.program.replace({count:2});")
-            val character = DemoConversationContent.character.copy(firstMessage = "A", nativeAdaptation = NativeAdaptation(sourceSha256 = "a".repeat(64), script = program))
-            val conversations = ConversationRepository(directory, PromptCompiler())
-            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            var blockOnce = true
-            val generator = object : ConversationGenerator {
-                override suspend fun validateTokens(connection: StoredConnection, plan: GenerationPlan) = ProviderTokenValidation(10, TokenCountQuality.EXACT, "test")
-                override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow<GenerationEvent> {
-                    if (blockOnce) {
-                        blockOnce = false
-                        conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
-                    }
-                    emit(GenerationEvent.TextDelta("Result")); emit(GenerationEvent.Finished("stop"))
-                }
-            }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource())
-            vm.loadConversation(saved.id)
-            fun invoke(surface: NativeRenderedSurface) = vm.invokeNativeAction(NativeSurfaceInvocation(surface.id, surface.revision, surface.data.actions.single()))
-            invoke(awaitNative(vm).nativeSurfaces.single())
-            val failed = kotlinx.coroutines.withTimeout(10000) { vm.uiState.first { it.storageFailed && !it.nativeActionRunning } }
-            assertTrue(failed.message.orEmpty().contains("结束状态未能保存"))
-            assertEquals(JsonPrimitive(1), conversations.get(saved.id)!!.runtimeState.scriptState!!["count"])
-            conversations.store.beforeCommit = null
-            vm.retrySave()
-            awaitMvuIdle(vm)
-            invoke(awaitNative(vm, "1").nativeSurfaces.single())
-            awaitNative(vm, "2")
-            val disk = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
-            assertEquals(JsonPrimitive(2), disk.runtimeState.scriptState!!["count"])
-            assertEquals(listOf(NativeOperationStatus.FAILED, NativeOperationStatus.COMPLETE), disk.turns.single().selected.nativeOperations.map { it.status })
-        } finally { directory.deleteRecursively() }
-    }
-
-    private fun nativeActionProgram(body: String): io.github.zvensmoluya.tavernplayer.content.NativeScriptProgram {
-        val code = "export function present(c){return {surface:'action_group',title:String(c.programState.count || 0),actions:[{id:'run',label:'Run',handler:'run'}]};} export async function run(c){" + body + "}"
-        return io.github.zvensmoluya.tavernplayer.content.NativeScriptProgram(
-            modules = listOf(io.github.zvensmoluya.tavernplayer.content.NativeScriptModule("main", code, listOf("fixture"), "Synthetic operation")),
-            surfaces = listOf(io.github.zvensmoluya.tavernplayer.content.NativeSurfaceEntry("actions", "main", "present", io.github.zvensmoluya.tavernplayer.content.NativeSurfaceType.ACTION_GROUP)),
-            handlers = listOf(io.github.zvensmoluya.tavernplayer.content.NativeHandlerEntry("run", "main", "run")),
-            capabilities = io.github.zvensmoluya.tavernplayer.content.NativeScriptCapability.entries.toSet() - io.github.zvensmoluya.tavernplayer.content.NativeScriptCapability.MVU_REPLACE,
-        )
-    }
-
-    private suspend fun awaitNative(vm: ChatViewModel, title: String? = null): ChatUiState = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-        try {
-            kotlinx.coroutines.withTimeout(10000) {
-                vm.uiState.first { !it.busy && it.nativeSurfaces.isNotEmpty() && (title == null || it.nativeSurfaces.single().data.title == title) }
-            }
-        } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
-            throw AssertionError("Native title $title not ready: ${vm.uiState.value.message}; surface error=${vm.uiState.value.nativeSurfaceError}", timeout)
-        }
-    }
-
     @Test fun `mvu and ejs real engines follow chat candidates edits resets and disk recovery`() = runTest {
         val directory = Files.createTempDirectory("mvu-chat").toFile()
         val assets = java.io.File(System.getProperty("mvuProbeAssets"), "mvu")
@@ -339,18 +166,12 @@ class ChatViewModelTest {
                 replaceString = "WORLD_STATE_PANEL", placements = setOf(RegexPlacement.AI_OUTPUT), markdownOnly = true,
             )),
             description = "Current variables: {{get_message_variable::stat_data}}",
-            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
-                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content),
-                stateBindings = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStateBinding("day", io.github.zvensmoluya.tavernplayer.content.NativeStateSource.MVU,
-                    "/stat_data/days", io.github.zvensmoluya.tavernplayer.content.ConversationStateValueType.NUMBER)),
-                status = io.github.zvensmoluya.tavernplayer.content.NativeStatusView(items = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStatusItem("day", "Day"))),
-                ejsTemplates = listOf(io.github.zvensmoluya.tavernplayer.content.NativeWorldBookReference("init", "template",
-                    io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator.sha256(template)))),
             worldBooks = listOf(WorldBookDefinition("init", entries = listOf(
                 WorldBookEntryDefinition("initial", name = "[initvar]", enabled = false, content = "days: 0"),
                 WorldBookEntryDefinition("template", constant = true, content = template)))))
         try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime,
+                prepareBrowser = { it.copy(mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content)) })
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             suspend fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
             fun text(delta: Int) = "Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":$delta}]</JSONPatch></UpdateVariable>"
@@ -369,7 +190,6 @@ class ChatViewModelTest {
             val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(),
                 projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime, ejsRuntime = ejs)
             suspend fun assertSavedDays(expected: Int) {
-                assertEquals("Conversation result: ${vm.uiState.value.message}", JsonPrimitive(expected), vm.uiState.value.nativeState["day"])
                 // Editing exposes the new view before persistNow finishes; await the repository acknowledgement.
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     kotlinx.coroutines.withTimeout(60_000) {
@@ -388,8 +208,6 @@ class ChatViewModelTest {
             assertSavedDays(5)
             assertProcessed(vm.uiState.value.messages.last().message, text(2))
             assertTrue(vm.uiState.value.messages.last().displayContent.contains("WORLD_STATE_PANEL"))
-            assertEquals(JsonPrimitive(5), vm.uiState.value.nativeState["day"])
-            assertEquals(JsonPrimitive(5), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             assertTrue(prompt.contains("\"days\":3"))
@@ -399,16 +217,12 @@ class ChatViewModelTest {
             vm.regenerate(); awaitMvuIdle(vm)
             assertSavedDays(7)
             assertProcessed(vm.uiState.value.messages.last().message, text(4))
-            assertEquals(JsonPrimitive(7), vm.uiState.value.nativeState["day"])
-            assertEquals(JsonPrimitive(7), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=3; EJS_USER=Go.;"))
             vm.previousVariant()
             vm.updateInput("Continue."); vm.send(); awaitMvuIdle(vm)
             assertSavedDays(9)
             assertProcessed(vm.uiState.value.messages.last().message, text(4))
-            assertEquals(JsonPrimitive(9), vm.uiState.value.nativeState["day"])
-            assertEquals(JsonPrimitive(9), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertTrue(prompt.contains("EJS_DAY=5; EJS_USER=Continue.;"))
             assertTrue(prompt.contains("\"days\":5"))
@@ -416,7 +230,9 @@ class ChatViewModelTest {
             vm.editMessage(target, text(10), MessageEditMode.TEXT_ONLY); awaitMvuIdle(vm)
             assertEquals(9, days())
             assertEquals(5, vm.uiState.value.messages.size)
-            val other = conversations.create(original, DemoConversationContent.persona, DemoConversationContent.preset)
+            val other = ConversationRepository(directory, PromptCompiler()).use { repository ->
+                repository.create(original, DemoConversationContent.persona, DemoConversationContent.preset)
+            }
             vm.editMessage(target, text(10), MessageEditMode.RESTART)
             vm.loadConversation(other.id) // An in-flight edit must not write into a different conversation.
             vm.resetConversation()
@@ -425,8 +241,6 @@ class ChatViewModelTest {
             assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
             assertSavedDays(13)
             assertProcessed(vm.uiState.value.messages.last().message, text(10))
-            assertEquals(JsonPrimitive(13), vm.uiState.value.nativeState["day"])
-            assertEquals(JsonPrimitive(13), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(3, vm.uiState.value.messages.size)
             assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
@@ -439,8 +253,6 @@ class ChatViewModelTest {
             vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
             awaitMvuIdle(vm)
             assertSavedDays(20)
-            assertEquals(JsonPrimitive(20), vm.uiState.value.nativeState["day"])
-            assertEquals(JsonPrimitive(20), vm.uiState.value.messages.last().nativeStateAfter!!["day"])
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(1, vm.uiState.value.messages.size)
             vm.resetConversation(); awaitMvuIdle(vm)
@@ -454,11 +266,10 @@ class ChatViewModelTest {
         org.junit.Assume.assumeTrue(java.io.File(assets, "runtime.js").isFile)
         val runtime = io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime { java.io.File(assets, "runtime.js").readText() }
         val original = DemoConversationContent.character
-        val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = emptyList(),
-            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256,
-                mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram("$(() => registerMvuSchema(z.object({days:z.number().prefault(0)}).prefault({})));")))
+        val character = original.copy(firstMessage = "Opening.", alternateFirstMessages = emptyList())
         try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
+            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime,
+                prepareBrowser = { it.copy(mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram("$(() => registerMvuSchema(z.object({days:z.number().prefault(0)}).prefault({})));")) })
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
             val checkpoint = saved.runtimeState.mvuState
             var mode = "cancel"
@@ -491,288 +302,6 @@ class ChatViewModelTest {
         kotlinx.coroutines.withTimeout(60_000) {
             while (vm.uiState.value.busy) kotlinx.coroutines.delay(10)
         }
-    }
-
-    private fun memoryCharacter(): io.github.zvensmoluya.tavernplayer.content.CharacterAsset {
-        val entry = WorldBookEntryDefinition("memory-instruction", content = "记住已经一起完成的事情。", enabled = false)
-        val reference = io.github.zvensmoluya.tavernplayer.content.NativeWorldBookReference("memory-source", entry.id,
-            io.github.zvensmoluya.tavernplayer.content.NativeWorldBookTextSelectionValidator.sha256(entry.content))
-        val original = DemoConversationContent.character
-        return original.copy(worldBooks = listOf(WorldBookDefinition("memory-source", entries = listOf(entry))),
-            nativeAdaptation = NativeAdaptation(sourceSha256 = original.sourceSha256, memories = listOf(
-                io.github.zvensmoluya.tavernplayer.content.NativeMemoryDefinition("journey", "旅行记忆", reference, firstReply = 2, everyReplies = 2))))
-    }
-
-    @Test fun `automatic memory persists with candidates reaches next prompt and invalidates on text edit`() = runTest {
-        val directory = Files.createTempDirectory("conversation-memory").toFile()
-        try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
-            var analyses = 0
-            var latestMainPrompt = ""
-            val generator = FakeGenerator { _, plan -> flow {
-                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
-                    emit(GenerationEvent.TextDelta("旅行笔记 ${++analyses}"))
-                } else {
-                    latestMainPrompt = plan.messages.joinToString("\n") { it.content }
-                    emit(GenerationEvent.TextDelta("我们抵达河边。"))
-                }
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(saved.id)
-            vm.updateInput("出发吧。")
-            vm.send()
-            assertEquals(1, analyses)
-            assertEquals("旅行笔记 1", vm.uiState.value.memories.getValue("journey").content)
-            assertEquals(vm.uiState.value.memories, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.memories)
-            vm.regenerate()
-            assertEquals(2, analyses)
-            assertEquals("旅行笔记 2", vm.uiState.value.memories.getValue("journey").content)
-            vm.previousVariant()
-            assertEquals("旅行笔记 1", vm.uiState.value.memories.getValue("journey").content)
-            vm.nextVariant()
-            assertEquals("旅行笔记 2", vm.uiState.value.memories.getValue("journey").content)
-            vm.updateInput("继续散步。")
-            vm.send()
-            assertTrue(latestMainPrompt.contains("旅行笔记 2"))
-            assertFalse(latestMainPrompt.contains("旅行笔记 1"))
-            assertEquals(2, analyses)
-            val message = vm.uiState.value.messages.first { it.message.role == MessageRole.USER }.message
-            vm.editMessage(message.id, "沿着河道出发吧。", MessageEditMode.TEXT_ONLY)
-            assertTrue(vm.uiState.value.memories.isEmpty())
-            assertTrue(ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.memories.isEmpty())
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `unconfirmed numeric state does not block independent text analysis or become confirmed`() = runTest {
-        val directory = Files.createTempDirectory("memory-unconfirmed-state").toFile()
-        try {
-            val original = memoryCharacter()
-            val character = original.copy(nativeAdaptation = original.nativeAdaptation!!.copy(
-                state = listOf(ConversationStateDefinition("score", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(0))),
-                assistantStateAdapters = listOf(AssistantStateAdapterDefinition(LegacyStateDialect.UPDATE_VARIABLE_JSON_PATCH_V1,
-                    listOf(AssistantStateMapping("/score", "score"))))))
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            var evidence = ""
-            val generator = FakeGenerator { _, plan -> flow {
-                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
-                    evidence = plan.messages.last().content
-                    emit(GenerationEvent.TextDelta("已经出发；分数变化未确认。"))
-                } else emit(GenerationEvent.TextDelta("我们沿河出发。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(saved.id)
-            vm.updateInput("出发吧。")
-            vm.send()
-            assertTrue(evidence.contains("\"stateConfirmedForLastReply\":false"))
-            assertEquals("已经出发；分数变化未确认。", vm.uiState.value.memories.getValue("journey").content)
-            assertTrue(vm.uiState.value.messages.last().stateUnconfirmed)
-            assertEquals(JsonPrimitive(0), vm.uiState.value.conversationState["score"])
-            assertNull(conversations.get(saved.id)!!.turns.last().selected.message.stateConfirmation)
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `cancelled memory preserves completed reply and can be retried without another chat turn`() = runTest {
-        val directory = Files.createTempDirectory("cancel-memory").toFile()
-        try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
-            var analyses = 0
-            val generator = FakeGenerator { _, plan -> flow {
-                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
-                    if (++analyses == 1) awaitCancellation()
-                    emit(GenerationEvent.TextDelta("完成的记忆"))
-                } else emit(GenerationEvent.TextDelta("已完成的正文。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(saved.id)
-            vm.updateInput("出发。")
-            vm.send()
-            vm.cancel()
-            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
-            assertTrue(vm.uiState.value.memories.isEmpty())
-            vm.refreshMemories()
-            assertEquals(2, analyses)
-            assertEquals(3, vm.uiState.value.messages.size)
-            assertEquals("完成的记忆", vm.uiState.value.memories.getValue("journey").content)
-            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `cancelling during memory save commits once and stops remaining analyses`() = runTest {
-        val directory = Files.createTempDirectory("memory-save-cancellation").toFile()
-        try {
-            lateinit var vm: ChatViewModel
-            var cancelAtSave = false
-            var analyses = 0
-            val finishAnalysis = CompletableDeferred<Unit>()
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, now = {
-                if (cancelAtSave && vm.uiState.value.memorySaving) {
-                    cancelAtSave = false
-                    vm.cancel()
-                    vm.updateInput("must not replace the draft during save")
-                    vm.resetConversation()
-                }
-                1L
-            })
-            val original = memoryCharacter()
-            val adaptation = original.nativeAdaptation!!
-            val saved = conversations.create(original.copy(nativeAdaptation = adaptation.copy(memories =
-                adaptation.memories + adaptation.memories.single().copy(id = "second"))), DemoConversationContent.persona, DemoConversationContent.preset)
-            val generator = FakeGenerator { _, plan -> flow {
-                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
-                    analyses++
-                    emit(GenerationEvent.TextDelta("已保存的旅行记忆"))
-                    finishAnalysis.await()
-                    cancelAtSave = true
-                } else emit(GenerationEvent.TextDelta("我们沿河出发。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(saved.id)
-            vm.updateInput("出发吧。")
-            vm.send()
-            finishAnalysis.complete(Unit)
-            assertFalse(vm.uiState.value.running)
-            assertFalse(vm.uiState.value.memorySaving)
-            assertEquals(1, analyses)
-            assertEquals("", vm.uiState.value.input)
-            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
-            val restored = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
-            assertEquals(vm.uiState.value.memories, restored.runtimeState.memories)
-            assertEquals(setOf("journey"), restored.runtimeState.memories.keys)
-            assertEquals(restored.runtimeState.memories, restored.turns.last().selected.runtimeStateAfter?.memories)
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `typing during analysis preserves draft and rejects obsolete memory`() = runTest {
-        val directory = Files.createTempDirectory("stale-memory").toFile()
-        try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val saved = conversations.create(memoryCharacter(), DemoConversationContent.persona, DemoConversationContent.preset)
-            lateinit var vm: ChatViewModel
-            val generator = FakeGenerator { _, plan -> flow {
-                if (plan.messages.first().origin.stage == "conversation-memory-contract") {
-                    vm.updateInput("下一轮草稿")
-                    emit(GenerationEvent.TextDelta("迟到的记忆"))
-                } else emit(GenerationEvent.TextDelta("正文。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(saved.id)
-            vm.updateInput("出发。")
-            vm.send()
-            assertEquals("下一轮草稿", vm.uiState.value.input)
-            assertEquals("下一轮草稿", ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.draft)
-            assertTrue(vm.uiState.value.memories.isEmpty())
-            assertEquals(ChatMessageStatus.COMPLETE, vm.uiState.value.messages.last().status)
-        } finally { directory.deleteRecursively() }
-    }
-
-    private fun choiceAdaptation() = NativeAdaptation(sourceSha256 = "a".repeat(64), state = listOf(
-        ConversationStateDefinition("phase", "阶段", ConversationStateValueType.STRING, initialValue = JsonPrimitive("探索中"), allowedStrings = listOf("探索中", "营地")),
-        ConversationStateDefinition("outcome", "结果", ConversationStateValueType.STRING, initialValue = JsonPrimitive("进行中"), allowedStrings = listOf("进行中", "已撤离"))),
-        playerChoices = listOf(io.github.zvensmoluya.tavernplayer.content.NativePlayerChoice("retreat", "返回营地", "结束探索。", "phase", listOf("探索中"), "尚未出发", "outcome", "已撤离", "我决定返回营地。")),
-        status = io.github.zvensmoluya.tavernplayer.content.NativeStatusView(items = listOf(io.github.zvensmoluya.tavernplayer.content.NativeStatusItem("outcome", "结果"))))
-
-    @Test fun `player choice cancellation persistence retry and branch switching retain explicit facts`() = runTest {
-        val directory = Files.createTempDirectory("native-choice-lifecycle").toFile()
-        try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val record = conversations.create(DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation(),
-                firstMessage = "探索一条林间小路。", alternateFirstMessages = listOf("沿着溪流前进。")), DemoConversationContent.persona, DemoConversationContent.preset)
-            var attempts = 0
-            val generator = FakeGenerator { _, plan -> flow {
-                assertTrue(plan.projectedConversationState().contains("\"outcome\":\"已撤离\""))
-                if (++attempts == 1) throw IOException("offline")
-                emit(GenerationEvent.TextDelta("你回到营地，开始整理记录。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            fun newViewModel() = ChatViewModel(repository(), PromptCompiler(), generator,
-                ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher), FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            var vm = newViewModel().also { it.loadConversation(record.id) }
-            vm.previewPlayerChoice("retreat")
-            assertNotNull(vm.uiState.value.choicePreview)
-            vm.cancelPlayerChoice()
-            assertEquals("", vm.uiState.value.input)
-            assertTrue(ConversationRepository(directory, PromptCompiler()).get(record.id)!!.turns.single().selected.playerChoiceCommits.isEmpty())
-            vm.previewPlayerChoice("retreat")
-            vm.confirmPlayerChoice()
-            assertEquals(0, generator.calls)
-            val saved = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
-            assertEquals(1, saved.turns.single().selected.playerChoiceCommits.size)
-            assertEquals("我决定返回营地。", saved.draft)
-            vm = newViewModel().also { it.loadConversation(record.id) }
-            assertEquals(saved.draft, vm.uiState.value.input)
-            saved.turns.single().selected.runtimeStateAfter!!.conversationState.values.forEach { (key, value) ->
-                assertEquals(value, vm.uiState.value.messages.single().nativeStateAfter!![key])
-            }
-            vm.nextVariant()
-            assertEquals("", vm.uiState.value.input)
-            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
-            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.messages.single().nativeStateAfter!!["outcome"])
-            vm.previousVariant()
-            assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
-            assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.messages.single().nativeStateAfter!!["outcome"])
-            assertEquals("", vm.uiState.value.input)
-            vm.updateInput(saved.draft)
-            vm.send()
-            assertTrue(vm.uiState.value.retryAvailable)
-            vm.retry()
-            assertEquals(2, attempts)
-            val restored = ConversationRepository(directory, PromptCompiler()).get(record.id)!!
-            assertEquals(JsonPrimitive("已撤离"), restored.runtimeState.conversationState.values["outcome"])
-            assertEquals(1, restored.turns.first().selected.playerChoiceCommits.size)
-            assertNull(restored.choiceDraft)
-        } finally { directory.deleteRecursively() }
-    }
-
-    @Test fun `regenerating a chosen reply starts before that choice and preserves the old candidate`() = runTest {
-        val generator = FakeGenerator { _, plan -> flow {
-            assertTrue(plan.projectedConversationState().contains("\"outcome\":\"进行中\""))
-            emit(GenerationEvent.TextDelta("你继续观察林间的足迹。"))
-            emit(GenerationEvent.Finished("stop"))
-        } }
-        val vm = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation()))
-        vm.updateInput("继续探索")
-        vm.send()
-        vm.previewPlayerChoice("retreat")
-        vm.confirmPlayerChoice()
-        assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
-        vm.regenerate()
-        assertEquals(2, generator.calls)
-        assertEquals("", vm.uiState.value.input)
-        assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
-        vm.previousVariant()
-        assertEquals(JsonPrimitive("已撤离"), vm.uiState.value.conversationState["outcome"])
-        assertEquals(1, vm.uiState.value.messages.last().playerChoiceCommits.size)
-        val message = vm.uiState.value.messages.last().message
-        vm.editMessage(message.id, "修改过的林间描述。", MessageEditMode.RESTART)
-        assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
-        assertTrue(vm.uiState.value.messages.last().playerChoiceCommits.isEmpty())
-    }
-
-    @Test fun `player choice disk failure exposes neither changed facts nor a new draft`() = runTest {
-        val directory = Files.createTempDirectory("native-choice-disk-failure").toFile()
-        try {
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val created = conversations.create(DemoConversationContent.character.copy(nativeAdaptation = choiceAdaptation()), DemoConversationContent.persona, DemoConversationContent.preset)
-            conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
-            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow { error("must not generate") } }, conversations,
-                FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(created.id)
-            vm.previewPlayerChoice("retreat")
-            vm.confirmPlayerChoice()
-            assertEquals("", vm.uiState.value.input)
-            assertEquals(JsonPrimitive("进行中"), vm.uiState.value.conversationState["outcome"])
-            assertTrue(vm.uiState.value.message.orEmpty().contains("选择未保存"))
-            assertFalse(vm.uiState.value.choiceSaving)
-            assertTrue(vm.uiState.value.messages.last().playerChoiceCommits.isEmpty())
-        } finally { directory.deleteRecursively() }
     }
 
     @Test
@@ -826,92 +355,6 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `setup persists before its draft and generation retry preserves selected facts`() = runTest {
-        val directory = Files.createTempDirectory("native-setup-lifecycle").toFile()
-        try {
-            val form = io.github.zvensmoluya.tavernplayer.content.NativeFormView(
-                id = "setup", title = "开局", openingIndices = listOf(0), fields = listOf(
-                    io.github.zvensmoluya.tavernplayer.content.NativeFormField("day", io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType.NUMBER, "日期", required = true)),
-                draftTemplate = "从第{{form.day}}天开始", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day"), openingIndex = 2),
-            )
-            val native = dayAdaptation().copy(forms = listOf(form, form.copy(id = "preset", title = "第二幕", openingIndices = listOf(2), setup = form.setup!!.copy(openingIndex = null))))
-            // Empty source greetings are skipped in storage; source index 2 is variant index 1.
-            val character = DemoConversationContent.character.copy(firstMessage = "开场选择", alternateFirstMessages = listOf("", "第二幕正文"), nativeAdaptation = native)
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val created = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            var attempts = 0
-            val generator = FakeGenerator { _, _ -> flow {
-                if (++attempts == 1) throw IOException("offline")
-                emit(GenerationEvent.TextDelta("第七天的早晨。"))
-                emit(GenerationEvent.Finished("stop"))
-            } }
-            var vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(created.id)
-            assertEquals(listOf(0, 2), vm.uiState.value.openingChoices.map { it.sourceIndex })
-            vm.selectOpening(2)
-            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
-            vm.submitNativeForm("setup", mapOf("day" to listOf("9")))
-            assertEquals("", vm.uiState.value.input)
-            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-            vm.selectOpening(0)
-            vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
-            assertEquals("从第7天开始", vm.uiState.value.input)
-            assertTrue(vm.uiState.value.openingChoices.isEmpty())
-            val saved = ConversationRepository(directory, PromptCompiler()).get(created.id)!!
-            assertEquals(vm.uiState.value.input, saved.draft)
-            assertEquals(2, saved.turns.single().selected.openingSourceIndex)
-            assertEquals("第二幕正文", saved.turns.single().selected.message.sourceText)
-            assertEquals("setup", saved.runtimeState.setupCommit?.formId)
-            vm = ChatViewModel(repository(), PromptCompiler(), generator,
-                ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher),
-                FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(created.id)
-            assertEquals("从第7天开始", vm.uiState.value.input)
-            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
-            vm.submitNativeForm("setup", mapOf("day" to listOf("9")))
-            assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-            vm.send()
-            assertTrue(vm.uiState.value.retryAvailable)
-            vm.retry()
-            assertEquals(2, attempts)
-            assertEquals(2, vm.uiState.value.messages.first().openingSourceIndex)
-            assertEquals(7.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-            vm.resetConversation()
-            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-            assertEquals(0, vm.uiState.value.messages.single().openingSourceIndex)
-            vm.submitNativeForm("setup", mapOf("day" to listOf("8")))
-            assertEquals("从第8天开始", vm.uiState.value.input)
-            assertEquals(2, vm.uiState.value.messages.single().openingSourceIndex)
-        } finally {
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun `setup disk failure exposes neither state nor draft`() = runTest {
-        val directory = Files.createTempDirectory("native-setup-failure").toFile()
-        try {
-            val native = dayAdaptation().copy(forms = listOf(io.github.zvensmoluya.tavernplayer.content.NativeFormView(
-                id = "setup", title = "开局", marker = "<setup/>", fields = listOf(
-                    io.github.zvensmoluya.tavernplayer.content.NativeFormField("day", io.github.zvensmoluya.tavernplayer.content.NativeFormFieldType.NUMBER, "日期")),
-                draftTemplate = "{{form.day}}", setup = io.github.zvensmoluya.tavernplayer.content.NativeSetupContract(stateFields = mapOf("world-day" to "day")),
-            )))
-            val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher)
-            val created = conversations.create(DemoConversationContent.character.copy(firstMessage = "<setup/>", nativeAdaptation = native), DemoConversationContent.persona, DemoConversationContent.preset)
-            conversations.store.beforeCommit = { throw IOException("Injected SQLite commit failure") }
-            val vm = ChatViewModel(repository(), PromptCompiler(), FakeGenerator { _, _ -> flow {} }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher)
-            vm.loadConversation(created.id)
-            vm.submitNativeForm("setup", mapOf("day" to listOf("7")))
-            assertEquals("", vm.uiState.value.input)
-            assertEquals(1.0, (vm.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-            assertTrue(vm.uiState.value.message.orEmpty().contains("开局未保存"))
-            assertFalse(vm.uiState.value.setupSaving)
-        } finally {
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
     fun `completed stream appends user once and records response metadata and latest trace`() = runTest {
         val generator = FakeGenerator { connection, _ ->
             flow {
@@ -939,121 +382,6 @@ class ChatViewModelTest {
         assertEquals(14L, state.lastTrace?.usage?.totalTokens)
         assertNotNull(state.lastTrace?.providerPreview)
         assertTrue(state.regenerateAvailable)
-    }
-
-    @Test
-    fun `completed assistant update dialect commits conversation state`() = runTest {
-        val adaptation = dayAdaptation()
-        val generator = FakeGenerator { _, _ ->
-            flow {
-                emit(GenerationEvent.TextDelta("正文\n<UpdateVariable>\n_.set('世界.日期', 1, 2);"))
-                emit(GenerationEvent.TextDelta("\n</UpdateVariable>"))
-                emit(GenerationEvent.Finished("stop"))
-            }
-        }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
-
-        viewModel.updateInput("继续")
-        viewModel.send()
-
-        assertEquals(2.0, (viewModel.uiState.value.conversationState["world-day"] as JsonPrimitive).double, 0.0)
-        assertEquals("正文", viewModel.uiState.value.messages.last().message.content)
-        assertTrue(viewModel.uiState.value.messages.last().message.sourceText.orEmpty().contains("<UpdateVariable>"))
-    }
-
-    @Test
-    fun `separate state confirmation is persisted and applied without changing assistant prose`() = runTest {
-        val adaptation = dayAdaptation()
-        val confirmation = "<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"
-        val generator = FakeGenerator { _, _ ->
-            flow {
-                emit(GenerationEvent.TextDelta("只有正文。"))
-                emit(GenerationEvent.AssistantStateConfirmed(confirmation))
-                emit(GenerationEvent.Finished("stop"))
-            }
-        }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
-
-        viewModel.updateInput("继续")
-        viewModel.send()
-
-        val message = viewModel.uiState.value.messages.last().message
-        assertEquals("只有正文。", message.content)
-        assertEquals("只有正文。", message.sourceText)
-        assertEquals(confirmation, message.stateConfirmation)
-        assertEquals(2.0, (viewModel.uiState.value.conversationState["world-day"] as JsonPrimitive).double, 0.0)
-    }
-
-    @Test
-    fun `failed assistant response does not commit its conversation state patch`() = runTest {
-        val adaptation = dayAdaptation()
-        val generator = FakeGenerator { _, _ ->
-            flow {
-                emit(GenerationEvent.TextDelta("正文\n<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"))
-                error("stream failed")
-            }
-        }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
-
-        viewModel.updateInput("继续")
-        viewModel.send()
-
-        assertEquals(1.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-        assertEquals(ChatMessageStatus.ERROR, viewModel.uiState.value.messages.last().status)
-    }
-
-    @Test
-    fun `swipe restores conversation state and the selected snapshot reaches the next prompt`() = runTest {
-        val adaptation = dayAdaptation()
-        val plans = mutableListOf<GenerationPlan>()
-        val generator = FakeGenerator { _, plan ->
-            plans += plan
-            val nextDay = plans.size + 1
-            flow {
-                emit(GenerationEvent.TextDelta("回复$nextDay\n<UpdateVariable>\n_.set('世界.日期', 1, $nextDay);\n</UpdateVariable>"))
-                emit(GenerationEvent.Finished("stop"))
-            }
-        }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = adaptation))
-
-        viewModel.updateInput("继续")
-        viewModel.send()
-        assertEquals(1, plans.size)
-        assertTrue(plans[0].projectedConversationState().contains("\"world-day\":1"))
-        assertEquals(2.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-
-        viewModel.regenerate()
-        assertEquals(2, plans.size)
-        assertTrue(plans[1].projectedConversationState().contains("\"world-day\":1"))
-        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-
-        viewModel.previousVariant()
-        assertEquals(2.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-        viewModel.nextVariant()
-        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-        viewModel.previousVariant()
-
-        viewModel.updateInput("下一轮")
-        viewModel.send()
-        assertEquals(3, plans.size)
-        assertTrue(plans[2].projectedConversationState().contains("\"world-day\":2"))
-    }
-
-    @Test
-    fun `completed and failed streams preserve narrative after an unclosed machine block`() = runTest {
-        for (fail in listOf(false, true)) {
-            val generator = FakeGenerator { _, _ -> flow {
-                emit(GenerationEvent.TextDelta("<UpdateVariable><JSONPatch>[]</JSONPatch>\n\n正文仍然存在。"))
-                if (fail) error("stream failed") else emit(GenerationEvent.Finished("stop"))
-            } }
-            val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = dayAdaptation()))
-            viewModel.updateInput("继续")
-            viewModel.send()
-            val last = viewModel.uiState.value.messages.last()
-            assertEquals("正文仍然存在。", last.message.content)
-            assertEquals(if (fail) ChatMessageStatus.ERROR else ChatMessageStatus.COMPLETE, last.status)
-            assertEquals(1.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
-        }
     }
 
     @Test
@@ -1536,22 +864,21 @@ class ChatViewModelTest {
             flow {
                 response += 1
                 val text = when (response) {
-                    1 -> "{{setvar::answer::old}}one\n<UpdateVariable>\n_.set('世界.日期', 1, 2);\n</UpdateVariable>"
-                    2 -> "later\n<UpdateVariable>\n_.set('世界.日期', 2, 3);\n</UpdateVariable>"
+                    1 -> "{{setvar::answer::old}}one"
+                    2 -> "later"
                     else -> "{{getvar::route}}/{{getvar::answer}}"
                 }
                 emit(GenerationEvent.TextDelta(text))
                 emit(GenerationEvent.Finished("stop"))
             }
         }
-        val viewModel = viewModel(generator, DemoConversationContent.character.copy(nativeAdaptation = dayAdaptation()))
+        val viewModel = viewModel(generator, DemoConversationContent.character)
 
         viewModel.updateInput("{{setvar::route::old}}first")
         viewModel.send()
         val firstUserId = viewModel.uiState.value.messages[1].message.id
         viewModel.updateInput("{{setvar::route::later}}second")
         viewModel.send()
-        assertEquals(3.0, (viewModel.uiState.value.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
 
         viewModel.editMessage(firstUserId, "{{setvar::route::new}}changed", MessageEditMode.RESTART)
 
@@ -1561,7 +888,6 @@ class ChatViewModelTest {
         assertEquals("{{setvar::route::new}}changed", state.messages[1].message.sourceText)
         assertTrue(state.messages[1].edited)
         assertEquals("new/", state.messages.last().message.content)
-        assertEquals(1.0, (state.conversationState.getValue("world-day") as JsonPrimitive).double, 0.0)
         assertEquals(3, generator.calls)
     }
 
@@ -2018,17 +1344,6 @@ class ChatViewModelTest {
         )
     }
 
-    private fun dayAdaptation() = NativeAdaptation(
-        sourceSha256 = "a".repeat(64),
-        state = listOf(ConversationStateDefinition("world-day", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(1))),
-        assistantStateAdapters = listOf(
-            AssistantStateAdapterDefinition(
-                LegacyStateDialect.UPDATE_VARIABLE_SET_V1,
-                listOf(AssistantStateMapping("世界.日期", "world-day")),
-            ),
-        ),
-    )
-
     private class FixedPresetSource(initial: PresetAsset = DemoConversationContent.preset) : ActivePresetSource {
         private val state = MutableStateFlow(initial)
         override val activePreset = state
@@ -2073,9 +1388,6 @@ class ChatViewModelTest {
         assistantPrefillApplied = false,
     )
 }
-
-private fun GenerationPlan.projectedConversationState(): String =
-    messages.single { it.origin.sourceIds == listOf("conversationState") }.content
 
 private class FakeGenerator(
     private val block: (StoredConnection, GenerationPlan) -> Flow<GenerationEvent>,

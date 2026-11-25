@@ -45,7 +45,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.zvensmoluya.tavernplayer.conversation.ConversationExecutionMode
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
@@ -284,7 +283,7 @@ fun CharacterDetailScreen(
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(conversation.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)} · ${ConversationExecutionMode.valueOf(conversation.executionMode).displayName()}",
+                                "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -354,7 +353,5 @@ private fun formatTimestamp(epochMillis: Long): String = runCatching {
 }.getOrDefault("")
 
 /** 已有对话保留创建时的执行路线，列表里必须能一眼分辨，否则两种入口开出来的对话长得一样。 */
-private fun ConversationExecutionMode.displayName(): String =
-    if (this == ConversationExecutionMode.BROWSER) "网页模式" else "原生模式"
 
 private val TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")

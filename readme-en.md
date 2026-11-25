@@ -83,11 +83,11 @@ Your default identity, global world books, and imported presets are optional. To
 
 Importing and Shelf reception do not execute programs or call a compilation model. In a web conversation, enabled helper scripts and eligible author pages run under `player-web-1`. Ordinary HTML does not execute scripts; missing capabilities are reported. Web dependencies are saved as needed and character images are reused.
 
-New conversations use the web message surface; existing ones retain their execution mode. New conversations do not require Native adaptation. Provider, endpoint, custom headers/body, and credential-shaped fields in presets remain inert imported content and do not change the player's connection.
+Conversations use the web message surface. Provider, endpoint, custom headers/body, and credential-shaped fields in presets remain inert imported content and do not change the player's connection.
 
 Shelf reception is available from the character library. Android 17 requests local network permission before the first reception.
 
-Native conversations and adaptation are deferred enhancements. Native conversation creation, model-based adaptation, and adaptation-file import are currently hidden. Existing native conversations remain accessible with their data and execution mode unchanged; shared MVU/EJS and conversation capabilities remain available to web mode.
+The legacy character-card adaptation pipeline (Native Adaptation) is deprecated. New conversations run author pages in a WebView. The conversation list shows web conversations only. Start a new conversation from the character details to play a character previously used in native mode.
 
 See the [architecture](docs/architecture.md) for implementation details, the [web runtime contract](docs/web-runtime.md) for execution and recovery limits, and the [documentation index](docs/README.md) for verification records.
 

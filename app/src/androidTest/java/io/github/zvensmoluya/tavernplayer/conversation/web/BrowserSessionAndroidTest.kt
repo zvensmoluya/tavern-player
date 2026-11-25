@@ -46,7 +46,7 @@ replaceVariables({count:Shared.count,provider:value.provider,same:Shared===paren
 </script></body>
 ```"""
         val saved = AtomicReference(runBlocking { repository.create(CharacterAsset("session-audit", name = "Actor", firstMessage = pages),
-            Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER) })
+            Persona("p", "User"), BuiltInPresets.default) })
         val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
         lateinit var web: WebView
         lateinit var session: BrowserSession
@@ -88,7 +88,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
 </script></body>
 ```"""
         val initial = runBlocking { repository.create(CharacterAsset("web-audit", name = "Actor", firstMessage = page),
-            Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER) }
+            Persona("p", "User"), BuiltInPresets.default) }
         val saved = AtomicReference(initial)
         val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
         lateinit var web: WebView
@@ -166,7 +166,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         if (phase == "prepare") {
             runBlocking {
                 val record = repository.create(CharacterAsset("sample", name = "Actor", firstMessage = "Opening"),
-                    Persona("p", "User"), BuiltInPresets.default, ConversationExecutionMode.BROWSER)
+                    Persona("p", "User"), BuiltInPresets.default)
                 repository.save(BrowserConversation.apply(record, BrowserActor("page"), "variables.replace",
                     buildJsonObject { put("type", "chat"); putJsonObject("data") { put("checkpoint", 42) } }))
             }

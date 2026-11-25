@@ -1,6 +1,6 @@
 # Tavern Player 当前实现架构
 
-> 状态：描述当前仓库已经建立的边界，更新于 2026-09-15。默认网页消息区、宿主桥和原程序装载已接入，范围见[网页运行契约](web-runtime.md)。文中 Native 编译描述独立可选适配实现。
+> 状态：描述当前仓库已经建立的边界，更新于 2026-11-25。默认网页消息区、宿主桥和原程序装载已接入，范围见[网页运行契约](web-runtime.md)。
 >
 > 产品与兼容性决定见 [`product-direction.md`](product-direction.md)。
 
@@ -17,23 +17,17 @@ app ───────────────> model-gateway
 - `model-gateway` 是协议边界，负责协议原生请求、最终 token 验证和流式响应。
 - `app` 负责 Android 文件访问、私有仓库、Compose 界面、生命周期和流式持久化。
 
-模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。纯 Kotlin 内容层不自行联网或运行浏览器；作者页面/后台脚本由 app 层隔离 WebView 执行，MVU/EJS 和 Native 适配由相应 QuickJS 宿主执行。
-
-`content-core` 定义 Native 内容适配、只读路径绑定和高层 Surface 契约。`native-compiler-15` 保留完整相关 JS/HTML/EJS 材料，让模型选择公共程序并生成有来源关联的 JS 模块、Surface 投影与 handler。模型开放程序表达，Player 控制界面表达，不提供通用组件树。原 MVU/EJS、简单绑定和完整草稿模板继续复用。
-
-当前编译分两次模型请求：先以完整 Program View 选择 MVU 或 Player 状态来源，再用同一份源码和所选分支的契约编译。MVU 分支不提供独立 Player 状态、旧写入器及其类型；Player 分支不提供 MVU 配置与写入接口。接收端校验分支、Schema 引用及绑定来源，跨分支字段即使为空也拒绝。运行时 `NativeSurfaceField` 由实际序列化描述单独列出，与固定 `NativeFormField` 区分。选择阶段使用 LOW、主编译使用 HIGH reasoning；两阶段用量分别记录，额外读取完整源码会增加输入成本。分支语义仍由模型判断，本地只验证引用有效性，不增加 JS 写法识别器。
-
-`app` 在编译与安装时校验真实 QuickJS 模块加载及导出，显示时执行只读投影。用户操作通过显式声明的状态读取、MVU 直接替换、程序私有状态、草稿及辅助生成接口调用宿主。操作检查点独立保存于消息候选，保留原消息结束快照；宿主写入先保存再发布，切换候选恢复所属 head，中断不自动重发请求。结构和加载检查均不证明整卡等价。宿主范围、取消语义和本地验证见 [JS 动态原生 Surface](archive/native-script-surfaces-20260908.md)。
+模块边界刻意把“不可信角色卡内容”与网络、文件系统和 Android UI 隔开。纯 Kotlin 内容层不自行联网或运行浏览器；作者页面/后台脚本由 app 层隔离 WebView 执行，MVU/EJS 由 QuickJS 宿主执行。
 
 ## 网页运行路径
 
-`BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ConversationSession` 统一持有可写会话、已提交基线、版本与生成任务，串行提交原生/网页操作；`ChatViewModel` 只做生命周期和 UI 适配。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
+`BrowserProgramReader` 保留原文与来源，`BrowserProgramPreparer` 仅解析并识别登记公共模块。`BrowserSession` 连接 Android WebMessageListener 与可信外壳，`BrowserConversation` 负责身份/版本校验、同步视图快照与纯状态提案；`ConversationSession` 统一持有可写会话、已提交基线、版本与生成任务，串行提交玩家与作者页面的会话操作；`ChatViewModel` 只做生命周期和 UI 适配。网页消息修改不调用用户编辑的 Macro 重处理或截断入口。
 
 网页外壳先创建一个持久作者会话协调 iframe，再挂载消息和后台脚本。`session.mjs` 统一保存共享对象、事件监听器、待提交视图和命令队列；各 `host.mjs` 保留页面身份与原生传输入口。作者内容与协调器同源，通过实际对象引用共享函数和回调；协调器仍与可信外壳不同源且不直接访问原生桥。原生事实事件只向协调器分发一次，销毁页面按所属身份清理监听器、等待及排队操作。
 
 普通流式文字通过 DOM 修补续写；静态富文本在持久 iframe 内清洗并更新，保留未变节点和用户输入状态。展示缓冲未完整 HTML/CSS，作者交互页面仍在最终事务保存后启动，准备完成再替换可见占位。源码或候选变化按作者页面生命周期重建，静态修补不会用于可执行作者页面。
 
-可信外壳和作者兼容父页面使用不同来源；消息和后台脚本各自持有候选/脚本身份。初次快照、后续增量、50 ms 合并更新、先保存后确认、失败停止实例及销毁取消均由生产路径实现。`executionMode` 缺省为旧 Native，新建入口显式 BROWSER，保存程序指纹、候选变量/head 与资源版本。角色详情已收起原生新建、模型适配、适配文件导入和适配报告；原生能力留作后续增强，底层编译/安装与旧会话执行实现保留。已有 Native 会话仍从已有对话列表打开，数据与执行模式不变，共享 MVU/EJS、生成和存储继续服务网页模式。
+可信外壳和作者兼容父页面使用不同来源；消息和后台脚本各自持有候选/脚本身份。初次快照、后续增量、50 ms 合并更新、先保存后确认、失败停止实例及销毁取消均由生产路径实现。新建记录标记为 `BROWSER`。列表与打开入口只接受网页会话，旧原生记录留在原存储中。
 
 网页图片命中已有持久资源索引，缺失图片按需补入。`WebResourceRepository` 独立保存 HTTPS 静态资源，URL 在会话内绑定首个内容哈希，重定向模块/CSS 保留最终解析基址。具体协议、容量、接口、恢复和验证命令集中维护在[网页运行契约](web-runtime.md)。
 
@@ -146,11 +140,9 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 角色详情和对话共用 `WorldBookReaderScreen`，`WorldBookReaderComponents` 提供本模块的纸面阅读样式、目录摘录、翻页栏和使用方式面板，无搜索或书级控制。`display_index` 存在时沿用作者展示顺序，否则按原数组顺序。多书只标明内容来源；目录对模板显示占位提示，正文以可选择的原始文字分块呈现。详情的上一项、下一项沿目录顺序导航；使用方式常驻底部，选项和恢复操作按需展开，正文编辑从右上角进入独立页面。角色详情只读；对话详情另显示最近生成的注入结果。编辑草稿、选中内容及列表位置可恢复。对话内使用全屏窗口保留下层 WebView，阅读不会销毁作者运行环境；生成中可读和翻页，调整锁定。
 
-`QuickJsMvuRuntime` 通过 `MvuConversationRuntime` 接入声明 MVU 的适配卡：会话创建时初始化开场候选，完整回复与重启式编辑时更新变量，候选切换恢复持久检查点。完整上游状态保存为 `ConversationRuntimeState.mvuState`，随已有候选一起序列化，记录 bundle/卡程序哈希以拒绝交叉恢复。MVU 的事务结果同时包含状态与 `processedText`：开场初始化、完整回复和重启式编辑消费两者，处理后正文经过 Macro / STORAGE / DISPLAY 投影，模型或编辑原文仍保存为 `sourceText`。生成结束后的重投影复用同一次 MVU 结果，不重复执行变量命令；取消、截断与缺少完成事件不提交 MVU 结果。仅保存文字的编辑不执行 MVU。固定 MVU/Zod bundle 与许可证由本地构建带入应用 APK；原卡程序来自已安装的适配快照，不进行运行期下载。完整变量树进入下一轮 Prompt 及变量读取宏，Native Status、Scene 和 Collection 通过 `ConversationStateReader` 直接读取该快照，绑定不生成另一份业务状态。EJS 已作为独立的只读提示词执行入口接入，见下文。详见 [聊天接入记录](archive/mvu-chat-integration-20260907.md)。
+`MvuConversationRuntime` 在网页会话创建、完整回复和重启式编辑时执行角色声明的 MVU 程序。处理后的正文参与显示与编排，原文和 MVU 检查点随候选保存，切换候选时恢复。
 
 `CharacterRepository` 在 app-private 目录中按角色保存版本化 manifest、原始 source、静态头像缩略图和通过 Native Decoder 验证的本地 PNG/JPEG/WebP 资产。SHA-256 相同的导入返回已有资产；同名但内容不同的卡片形成新资产。资产物化限制内嵌字节数、边长和像素数，远程 URI 不会联网解析。
-
-经过校验的 `NativeAdaptation` 可以旁挂到同一 Character manifest；安装时必须匹配原始 `sourceSha256`，并且所有 State、Adapter、View、Form 与本地 asset 引用都通过确定性验证。它不会修改 `source.png` / `source.json`。新建 Native Conversation 捕获该适配及其初始状态快照；之后替换 Character 上的适配不会改写旧 Conversation。角色详情可显式请求模型准备适配或导入手工产物；普通导入和 Shelf 接收不会自动调用模型。
 
 `PresetRepository` 以一个原子 app-private manifest 保存当前 Preset、初始 source 树和全局 active ID；内置默认的初始版本由代码注入。它提供导入并激活、显式保存、恢复初始版本、从当前草稿另存为并激活、删除和无损导出；内容去重、大小写不敏感唯一命名以及删除 active 后回退都在同一持久状态边界完成。原始文件的空白与键格式不单独保存，但解析后的全部 JSON 数据都会保留。
 
@@ -164,23 +156,17 @@ app mapper 先拔除 Preset 中已关闭的 generation settings，再在 adapter
 
 应用启动只立即创建角色库所需的轻量对象；角色 manifest 在后台 I/O 初始化并同时建立路径元数据索引，头像、来源文件和本地资产查询不再重复反序列化完整 manifest。首页会在后台 I/O 初始化 Room/旧数据导入并持续订阅已有对话摘要，供全局对话列表和角色详情共用，无需先进入详情。Preset、模型连接与 Chat ViewModel 仍按进入详情或对应功能后才创建；连接 DataStore 的已解析状态由应用级共享流复用，多个 ViewModel 不会分别解析同一份模型目录缓存。角色详情的系统返回与页面返回按钮共用同一导航操作，清除角色选择并回到角色库。
 
-Conversation State 属于同一个 `ConversationRuntimeState`，因此跟随既有消息前后检查点、regenerate、swipe、截断与进程恢复语义。`UpdateVariableSetV1Adapter` 与 `UpdateVariableJsonPatchV1Adapter` 只把唯一、完整 assistant update envelope 中白名单路径的 scalar 更新解码为 `ConversationStatePatch`，`NativeAdaptationRuntime` 在消息候选完成时一次应用；完整空块是已确认的 no-op，缺块不是状态事实，缺失内层或外层闭合标签的畸形块不会被宽松修复。原始 `sourceText` 保留机器块用于摄入与诊断；声明对应 Adapter 后，Player 在聊天 storage/display 的 Macro / Regex 投影前剥离已识别的完整机器块，并在流式阶段暂时隐藏未闭合块。畸形块不直接写入状态；单个畸形块只有在独立确认成功后才从 canonical 展示移除，歧义的多个块保持可见。Adapter 不负责 UI 或 Prompt。`PromptCompiler` 把适配声明的 label/type/description 与当前值按稳定顺序编码为固定 JSON system projection；该投影不经过卡片模板、Macro 或 Regex，也不允许 Adaptation 指定 role、位置或格式。声明 Adapter 时，Player 另生成固定 dialect 与白名单回写契约，并要求每轮以完整块确认更新或 no-op。
-
-生产生成器在主回复缺少、未闭合或给出畸形块时执行一次固定的独立状态确认：输入只包括 Player 状态、已校验白名单和 JSON 转义的当轮对话证据，输出只接受完整 envelope。主回复已有合法块时不增加调用；确认失败时不猜测、不覆盖原回复，并留下状态未确认诊断。成功确认的块独立保存在 `stateConfirmation`，不可变 `sourceText` 仍是主回复原文；状态摄入优先读取确认块，canonical storage/display 可在确认成功后移除原回复中的单个畸形机器片段，两次 Provider usage 合并记录。该流程不创建 Adaptation，也不是自动适配编译器。
-
-Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 动态投影的 Status、Collection、Form、Scene 和 Action Group。固定 Form 按原消息来源与开场匹配生成草稿，仅抑制其已声明接管的纯展示 Regex；动态 Form 和操作通过声明的 handler 进入宿主提交。原有 Scene 可按 scalar State 的精确值读取已安装本地静态图片，动态 Scene 尚未接入远程图片。支持只读状态绑定与受控 JS 行为，不提供通用布局组件树。详见[Surface 实现记录](archive/native-script-surfaces-20260908.md)。
-
 每个消息候选同时保存投影前 `sourceText`、canonical storage content，以及消息处理前、内容投影前和处理后的 Conversation Runtime State。聊天气泡可以直接编辑已完成的用户或 assistant 消息。“保存文字”只重新产生该候选的 canonical content，保留 reasoning、生成 metadata、其他候选、后续 Turn 和当前运行状态；后续请求读取修正后的历史，但不会假装已经重新执行过去的 Macro 或 World Book 状态变化。“从这里重新生成 / 继续”才把该 Turn 收敛为一个手动候选、截断其后全部 Turn，并把当前运行状态恢复为编辑后结果。旧后缀不会作为隐藏分支保留。状态检查点不设历史窗口，未来 branch 是否以及如何建立仍是独立产品决定。
 
 模型连接按模型 ID 保存可选的 context / output token 上限覆盖。覆盖值逐字段优先于 Provider 模型目录，只进入运行时能力解析，不反向修改 Preset；切换模型会切换到对应模型自己的覆盖记录。
 
 界面以「对话｜角色｜模型｜我的」四个主区域组织。冷启动进入全局对话列表，每个 Conversation 独立展示并直接续聊；角色页 → 角色详情仍提供新建和已有对话入口。「我的」提供单一默认身份编辑器、Preset 中心和全局世界书入口；Chat 仍可进入 Preset 中心，并保留运行中禁用的快捷切换 bottom sheet。Preset 中心通过 Storage Access Framework 导入 / 导出；选择列表项会先激活再编辑。详情默认只展示实际 order 中的普通 Prompt 与 Regex 快速开关，Prompt 开关只改 `enabled`，不会改变成员关系或相对顺序；单项内容、兼容字段、结构设置和请求参数使用独立全屏次级页面。全部修改显式保存，带未保存修改返回时提供保存、放弃和继续编辑；不新增或删除 Prompt 定义，也不重写 Regex。导入和浏览不要求模型配置，首次发送时才引导配置。恢复对话、产生新消息和生成结束时，Chat 会定位到最新消息；只有 reasoning 尚无正文的流会显示轻量“正在思考…”状态。聊天气泡直接提供“保存文字”和“从这里重新生成 / 继续”；只有后者会在存在后续消息或其他 swipe 时确认将被丢弃的事实。开场和备用开场是 opening swipe；regenerate 为最后一个 assistant turn 增加候选，切换已缓存候选不会重新求值 Macro。
 
-网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。Native 模式继续采用原有 Compose 安全 Markdown。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。聊天页的系统返回与顶部返回按钮共用导航操作，回到进入时的全局对话列表或角色详情；忙碌时消费系统返回而不离开，保持与顶部返回按钮禁用状态一致。键盘在场时先由输入法处理返回。
+网页模式在破坏性清理前取得 DISPLAY 投影，交给单 WebView 的可信消息外壳；普通 HTML 清理后展示，完整 body 围栏进入不同源的作者兼容区。消息编辑在网页模式使用原生弹窗，沿用文字保存/截断重启两种业务入口。聊天页的系统返回与顶部返回按钮共用导航操作，回到进入时的全局对话列表或角色详情；忙碌时消费系统返回而不离开，保持与顶部返回按钮禁用状态一致。键盘在场时先由输入法处理返回。
 
 ## EJS 提示词执行
 
-网页模式从原世界书读取 EJS 入口并绑定原文哈希，无需编译；Native 编译契约通过 `ejsSourceIds` 选择完整世界书模板，本地安装为来源哈希绑定的 `ejsTemplates`，与同条目的旧原文分支选择互斥。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
+网页模式从原世界书读取 EJS 入口并绑定原文哈希。`PromptCompiler` 在条目触发/分组及 WORLD_INFO Regex/Macro 后请求求值；`QuickJsEjsRuntime` 在应用挂起边界执行 EJS 并提供只读 MVU 检查点、当前分支的 Prompt 历史和有限查询接口。编排与 Provider 重裁剪使用同一轮结果缓存，不重放脚本。世界书和最终上下文预算计入实际输出；渲染结果作为字面量插入，不再次执行 Macro/EJS。异常阻止请求，取消释放引擎。各模板实例独立，不保存另一份变量时间线。来源、确切历史范围语义及验证见 [EJS 接入记录](archive/ejs-quickjs-integration-20260907.md)。
 
 ## 首页布局与导航状态
 
@@ -202,4 +188,4 @@ Compose 同时提供既有固定 Status、Scene、Collection、Form，以及 JS 
 
 ## 当前尚未实现
 
-当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话；已安装适配的受控能力按上述契约运行，其余 Tavern Helper 依赖不被伪装为兼容。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。
+当前闭环不包含 CHARX、YAML、BYAF、Text Completion Preset、空白 Preset 创建、多 Persona 管理 / 选择 / 绑定、Character 编辑 / 导出、独立 Regex 管理、完整第三方扩展宿主，以及 Conversation delete、continue 和可保留旧后缀的 branch / checkpoint。真实社区卡和 OpenAI Preset 可以进入对话。直接运行作者程序的已实现范围见[网页运行契约](web-runtime.md)。

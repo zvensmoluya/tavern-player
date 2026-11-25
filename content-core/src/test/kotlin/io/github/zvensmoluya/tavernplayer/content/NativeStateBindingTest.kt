@@ -34,20 +34,4 @@ class NativeStateBindingTest {
         assertTrue(NativeAdaptationValidator().validate(player).valid)
     }
 
-    @Test fun compilerPreservesPathsAndRejectsDuplicatedMvuBusinessState() {
-        val card = CharacterAsset(id = "a".repeat(64), name = "Sample", rawCard = buildJsonObject {
-            putJsonObject("data") { putJsonObject("extensions") { putJsonObject("tavern_helper") {
-                putJsonArray("scripts") { add(buildJsonObject { put("content", "schema"); put("enabled", true) }) }
-            } } }
-        })
-        val draft = NativeCompilationDraft("只读绑定", mvu = NativeCompilationMvu("script0"),
-            stateBindings = listOf(binding), status = adaptation.status)
-        val compiler = NativeAdaptationCompiler()
-        val result = compiler.complete(card, Json.encodeToString(draft), emptySet()) as NativeCompilationResult.Ready
-        assertEquals(listOf(binding), result.adaptation.stateBindings)
-        assertTrue(result.adaptation.state.isEmpty())
-        assertTrue(result.adaptation.progressions.isEmpty())
-        val copied = draft.copy(state = listOf(ConversationStateDefinition("copy", type = ConversationStateValueType.NUMBER, initialValue = JsonPrimitive(0))))
-        assertTrue(compiler.complete(card, Json.encodeToString(copied), emptySet()) is NativeCompilationResult.Rejected)
-    }
 }

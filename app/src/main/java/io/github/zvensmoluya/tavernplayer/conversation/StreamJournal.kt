@@ -97,9 +97,7 @@ internal fun recoverConversation(record: ConversationRecord, streams: List<Recov
             }
             check(saved.progress.persistedThrough == expected - 1)
             val before = variant.projectionRuntimeStateBefore ?: record.runtimeState
-            val narrative = NativeAdaptationRuntime().projectAssistantMessage(record.character.nativeAdaptation, raw.toString(),
-                stateConfirmedSeparately = confirmation != null, streaming = false).narrativeText
-            val projected = compiler.projectAssistantOutput(rawText = narrative, rawReasoning = reasoning.map { it.first.toString() },
+            val projected = compiler.projectAssistantOutput(rawText = raw.toString(), rawReasoning = reasoning.map { it.first.toString() },
                 character = record.character, persona = record.persona, preset = context.preset, runtimeState = before,
                 history = record.copy(turns = record.turns.takeWhile { it.id != turn.id }).promptMessages(),
                 conversationId = record.id, generationId = context.generationId, modelId = context.modelId,
@@ -111,5 +109,5 @@ internal fun recoverConversation(record: ConversationRecord, streams: List<Recov
                 runtimeStateAfter = record.runtimeState)
         }
     }) }
-    return NativeOperations.recover(record.copy(turns = turns))
+    return record.copy(turns = turns)
 }

@@ -8,9 +8,6 @@ import io.github.zvensmoluya.tavernplayer.content.CharacterCardImporter
 import io.github.zvensmoluya.tavernplayer.content.CharacterImportResult
 import io.github.zvensmoluya.tavernplayer.content.CharacterSourceFormat
 import io.github.zvensmoluya.tavernplayer.content.CompatibilityDiagnostic
-import io.github.zvensmoluya.tavernplayer.content.NativeAdaptation
-import io.github.zvensmoluya.tavernplayer.content.NativeAdaptationValidationIssue
-import io.github.zvensmoluya.tavernplayer.content.NativeAdaptationValidator
 import io.github.zvensmoluya.tavernplayer.storage.AtomicFileStore
 import java.io.File
 import java.util.Base64
@@ -55,11 +52,6 @@ sealed interface CharacterSaveResult {
     data class Rejected(val diagnostics: List<CompatibilityDiagnostic>) : CharacterSaveResult
 }
 
-sealed interface NativeAdaptationInstallResult {
-    data class Installed(val character: CharacterAsset) : NativeAdaptationInstallResult
-    data class Rejected(val issues: List<NativeAdaptationValidationIssue>) : NativeAdaptationInstallResult
-}
-
 internal data class StaticImageInfo(val width: Int, val height: Int, val mediaType: String)
 
 internal fun interface StaticImageInspector {
@@ -79,7 +71,6 @@ internal object AndroidStaticImageInspector : StaticImageInspector {
 class CharacterRepository internal constructor(
     filesDir: File,
     private val importer: CharacterCardImporter = CharacterCardImporter(),
-    private val adaptationValidator: NativeAdaptationValidator = NativeAdaptationValidator(),
     private val now: () -> Long = System::currentTimeMillis,
     private val imageInspector: StaticImageInspector = AndroidStaticImageInspector,
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
@@ -160,48 +151,6 @@ class CharacterRepository internal constructor(
 
     fun sourceFile(characterId: String): File? = manifestsById[characterId]?.sourceFileName?.let { name ->
         File(File(root, characterId), name).takeIf(File::isFile)
-    }
-
-    fun availableAssetIds(characterId: String): Set<String> =
-        manifestsById[characterId]?.localAssets?.mapTo(mutableSetOf(), LocalCharacterAsset::assetId).orEmpty()
-
-    suspend fun installNativeAdaptation(
-        characterId: String,
-        adaptation: NativeAdaptation,
-    ): NativeAdaptationInstallResult = withContext(ioDispatcher) {
-        initialize()
-        mutex.withLock {
-            val directory = File(root, characterId)
-            val manifest = manifestsById[characterId]
-                ?: return@withLock NativeAdaptationInstallResult.Rejected(
-                    listOf(NativeAdaptationValidationIssue("characterId", "UNKNOWN_CHARACTER", "角色不存在")),
-                )
-            val validation = adaptationValidator.validate(
-                adaptation = adaptation,
-                expectedSourceSha256 = manifest.character.sourceSha256,
-                availableAssetIds = manifest.localAssets.mapTo(mutableSetOf(), LocalCharacterAsset::assetId),
-                worldBooks = manifest.character.worldBooks,
-                openingCount = 1 + manifest.character.alternateFirstMessages.size,
-                regexScripts = manifest.character.regexScripts,
-            )
-            if (!validation.valid) return@withLock NativeAdaptationInstallResult.Rejected(validation.issues)
-            adaptation.script?.let { program ->
-                try {
-                    io.github.zvensmoluya.tavernplayer.conversation.script.QuickJsNativeRuntime().validate(program)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    if (cancelled !is kotlinx.coroutines.TimeoutCancellationException) throw cancelled
-                    return@withLock NativeAdaptationInstallResult.Rejected(listOf(NativeAdaptationValidationIssue("script", "SCRIPT_LOAD_FAILED", "JS 模块加载超时")))
-                } catch (_: Exception) {
-                    return@withLock NativeAdaptationInstallResult.Rejected(listOf(NativeAdaptationValidationIssue("script", "SCRIPT_LOAD_FAILED", "JS 模块语法、依赖或导出入口无效")))
-                }
-            }
-            val updated = manifest.character.copy(nativeAdaptation = adaptation)
-            val updatedManifest = manifest.copy(character = updated)
-            writeAtomic(File(directory, MANIFEST_FILE), json.encodeToString(updatedManifest))
-            manifestsById = manifestsById + (characterId to updatedManifest)
-            _characters.value = _characters.value.map { if (it.id == characterId) updated else it }.sortedWith(CHARACTER_ORDER)
-            NativeAdaptationInstallResult.Installed(updated)
-        }
     }
 
     fun assetFile(characterId: String, assetId: String): File? {

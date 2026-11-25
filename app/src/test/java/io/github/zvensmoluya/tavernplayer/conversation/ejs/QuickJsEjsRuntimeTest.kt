@@ -96,16 +96,12 @@ class QuickJsEjsRuntimeTest {
         val file = File(assets, "ejs/c04-card.png")
         org.junit.Assume.assumeTrue("Optional audited C-04 original not prepared", file.isFile)
         val original = (CharacterCardImporter().import(file.readBytes(), "c04-card.png") as CharacterImportResult.Ready).character
-        val request = Json.parseToJsonElement(NativeAdaptationCompiler().prepare(original, emptySet())).jsonObject
-        val sources = request.getValue("sources").jsonArray.map { it.jsonObject }
-        val schema = sources.single { it["kind"] == JsonPrimitive("SCRIPT") &&
-            it.getValue("content").jsonPrimitive.content.contains("registerMvuSchema") }
-        val templates = sources.filter { it["kind"] == JsonPrimitive("EJS_TEMPLATE") }
-        assertEquals(4, templates.size)
-        val draft = NativeCompilationDraft("原始模板与变量程序", mvu = NativeCompilationMvu(schema.getValue("id").jsonPrimitive.content),
-            ejsSourceIds = templates.map { it.getValue("id").jsonPrimitive.content })
-        val installed = NativeAdaptationCompiler().complete(original, Json.encodeToString(NativeCompilationDraft.serializer(), draft), emptySet()) as NativeCompilationResult.Ready
-        val snapshot = original.copy(nativeAdaptation = installed.adaptation).snapshot()
+        val preparer = io.github.zvensmoluya.tavernplayer.conversation.web.BrowserProgramPreparer {
+            File(System.getProperty("webRuntimeAssets"), "programs.js").readText()
+        }
+        val program = preparer.prepare(BrowserProgramReader.character(original))
+        assertEquals(4, program.ejsTemplates.size)
+        val snapshot = original.snapshot().copy(browserProgram = program)
         val initial = Json.parseToJsonElement(File(assets, "ejs/c04-cases.json").readText()).jsonArray.first().jsonObject
             .getValue("request").jsonObject.getValue("variables").jsonObject
         val input = NormalGenerationInput(snapshot, Persona("p", "Traveler"),
