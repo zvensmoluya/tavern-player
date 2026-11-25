@@ -145,7 +145,10 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
             assertTrue("Image resize must expand its containing frame", frameHeight.get() > 180)
             repeat(3) { compose.runOnUiThread { session.update(state(saved.get())) } }
             compose.runOnUiThread { session.release(); web.destroy() }
-            saved.set(ConversationRepository(root, graph.promptCompiler).blockingGet(initial.id)!!)
+            val reopened = ConversationRepository(root, graph.promptCompiler).blockingGet(initial.id)!!
+            // A web asset update changes the fingerprint between the two mounts.
+            saved.set(reopened.copy(character = reopened.character.copy(browserProgram =
+                reopened.character.browserProgram!!.copy(runtimeFingerprint = "previous-build"))))
             assertEquals(JsonPrimitive(1), saved.get().runtimeState.browserChatVariables["boots"])
             mount()
             compose.waitUntil(30_000) { saved.get().runtimeState.browserChatVariables["boots"] == JsonPrimitive(2) || failures.isNotEmpty() }

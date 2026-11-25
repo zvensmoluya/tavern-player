@@ -19,6 +19,42 @@ class BrowserProgramPreparerTest {
     @get:Rule val folder = TemporaryFolder()
     private val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))
     private val preparer = BrowserProgramPreparer { File(System.getProperty("webRuntimeAssets"), "programs.js").readText() }
+    @Test fun upgradesReadSavedHistoryAndOnlyInitializePristineMvuOpenings() = runBlocking {
+        val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
+        var oldVersion = true
+        val repository = ConversationRepository(folder.newFolder(), PromptCompiler(), mvuRuntime = runtime,
+            prepareBrowser = { if (oldVersion) it.copy(runtimeFingerprint = "old") else preparer.prepare(it) })
+        val preset = BuiltInPresets.default
+        val persona = Persona("p", "User")
+        val plainCard = DemoConversationContent.character.copy(firstMessage = "Original opening.", alternateFirstMessages = emptyList(),
+            rawCard = JsonObject(emptyMap()))
+        val ordinary = repository.create(plainCard, persona, preset)
+        val source = """{"extensions":{"tavern_helper":{"scripts":[{"type":"script","enabled":true,"content":"import 'https://cdn.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@beta/artifact/bundle.js'"}]}}}"""
+        val card = plainCard.copy(rawCard = Json.parseToJsonElement(source).jsonObject)
+        val opening = repository.create(card, persona, preset)
+        val started = repository.create(card, persona, preset)
+        val user = ConversationMessage("user", MessageRole.USER, "Saved text.", "User")
+        val played = repository.save(started.copy(turns = started.turns + ConversationTurn("turn", user.role,
+            listOf(MessageVariant("variant", user))), draft = "Saved draft"))
+        oldVersion = false
+        suspend fun open(id: String) = requireNotNull(repository.openForPlay(id, preset.snapshot(), "current"))
+        assertEquals(OpenedConversation(ordinary), open(ordinary.id))
+        val resumed = open(opening.id)
+        assertNull(resumed.readOnlyReason)
+        assertNotNull(resumed.record.runtimeState.mvuState)
+        assertEquals(resumed, open(opening.id))
+        val checkpoint = requireNotNull(resumed.record.runtimeState.mvuState)
+        val incompatible = repository.save(resumed.record.copy(runtimeState = resumed.record.runtimeState.copy(
+            mvuState = checkpoint.copy(programSha256 = "different-program"))))
+        val incompatibleHistory = open(incompatible.id)
+        assertNotNull(incompatibleHistory.readOnlyReason)
+        assertEquals(incompatible, incompatibleHistory.record)
+        val history = open(played.id)
+        assertTrue(history.readOnlyReason.orEmpty().contains("缺少 MVU 检查点"))
+        assertEquals(played, history.record)
+        assertEquals(played, repository.get(played.id))
+    }
+
     @Test fun publicModuleOwnershipIsDecidedBeforeLaunchingBrowserScripts() = runBlocking {
         val url = "https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@beta/artifact/bundle.js"
         val schema = "import {registerMvuSchema} from 'https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js';"
@@ -68,7 +104,12 @@ class BrowserProgramPreparerTest {
         val next = update.messages.single().applyTo(record.runtimeState)
         assertEquals("Visitor", identity(next))
         repository.save(BrowserConversation.withRuntime(record, next))
-        assertEquals("Visitor", identity(requireNotNull(repository.open(record.id)).runtimeState))
+        val resumed = requireNotNull(repository.openForPlay(record.id, BuiltInPresets.default, "next-web-build"))
+        assertNull(resumed.readOnlyReason)
+        assertEquals("Visitor", identity(resumed.record.runtimeState))
+        val following = requireNotNull(runtime.update(resumed.record.character, reply.replace("'User', 'Visitor'", "'Visitor', 'Player'"),
+            resumed.record.runtimeState, persona = resumed.record.persona))
+        assertEquals("Player", identity(following.messages.single().applyTo(resumed.record.runtimeState)))
     }
     @Test fun legacyOriginalInitializesAndUpdatesThroughThePinnedMvuHost() = runBlocking {
         val hash = "5191b0bcb615e2abe1fa6fef20212e64d6df483f0f453dc929d4bf15d3ef07d4"

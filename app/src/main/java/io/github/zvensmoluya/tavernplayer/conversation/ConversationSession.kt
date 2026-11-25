@@ -75,6 +75,7 @@ data class GenerationTraceState(
 )
 
 data class ChatUiState(
+    val readOnlyReason: String? = null,
     val storageFailed: Boolean = false,
     val executionMode: ConversationExecutionMode = ConversationExecutionMode.BROWSER,
     val browserSnapshot: JsonObject = JsonObject(emptyMap()),
@@ -221,15 +222,15 @@ class ConversationSession(
             try {
                 stopGenerationAndJoin()
                 if (persistedRecord != null) persistNow()
-                val loaded = conversationRepository?.open(conversationId) ?: return@launch
+                val opened = conversationRepository?.openForPlay(conversationId, currentPreset, browserEnvironment?.fingerprint) ?: return@launch
                 epoch++
-                record = loaded
-                persistedRecord = loaded
+                record = opened.record
+                persistedRecord = opened.record
                 displayCache.clear(); displayReasoningCache.clear()
                 storageFailure = null
-                _uiState.update { it.copy(storageFailed = false) }
-                syncRecord()
-                refreshDisplayCache()
+                _uiState.update { it.copy(storageFailed = false, readOnlyReason = opened.readOnlyReason) }
+                syncRecord(message = null)
+                if (opened.readOnlyReason == null) refreshDisplayCache()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 _uiState.update { it.copy(message = "对话未打开：${error.userMessage()}") }
@@ -238,6 +239,7 @@ class ConversationSession(
     }
 
     fun updateInput(value: String) {
+        if (_uiState.value.readOnlyReason != null) return
         if (_uiState.value.browserOperationRunning) {
             pendingBrowserDraft = value
             _uiState.update { it.copy(input = value) }
@@ -267,6 +269,7 @@ class ConversationSession(
     }
 
     private fun commitWorldBook(onSaved: () -> Unit = {}, edit: (ConversationRecord) -> ConversationRecord) {
+        if (_uiState.value.readOnlyReason != null) return
         if (_uiState.value.busy || _uiState.value.browserGenerating) return
         val proposed = try {
             edit(record)
@@ -312,6 +315,7 @@ class ConversationSession(
     }
 
     private fun launchChatOperation(generates: Boolean = true, block: suspend () -> Unit) {
+        if (_uiState.value.readOnlyReason != null) return
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             suspend fun execute() {
                 try {
@@ -639,6 +643,7 @@ class ConversationSession(
     }
 
     suspend fun invokeBrowser(actor: BrowserActor, revision: String, method: String, args: JsonObject): JsonObject {
+        _uiState.value.readOnlyReason?.let { error(it) }
         if (method == "generation.stop") {
             BrowserConversation.authorize(record, actor, BrowserConversation.revision(record))
             require(args.keys.all { it == "id" }) { "未支持的停止参数" }
@@ -822,6 +827,7 @@ class ConversationSession(
     }
 
     fun resetConversation() {
+        if (_uiState.value.readOnlyReason != null) return
         if (_uiState.value.editingMessage) return
         if (_uiState.value.browserOperationRunning || _uiState.value.loadingConversation) return
         _uiState.update { it.copy(loadingConversation = true) }
@@ -1379,6 +1385,7 @@ class ConversationSession(
     }
 
     private fun selectVariant(delta: Int) {
+        if (_uiState.value.readOnlyReason != null) return
         if (_uiState.value.busy) return
         val lastIndex = record.turns.indexOfLast { it.role == MessageRole.ASSISTANT }
         if (lastIndex < 0) return
@@ -1455,7 +1462,7 @@ class ConversationSession(
             lastTrace = trace,
             displayContents = displayCache,
             displayReasoning = displayReasoningCache,
-        ).copy(loadingConversation = current.loadingConversation,
+        ).copy(readOnlyReason = current.readOnlyReason, loadingConversation = current.loadingConversation,
             worldBookSaving = current.worldBookSaving, worldBookMessage = current.worldBookMessage,
             generationPhase = current.generationPhase, editingMessage = current.editingMessage,
             browserOperationRunning = current.browserOperationRunning, browserGeneration = current.browserGeneration, storageFailed = storageFailure != null)

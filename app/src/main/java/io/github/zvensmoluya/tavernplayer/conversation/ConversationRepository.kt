@@ -1,6 +1,8 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
 import android.content.Context
+import io.github.zvensmoluya.tavernplayer.content.PresetAsset
+import io.github.zvensmoluya.tavernplayer.content.mvuProgram
 import io.github.zvensmoluya.tavernplayer.content.CharacterAsset
 import io.github.zvensmoluya.tavernplayer.conversation.storage.*
 import java.io.File
@@ -13,6 +15,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+
+internal data class OpenedConversation(val record: ConversationRecord, val readOnlyReason: String? = null)
 
 class ConversationRepository(
     filesDir: File,
@@ -160,6 +164,39 @@ class ConversationRepository(
             }
             recovered
         }
+    }
+
+    /** Opening history never requires replaying it. Only adopt a newly recognized MVU
+     * loader after its saved state can be continued or a pristine opening initialized. */
+    internal suspend fun openForPlay(id: String, preset: PresetAsset,
+        webFingerprint: String?): OpenedConversation? {
+        val saved = open(id) ?: return null
+        var ready = saved
+        try {
+            val program = saved.character.browserProgram
+            if (program != null && saved.character.mvuProgram == null && webFingerprint != null &&
+                program.runtimeFingerprint != webFingerprint) {
+                val candidates = program.sources.filter { it.enabled && it.id !in program.blockedSourceIds && it.id !in program.mvuSourceIds }
+                if (candidates.isNotEmpty()) {
+                    val checked = prepareBrowser(program.copy(sources = candidates))
+                    if (checked.mvu != null) {
+                        val upgraded = program.copy(mvu = checked.mvu, mvuSourceIds = program.mvuSourceIds + checked.mvuSourceIds,
+                            blockedSourceIds = program.blockedSourceIds + checked.blockedSourceIds,
+                            diagnostics = checked.diagnostics)
+                        ready = saved.copy(character = saved.character.copy(browserProgram = upgraded))
+                    }
+                }
+            }
+            if (ready.character.mvuProgram != null) {
+                ready = mvuRuntime.initialize(ready, preset, compiler)
+                mvuRuntime.validateCheckpoint(ready.character, ready.runtimeState)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            return OpenedConversation(saved, error.message ?: "无法恢复角色程序的状态")
+        }
+        return OpenedConversation(if (ready === saved) saved else save(ready, saved, activity = false))
     }
 
     suspend fun contains(conversationId: String): Boolean = withContext(ioDispatcher) {

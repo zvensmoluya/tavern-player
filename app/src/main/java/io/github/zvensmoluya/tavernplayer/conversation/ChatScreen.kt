@@ -212,7 +212,8 @@ fun ChatScreen(
                         OutlinedButton(onClick = actions.retrySave, modifier = Modifier.testTag("retrySave")) { Text("重试保存") }
                     }
                 }
-                ChatComposer(state, actions)
+                if (state.readOnlyReason == null) ChatComposer(state, actions)
+                else Text("仅可阅读历史 · ${state.readOnlyReason}", modifier = Modifier.padding(12.dp))
             }
         },
     ) { padding ->
@@ -288,7 +289,7 @@ fun ChatScreen(
             WorldBookReaderScreen(
                 readerId = "conversation-${state.conversationId}", characterName = state.character.name,
                 books = state.character.worldBooks, sessionState = state.worldBookState,
-                busy = state.busy || state.browserGenerating, message = state.worldBookMessage,
+                busy = state.busy || state.browserGenerating || state.readOnlyReason != null, message = state.worldBookMessage,
                 lastInjections = state.lastTrace?.plan?.worldBookInjections,
                 onBack = { worldBookVisible = false }, onEntryMode = actions.onWorldBookEntryMode,
                 onEntryContent = actions.onWorldBookEntryContent,

@@ -27,7 +27,11 @@ class MvuConversationRuntime(
     suspend fun initialize(record: ConversationRecord, preset: PresetAsset, compiler: PromptCompiler): ConversationRecord {
         if (record.character.mvuProgram == null || record.runtimeState.mvuState != null) return record
         require(record.turns.size <= 1 && record.turns.all { turn ->
-            turn.variants.all { it.openingSourceIndex != null }
+            turn.role == MessageRole.ASSISTANT && turn.variants.all {
+                it.openingSourceIndex != null && it.nativeHead()?.mvuState == null &&
+                    it.runtimeStateBefore?.mvuState == null && it.projectionRuntimeStateBefore?.mvuState == null &&
+                    it.runtimeStateAfter?.mvuState == null
+            }
         }) { "已有历史缺少 MVU 检查点，请新建对话" }
         return withRuntime(record.character, record.persona) { runtime ->
             val base = runtime.initialize(listOf("Opening.")).messages.single()

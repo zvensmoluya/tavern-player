@@ -52,6 +52,28 @@ class ChatViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
+    @Test fun `a saved conversation from an older web build accepts another reply`() = runTest {
+        val root = Files.createTempDirectory("web-upgrade").toFile()
+        try {
+            ConversationRepository(root, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher,
+                prepareBrowser = { it.copy(runtimeFingerprint = "previous-build") }).use { conversations ->
+                val saved = conversations.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+                val generator = FakeGenerator { _, _ -> flow {
+                    emit(GenerationEvent.TextDelta("Continued."))
+                    emit(GenerationEvent.Finished("stop"))
+                } }
+                val vm = ChatViewModel(repository(), PromptCompiler(), generator, conversations, FixedPresetSource(),
+                    projectionDispatcher = mainDispatcherRule.dispatcher)
+                vm.loadConversation(saved.id)
+                vm.updateInput("Continue")
+                vm.send()
+                val continued = requireNotNull(conversations.get(saved.id))
+                assertEquals(saved.turns, continued.turns.take(saved.turns.size))
+                assertEquals("Continued.", continued.turns.last().selected.message.content)
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun `finish waits for trailing usage and atomic persistence before publishing complete`() = runTest {
         val directory = Files.createTempDirectory("stream-terminal-transaction").toFile()
         ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher).use { conversations ->
@@ -290,6 +312,7 @@ class ChatViewModelTest {
                 assertEquals(expected, days())
             }
             vm.loadConversation(saved.id)
+            awaitMvuIdle(vm)
             assertEquals(0, days())
             vm.nextVariant()
             awaitMvuIdle(vm)
@@ -370,7 +393,8 @@ class ChatViewModelTest {
                 if (mode == "cancel") awaitCancellation()
                 if (mode == "truncated") emit(GenerationEvent.Finished("length"))
             } }, conversations, FixedPresetSource(), projectionDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime)
-            vm.loadConversation(saved.id); vm.updateInput("Go."); vm.send()
+            vm.loadConversation(saved.id); awaitMvuIdle(vm)
+            vm.updateInput("Go."); vm.send()
             emitted.await()
             assertEquals(checkpoint, conversations.get(saved.id)!!.runtimeState.mvuState)
             vm.cancel(); awaitMvuIdle(vm)

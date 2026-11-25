@@ -48,8 +48,6 @@ class BrowserSession(
 
     @SuppressLint("SetJavaScriptEnabled")
     fun start() {
-        val fingerprint = character.browserProgram?.runtimeFingerprint.orEmpty()
-        require(fingerprint.isEmpty() || fingerprint == environment.fingerprint) { "网页运行程序已更新，请新建对话；原有记录保留" }
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER))
             error("系统 WebView 版本过旧，请更新 Android System WebView")
         with(webView.settings) {

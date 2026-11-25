@@ -2,6 +2,10 @@ package io.github.zvensmoluya.tavernplayer.conversation.web
 
 import android.graphics.Color
 import android.webkit.WebView
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
@@ -28,12 +32,16 @@ fun WebMessageView(
     onAction: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (environment == null) { Text("当前运行环境未提供网页资源", modifier); return }
+    if (state.readOnlyReason != null || environment == null) {
+        SavedMessages(state, modifier)
+        return
+    }
 
     var restart by remember(state.conversationId) { mutableIntStateOf(0) }
     key(state.conversationId, restart) {
         var session by remember { mutableStateOf<BrowserSession?>(null) }
         var view by remember { mutableStateOf<WebView?>(null) }
+        var showSavedText by remember { mutableStateOf(false) }
         var failure by remember { mutableStateOf<String?>(null) }
         var preparing by remember { mutableStateOf(false) }
         var preparationJob by remember { mutableStateOf<Job?>(null) }
@@ -68,8 +76,10 @@ fun WebMessageView(
             failure?.let {
                 Text(it, modifier = Modifier.testTag("webRuntimeNotice"))
                 TextButton(onClick = { restart++ }) { Text("重试加载网页") }
+                if (!showSavedText) TextButton(onClick = { showSavedText = true }) { Text("阅读已保存的文字") }
             }
-            AndroidView(
+            if (showSavedText) SavedMessages(state, Modifier.fillMaxSize())
+            else AndroidView(
                 modifier = Modifier.fillMaxSize().testTag("webChatContent"),
                 factory = { context ->
                     WebView(context).also { web ->
@@ -78,12 +88,27 @@ fun WebMessageView(
                             invoke = { actor, revision, method, args -> currentInvoke(actor, revision, method, args) },
                             uiAction = { action, id -> currentAction(action, id) }, onFailure = { failure = it })
                         session = runtime
-                        runCatching { runtime.start() }.onFailure { failure = it.message ?: "无法启动网页消息区" }
+                        runCatching { runtime.start() }.onFailure {
+                            failure = it.message ?: "无法启动网页消息区"
+                            showSavedText = true
+                        }
                     }
                 },
                 update = { session?.update(state) },
                 onRelease = { web -> session?.release(); session = null; view = null; web.destroy() },
             )
+        }
+    }
+}
+
+@Composable
+private fun SavedMessages(state: ChatUiState, modifier: Modifier) {
+    LazyColumn(modifier) {
+        items(state.messages, key = { it.message.id }) { item ->
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(item.message.authorName)
+                Text(item.message.content)
+            }
         }
     }
 }

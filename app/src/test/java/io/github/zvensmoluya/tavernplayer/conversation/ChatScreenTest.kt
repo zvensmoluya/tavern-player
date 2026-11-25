@@ -58,6 +58,14 @@ class ChatScreenTest {
         compose.onNodeWithText("正在保存…").assertIsNotEnabled()
     }
 
+    @Test fun `incompatible progress displays saved messages without a send action`() {
+        val screen = state(input = "Saved draft").copy(readOnlyReason = "已有历史缺少 MVU 检查点")
+        compose.setContent { TavernPlayerTheme { ChatScreen(state = screen, actions = actions()) } }
+        compose.onNodeWithText("欢迎来到旅店。").assertIsDisplayed()
+        compose.onNodeWithText("仅可阅读历史 · 已有历史缺少 MVU 检查点").assertIsDisplayed()
+        compose.onAllNodesWithTag("sendMessage").assertCountEquals(0)
+    }
+
     @Test fun `save retry stays available while business actions are blocked`() {
         val screen = state().copy(storageFailed = true)
         var retries = 0
