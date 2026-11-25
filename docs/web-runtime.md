@@ -28,9 +28,9 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 
 独立的 MVU 加载语句与登记的 `mvu_zod` Schema 模块由已有 QuickJS MVU 宿主处理。原加载器不再进入 WebView，避免同一回复执行两次 MVU 更新。混合 MVU 加载器与其他副作用的脚本明确停用；多份 Schema 或不能在无 DOM 宿主装载的 Schema 不自动拆分。世界书中的 EJS 原模板按来源哈希登记，使用已有只读 QuickJS EJS 引擎；触发、Regex/Macro、求值缓存与预算继续走 PromptCompiler，无需模型适配产物。
 
-已登记的 MagVarUpdate jsDelivr 加载地址同时接受无 ref 和 `@master`；2026-09-12 核实后者返回的发布文件
-与锁定提交相同，见 [C-08 依赖核查与接入验证](archive/legacy-mvu-dependency-audit-20260912.md)。
-执行仍使用随应用打包的固定 MVU，不运行期跟随 master，也不把任意 ref 视为相同版本。
+MagVarUpdate 的 jsDelivr 入口由同一套规则识别，覆盖角色和预设的脚本准备、WebView 的直接请求及资源重定向后的最终地址。支持 `cdn`、`testingcf`、`fastly` 三个 HTTPS 镜像。无 ref、`@master`、`@beta` 表示使用播放器内置的固定 MVU。独立的静态导入、字面量动态导入（含 `await`），以及先用单个模块级 `const` 保存字面地址再动态导入，均可在开场前识别。解析仅检查语法。与其他作者逻辑混用的已识别导入会停用，运行时才算出的地址由 WebView 资源入口复核。指定其他版本或不受支持的镜像时会显示来源与原因，该程序内的 MVU 注册一并停用。
+
+浮动分支按内置引擎的兼容范围运行。2026-11-25 核查时，`master` 与 `beta` 同指 `d03b7dc8`，原卡 CDN 返回的 bundle 与该次上游 beta 文件 SHA-256 相同（`a5d6166d43a78c7f…`），与播放器锁定的 `61010dab` 发布文件不同（`be149c7fb531c9f8…`）。回归样本 `3fe1f8be2566ee5b…` 通过实际导入、新建会话、读取开场变量、旧式更新及重新打开会话验证。Android 15 模拟器从系统文件选择器导入同一原件后，开场渲染一条消息，后台脚本帧数为零，网页通知为空。旧版样本的核查见 [C-08 依赖核查与接入验证](archive/legacy-mvu-dependency-audit-20260912.md)。更新后的程序在新建对话时准备，已有对话仍遵循运行配置指纹与检查点恢复规则。
 
 ## 接口范围
 

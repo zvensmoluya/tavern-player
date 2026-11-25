@@ -19,6 +19,57 @@ class BrowserProgramPreparerTest {
     @get:Rule val folder = TemporaryFolder()
     private val assets = File(requireNotNull(System.getProperty("mvuProbeAssets")))
     private val preparer = BrowserProgramPreparer { File(System.getProperty("webRuntimeAssets"), "programs.js").readText() }
+    @Test fun publicModuleOwnershipIsDecidedBeforeLaunchingBrowserScripts() = runBlocking {
+        val url = "https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate@beta/artifact/bundle.js"
+        val schema = "import {registerMvuSchema} from 'https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js';"
+        suspend fun prepare(vararg scripts: String): BrowserProgram {
+            val sources = scripts.mapIndexed { i, script ->
+                BrowserScriptSource("s$i", "/scripts/$i", script, BrowserProgramReader.sha256(script), true)
+            }
+            return preparer.prepare(BrowserProgram(sources = sources))
+        }
+        val program = prepare("import '$url?v=1';", "const dep = '$url'; await import(dep);",
+            "import '$url'; window.counter++;", "window.counter++;", schema)
+        assertEquals(setOf("s0", "s1", "s4"), program.mvuSourceIds)
+        assertEquals(setOf("s2"), program.blockedSourceIds)
+        assertEquals(schema, program.mvu?.schemaScript)
+        for (unsupported in listOf(url.replace("@beta", "@v99"), url.replace("testingcf.jsdelivr.net", "cdn.example.org"))) {
+            val rejected = prepare("import '$unsupported';", schema)
+            assertNull(rejected.mvu)
+            assertTrue(rejected.mvuSourceIds.isEmpty())
+            assertEquals(setOf("s0", "s1"), rejected.blockedSourceIds)
+            val reason = requireNotNull(MvuBundle.from(unsupported)?.incompatibility)
+            assertTrue(rejected.diagnostics.any { reason in it })
+        }
+        assertNull(MvuBundle.from("https://example.org/help?url=$url"))
+    }
+
+    @Test fun betaOriginalInitializesAndUpdatesThroughThePinnedMvuHost() = runBlocking {
+        val hash = "3fe1f8be2566ee5ba109fd9e00512554448d227cf2c50f53dc075b7ebd913c05"
+        val source = assets.toPath().resolve("../../../..").normalize().resolve("source").toFile()
+        val original = source.listFiles().orEmpty().firstOrNull { file ->
+            file.isFile && file.extension == "png" && java.security.MessageDigest.getInstance("SHA-256")
+                .digest(file.readBytes()).joinToString("") { "%02x".format(it) } == hash
+        }
+        assumeTrue("Optional beta original is unavailable", original != null)
+        val card = (CharacterCardImporter().import(original!!.readBytes(), "sample.png") as CharacterImportResult.Ready).character
+        val runtime = MvuConversationRuntime { File(assets, "mvu/runtime.js").readText() }
+        val repository = ConversationRepository(folder.newFolder(), PromptCompiler(), mvuRuntime = runtime, prepareBrowser = preparer::prepare)
+        val record = repository.create(card, Persona("p", "User"), BuiltInPresets.default)
+        val program = requireNotNull(record.character.browserProgram)
+        assertEquals(setOf(program.sources.single().id), program.mvuSourceIds)
+        assertTrue(program.diagnostics.toString(), program.blockedSourceIds.isEmpty())
+        fun identity(state: ConversationRuntimeState) = state.mvuState!!.data.getValue("stat_data").jsonObject
+            .getValue("user").jsonObject.getValue("身份").jsonArray.first().jsonPrimitive.content
+        assertEquals("User", identity(record.runtimeState))
+        val reply = "Reply.\n<UpdateVariable>\n_.set('user.身份', 'User', 'Visitor');\n</UpdateVariable>"
+        val update = requireNotNull(runtime.update(record.character, reply, record.runtimeState, persona = record.persona))
+        assertTrue(update.diagnostics.toString(), update.diagnostics.none { it.level == "error" })
+        val next = update.messages.single().applyTo(record.runtimeState)
+        assertEquals("Visitor", identity(next))
+        repository.save(BrowserConversation.withRuntime(record, next))
+        assertEquals("Visitor", identity(requireNotNull(repository.open(record.id)).runtimeState))
+    }
     @Test fun legacyOriginalInitializesAndUpdatesThroughThePinnedMvuHost() = runBlocking {
         val hash = "5191b0bcb615e2abe1fa6fef20212e64d6df483f0f453dc929d4bf15d3ef07d4"
         val source = assets.toPath().resolve("../../../..").normalize().resolve("source").toFile()

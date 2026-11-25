@@ -301,6 +301,7 @@ class BrowserSession(
         }
         val value = uri.toString()
         require(uri.scheme in setOf("http", "https")) { "不支持的网页资源协议" }
+        blockedMvuResponse(value)?.let { return it }
         val destination = request.requestHeaders.entries.find { it.key.equals("Sec-Fetch-Dest", true) }?.value
         val accept = request.requestHeaders.entries.find { it.key.equals("Accept", true) }?.value.orEmpty()
         val image = destination == "image" || accept.startsWith("image/") || Regex("\\.(png|jpe?g|webp)$", RegexOption.IGNORE_CASE).containsMatchIn(uri.path.orEmpty()) ||
@@ -311,8 +312,8 @@ class BrowserSession(
                 val file = environment.images.file(character.assetId, entry) ?: error("图片尚未保存")
                 result(entry.mediaType ?: "image/png", file.readBytes())
             } else {
-                require(!Regex("/gh/MagicalAstrogy/MagVarUpdate(?:@[^/]+)?/artifact/bundle\\.js").containsMatchIn(value)) { "MVU 公共程序必须通过已登记的 QuickJS 装载入口运行" }
                 val (entry, original) = environment.resources.resolve(conversationId, character.sourceSha256, value)
+                if (entry.finalUrl != value) blockedMvuResponse(entry.finalUrl)?.let { return@runBlocking it }
                 var bytes = original
                 val mime = if (entry.mimeType == "application/octet-stream" && (uri.path?.endsWith(".js") == true || uri.path?.endsWith("/+esm") == true)) "application/javascript" else entry.mimeType
                 if (mime in setOf("application/javascript", "text/javascript")) bytes = environment.scriptWithRedirectBase(bytes, value, entry.finalUrl)
@@ -320,6 +321,13 @@ class BrowserSession(
                 result(mime, bytes)
             }
         }
+    }
+
+    private fun blockedMvuResponse(address: String): WebResourceResponse? {
+        val bundle = MvuBundle.from(address) ?: return null
+        val reason = bundle.incompatibility ?: "网页直接请求了 MVU；请在角色助手脚本中独立导入，由播放器初始化变量"
+        scope.launch { onFailure(reason) }
+        return result("text/plain", "MVU module blocked".toByteArray(), status = 403)
     }
 
     private fun shellCsp() = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; frame-src $authorOrigin; img-src 'self' data:; base-uri 'none'; form-action 'none'"

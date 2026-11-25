@@ -24,10 +24,7 @@ export function cssResources(source, replacements = {}) {
   return JSON.stringify({ urls, text: root.toString() });
 }
 
-// @master was audited against our pinned MVU source; arbitrary refs are not equivalent.
-const loader = /^https:\/\/(?:cdn|testingcf|fastly)\.jsdelivr\.net\/gh\/MagicalAstrogy\/MagVarUpdate(?:@master)?\/artifact\/bundle\.js$/;
-const schemaHelper = /^https:\/\/(?:cdn|testingcf)\.jsdelivr\.net\/gh\/StageDog\/tavern_resource\/dist\/util\/mvu_zod\.js$/;
-
+// Report syntax only. Android owns module identity for both preparation and WebView requests.
 export function inspect(source) {
   const tree = parse(source, { ecmaVersion: 'latest', sourceType: 'module' });
   const imports = [];
@@ -35,17 +32,33 @@ export function inspect(source) {
     if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' || node.type === 'ExportNamedDeclaration') {
       if (node.source) imports.push(node.source.value);
     }
-    if (node.type === 'ImportExpression' && node.source.type === 'Literal') imports.push(node.source.value);
+    if (node.type === 'ImportExpression') imports.push(stringLiteral(node.source));
   });
   const body = tree.body.filter(node => node.type !== 'EmptyStatement');
-  if (body.length === 1 && body[0].type === 'ImportDeclaration' && body[0].specifiers.length === 0 && loader.test(body[0].source.value))
-    return 'mvu-loader';
-  if (imports.some(url => schemaHelper.test(url))) {
-    if (!imports.every(url => schemaHelper.test(url))) throw new Error('Schema module has dependencies outside the QuickJS profile');
-    return 'mvu-schema';
+  const last = body.at(-1);
+  let standaloneImport = null;
+  if (body.length === 1 && last.type === 'ImportDeclaration' && !last.specifiers.length && !last.attributes?.length) {
+    standaloneImport = last.source.value;
+  } else if (last?.type === 'ExpressionStatement') {
+    const expr = last.expression.type === 'AwaitExpression' ? last.expression.argument : last.expression;
+    if (expr.type === 'ImportExpression' && !expr.options) {
+      if (body.length === 1) standaloneImport = stringLiteral(expr.source);
+      // A module-local const used only as the import URL has no independent effects.
+      const decl = body[0];
+      if (body.length === 2 && decl.type === 'VariableDeclaration' && decl.kind === 'const' && decl.declarations.length === 1) {
+        const { id, init } = decl.declarations[0];
+        if (id.type === 'Identifier' && expr.source.type === 'Identifier' && expr.source.name === id.name)
+          standaloneImport = stringLiteral(init);
+      }
+    }
   }
-  if (imports.some(url => loader.test(url))) throw new Error('MVU loader mixed with author effects cannot be split across engines');
-  return 'browser';
+  return { imports, standaloneImport };
+}
+
+function stringLiteral(node) {
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && !node.expressions.length) return node.quasis[0].value.cooked;
+  return null;
 }
 
 /** Parse only, never evaluate downloaded source. Ranges let Kotlin preserve redirect bases. */

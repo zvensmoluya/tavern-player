@@ -148,16 +148,15 @@ test('once and removal apply before reentrant delivery', async () => {
   await host.dispatch('event', []); assert.equal(count, 1);
 });
 
-test('only an exact dependency-only loader can be consumed by QuickJS', () => {
-  const loader = "import 'https://testingcf.jsdelivr.net/gh/MagicalAstrogy/MagVarUpdate/artifact/bundle.js';";
-  assert.equal(inspect(loader), 'mvu-loader');
-  const legacyLoader = loader.replace('MagVarUpdate/', 'MagVarUpdate@master/');
-  assert.equal(inspect(legacyLoader), 'mvu-loader');
-  assert.throws(() => inspect(legacyLoader + 'window.counter++'), /cannot be split/);
-  assert.equal(inspect(legacyLoader.replace('@master', '@unknown-version')), 'browser');
-  assert.throws(() => inspect(loader + 'window.counter++'), /cannot be split/);
-  assert.equal(inspect("const source = " + JSON.stringify(loader)), 'browser');
-  assert.equal(inspect("import {registerMvuSchema} from 'https://cdn.jsdelivr.net/gh/StageDog/tavern_resource/dist/util/mvu_zod.js'; registerMvuSchema(z.object({}));"), 'mvu-schema');
+test('module inspection separates standalone imports from imports with author effects', () => {
+  const url = 'https://cdn.example.org/module.js';
+  for (const script of [`import '${url}';`, `await import('${url}')`, `import(\`${url}\`)`,
+    `const url = '${url}'; await import(url)`]) assert.equal(inspect(script).standaloneImport, url);
+  for (const script of [`import value from '${url}'`, `import '${url}'; window.count++`,
+    `try { await import('${url}') } catch {}`, `export * from '${url}'`])
+    assert.deepEqual(inspect(script), { imports: [url], standaloneImport: null });
+  assert.deepEqual(inspect(`const text = "import '${url}'"`), { imports: [], standaloneImport: null });
+  assert.deepEqual(inspect("await import(getUrl())"), { imports: [null], standaloneImport: null });
 });
 
 test('module import locations exclude comments and preserve dynamic expressions', () => {
