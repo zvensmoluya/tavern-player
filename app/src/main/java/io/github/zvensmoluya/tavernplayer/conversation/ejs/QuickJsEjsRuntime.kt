@@ -1,6 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.ejs
 
 import com.dokar.quickjs.QuickJs
+import com.dokar.quickjs.binding.function
 import io.github.zvensmoluya.tavernplayer.conversation.*
 import java.util.concurrent.Executors
 import kotlinx.coroutines.*
@@ -8,7 +9,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Each template gets a fresh engine. Only JSON data enters; no native services are exposed. */
+/** Each template gets a fresh engine with generation inputs and a read-only title lookup. */
 class QuickJsEjsRuntime(
     private val loadBundle: suspend () -> String = { error("此构建未提供 EJS 运行资源") },
     private val timeoutMillis: Long = 2_000,
@@ -26,9 +27,17 @@ class QuickJsEjsRuntime(
                 js.memoryLimit = 32L * 1024 * 1024
                 js.maxStackSize = 1024L * 1024
                 js.evaluationTimeoutMillis = timeoutMillis
+                var remainingInput = 2 * 1024 * 1024 - wire.length
+                js.function<String, String>("playerReadWorldInfo") { title ->
+                    val content = request.worldInfoByTitle[title].orEmpty()
+                    require(content.length <= remainingInput) { "EJS 输入超过限制" }
+                    require("<%" !in content) { "getwi 不支持嵌套 EJS 模板" }
+                    remainingInput -= content.length
+                    content
+                }
                 withTimeout(timeoutMillis) {
                     js.evaluate<Any?>(bundle, filename = "ejs-runtime.js")
-                    js.evaluate<String>("await PlayerEjs.render(JSON.parse(${JsonPrimitive(wire)}))", filename = "ejs-template.js")
+                    js.evaluate<String>("await PlayerEjs.render(JSON.parse(${JsonPrimitive(wire)}), playerReadWorldInfo)", filename = "ejs-template.js")
                         .also { require(it.length <= 262_144) { "EJS 输出超过限制" } }
                 }
             }

@@ -86,6 +86,7 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     const code = '```js\n<script>globalThis.unwanted=3</script>\n```';
     const extra = [unsafe, code].map((text, i) => ({ ...snapshot.messages[0], id: 'extra-' + i, turnId: 'extra-' + i,
       variantId: 'extra-' + i, message_id: i + 1, message: text, display: text, swipes: [text] }));
+    extra[0].displayChanges = { 'Ordinary HTML': '<b>Literal</b>' };
     snapshot = { ...snapshot, revision: 'safe', messages: [...snapshot.messages, ...extra] };
     await page.evaluate(data => Player.receive(data), { type: 'delta', epoch, changes: { revision: 'safe' }, messages: extra,
       order: snapshot.messages.map(m => m.turnId), flags });
@@ -96,6 +97,8 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
       if (!staticFrame) await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.ok(staticFrame);
+    assert.equal(await staticFrame.locator('#ordinary-html').textContent(), '<b>Literal</b>');
+    assert.equal(await staticFrame.locator('#ordinary-html b').count(), 0);
     assert.equal(await staticFrame.evaluate(() => typeof getVariables), 'undefined');
     assert.equal(await staticFrame.evaluate(() => typeof globalThis.unwanted), 'undefined');
     assert.equal(await staticFrame.locator('script').count(), 1); // Only the trusted resize/bootstrap hook remains.
@@ -144,10 +147,12 @@ test('real browser runs author HTML, bridges parent input, and keeps frames duri
     assert.equal(await page.locator('iframe[name="player_author_session"]').count(), 1);
 
     const source = { id: 'preset-script', enabled: true, sha256: 'one',
-      content: "initializeGlobal('PresetLibrary',{version:1});eventOn('preset-event',()=>Shared.increment());" };
+      content: "const template = '<html><head><style>main{min-height:99vh}</style></head></html>';" +
+        "initializeGlobal('PresetLibrary',{version:1,template});eventOn('preset-event',()=>Shared.increment());" };
     snapshot = { ...snapshot, presetHash: 'p1', presetProgram: { sources: [source] } };
     await page.evaluate(data => Player.receive(data), { type: 'snapshot', epoch, snapshot, flags });
     await frame.waitForFunction(() => typeof PresetLibrary !== 'undefined' && PresetLibrary.version === 1);
+    assert.equal(await frame.evaluate(() => PresetLibrary.template), '<html><head><style>main{min-height:99vh}</style></head></html>');
     snapshot = { ...snapshot, presetHash: 'p2', presetProgram: { sources: [{ ...source, sha256: 'two',
       content: "initializeGlobal('PresetLibrary',{version:2});eventOn('preset-event',()=>{Shared.count+=10});" }] } };
     // A running generation retains its captured preset runtime.

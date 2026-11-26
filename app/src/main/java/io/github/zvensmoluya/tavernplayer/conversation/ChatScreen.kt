@@ -367,7 +367,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             } else {
                 Button(
                     modifier = Modifier.testTag("sendMessage"),
-                    enabled = state.input.isNotBlank() && !state.busy,
+                    enabled = state.input.isNotBlank() && state.canRequestTurn,
                     onClick = actions.send,
                 ) { Text("发送") }
             }

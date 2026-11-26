@@ -1,0 +1,16 @@
+{
+  "https://testingcf.jsdelivr.net/npm/pinia/+esm": "1ee31471de920840f3ec8f8d7a3a645fbd5bdd25b88bc1455224fea4f0fbde71.js",
+  "https://testingcf.jsdelivr.net/npm/opencc-js/+esm": "49fe66b83aa3e6ef55151ff2735e2b5cefc3699f0bfa2c157644822f6cd9ca18.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/devtools-api@8.2.1/+esm": "61fe6c93603178d2c42592ea3796fd01477940783a8704d8a0e9b26cbd84e0f3.js",
+  "https://testingcf.jsdelivr.net/npm/nostics@1.3.0/+esm": "596a1ed41cb2fe1d73db25bbc1680978b4109e85cd863e19f090e11a7aadc6d4.js",
+  "https://testingcf.jsdelivr.net/npm/vue@3.5.44/+esm": "fdadd035995a8f8e7569cc389ba7577d2b129d16e23998291349da6697acc8f1.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/devtools-kit@8.2.1/+esm": "c749886e6cfd8906568af4f9f1c3244c6d2a3736e9c1a2fbb1bfb2722b55ee90.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/runtime-dom@3.5.44/+esm": "dd73df8b7158e3a996d5c04319de2caaa4337b875b6463983c97997c2b4a1108.js",
+  "https://testingcf.jsdelivr.net/npm/birpc@2.9.0/+esm": "e8ba6f842c718d29b50c58fd36a359c458caba53312e35f795ac8d1167ff54cb.js",
+  "https://testingcf.jsdelivr.net/npm/hookable@5.5.3/+esm": "b360157af84c21022ba4d017d64c4bcbfee1bfb39ec627bb88563a3dc0304827.js",
+  "https://testingcf.jsdelivr.net/npm/perfect-debounce@2.1.0/+esm": "d33f81fc9623faca1b5c43190c034abafd2dce3e603028dd8b1f8bb266aaafcb.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/devtools-shared@8.2.1/+esm": "f327db931077c033ebc00394aa7383127aee9ba49d8bb6dddeddfca269e49945.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/shared@3.5.44/+esm": "8af14207d8226b430b94c81af5cd46b3674f6ee5ba3b146b4b06c8b6afd7f481.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/runtime-core@3.5.44/+esm": "41045395bff9eb134aa1248bf554312be6e3a0056445633272ffdc52f4f4fa8e.js",
+  "https://testingcf.jsdelivr.net/npm/@vue/reactivity@3.5.44/+esm": "ee6f48a7fa576532327f5a3c22b6ab887c3e2d82efb7b6567c43202ac537c9d5.js"
+}

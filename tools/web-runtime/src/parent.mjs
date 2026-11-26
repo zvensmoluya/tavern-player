@@ -1,8 +1,9 @@
 import $ from 'jquery';
-import { createHost } from './host.mjs';
+import { createHost, tavernEvents } from './host.mjs';
 import { createSession } from './session.mjs';
 import DOMPurify from 'dompurify';
 import { patchChildren } from './dom-patch.mjs';
+import { displayedMessage } from './displayed-message.mjs';
 import { isResizeObserverNotification, observeFrameSize } from './resize-observer.mjs';
 
 function main() {
@@ -18,6 +19,7 @@ function main() {
   }
   if (config.kind === 'session') {
     const session = createSession(config.snapshot);
+    session.emitSync(tavernEvents.APP_READY, []);
     globalThis.PlayerAuthorSession = session;
     window.addEventListener('message', async event => {
       if (event.source !== window.parent || event.origin !== config.rootOrigin || event.data?.epoch !== config.epoch) return;
@@ -41,7 +43,7 @@ function main() {
     request: (method, args, revision) => new Promise((resolve, reject) => {
       const id = String(++sequence); pending.set(id, { resolve, reject });
       send({ type: 'request', id, method, args, revision });
-    }), notify,
+    }), notify, displayMessage: displayedMessage,
 
   });
   Object.assign(globalThis, { $, jQuery: $ });
@@ -179,14 +181,19 @@ function main() {
   const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries + baseline +
     '<script>parent.PlayerFrame.install(window);</script>' +
     `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
+  if (config.kind === 'script') {
+    // Module strings can contain entire HTML documents. Never search the JS for a head or rewrite its CSS.
+    page.hidden = true;
+    const source = config.html.replace(/<\/script/gi, '<\\/script');
+    page.srcdoc = '<!doctype html><html><head>' + prefix + '</head><body><script type="module">' + source + '</script></body></html>';
+    return;
+  }
   let html = config.html;
   // Static content enters through the same sanitized patch path at startup and during streaming.
   if (config.kind === 'static') html = '<body></body>';
-  if (config.kind === 'script') html = '<body><script type="module">' + html.replace(/<\/script/gi, '<\\/script') + '</script></body>';
   // Match the source renderer's viewport-height correction without touching JavaScript strings.
   // 折算结果引用变量而不是固定 px，键盘改变可见高度后作者布局随之伸缩。
   html = correctViewport(html);
   page.srcdoc = inject(html, prefix);
-  if (config.kind === 'script') page.hidden = true;
 }
 main();

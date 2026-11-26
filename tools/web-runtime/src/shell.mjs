@@ -1,7 +1,8 @@
 import DOMPurify from 'dompurify';
-import { tavernEvents, mvuEvents, iframeEvents } from './host.mjs';
+import { tavernEvents, mvuEvents, iframeEvents, settledHistoryEvent } from './host.mjs';
 import { segmentMarkdown } from './markdown.mjs';
 import { patchChildren } from './dom-patch.mjs';
+import { applyDisplayChanges } from './displayed-message.mjs';
 
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
@@ -9,6 +10,7 @@ let sequence = 0, epoch = null, snapshot = null, flags = {}, shown = 50, program
 let measuredViewportHeight = window.innerHeight;
 let observedScrollY = window.scrollY;
 let renderQueue = Promise.resolve(), coordinator = null, factSnapshot = null;
+let historyPending = false;
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
 function lifecycle(name, args) { broadcast(name, args).catch(error => notice(error.message)); }
@@ -17,6 +19,13 @@ function lifecycle(name, args) { broadcast(name, args).catch(error => notice(err
 function publishMessageFacts(next) {
   const previous = factSnapshot; factSnapshot = next;
   if (!previous) return;
+  if (previous.messages !== next.messages && (previous.messages.length !== next.messages.length ||
+      next.messages.some((message, index) => message.variantId !== previous.messages[index]?.variantId ||
+        message.status !== previous.messages[index]?.status))) historyPending = true;
+  if (historyPending && !next.generating && !next.messages.some(message => message.status === 'STREAMING')) {
+    historyPending = false;
+    lifecycle(settledHistoryEvent, [next.messages.length - 1]);
+  }
   if (previous.messages === next.messages && previous.mvu === next.mvu) return;
   const previousMessages = new Map(previous.messages.map(message => [message.turnId, message]));
   for (const message of next.messages) {
@@ -42,7 +51,7 @@ function button(text, action, disabled = false) {
   node.addEventListener('click', () => Promise.resolve(action()).catch(error => notice(error.message)));
   return node;
 }
-const ui = (action, id) => rpc('ui.' + action, id ? { id } : {});
+const ui = (action, id) => rpc('ui.' + action, id ? { id } : { variant: snapshot.messages.at(-1)?.variantId });
 function bottom() {
   window.scrollTo({ top: document.documentElement.scrollHeight });
   observedScrollY = window.scrollY;
@@ -261,7 +270,9 @@ async function renderRow(row, message) {
   if (row.parsedSource !== source || row.parsedIncomplete !== incomplete || !row.parsedParts) {
     row.parsedParts = segments(source, incomplete); row.parsedSource = source; row.parsedIncomplete = incomplete;
   }
-  for (const [index, part] of row.parsedParts.entries()) {
+  for (const [index, parsed] of row.parsedParts.entries()) {
+    const part = parsed.kind === 'normal' && message.displayChanges
+      ? { ...parsed, text: applyDisplayChanges(parsed.text, message.displayChanges) } : parsed;
     const previous = row.segments[index];
     if ((part.kind === 'page' || part.kind === 'pending') && incomplete) {
       // 非 COMPLETE 不建 page 帧；占位文案原地随状态改写，不再无限等待。
@@ -316,14 +327,15 @@ async function render() {
   }
   document.getElementById('earlier').hidden = shown >= snapshot.messages.length;
   actionsNode.replaceChildren();
-  if (flags.retryAvailable) actionsNode.append(button('重试这一轮', () => ui('retry'), flags.busy));
+  const turnBusy = flags.canRequestTurn === undefined ? flags.busy : !flags.canRequestTurn;
+  if (flags.retryAvailable) actionsNode.append(button('重试这一轮', () => ui('retry'), turnBusy));
   const last = snapshot.messages[snapshot.messages.length - 1];
   if (last && flags.variantNavigationAvailable) {
-    actionsNode.append(button('上一条', () => ui('previous'), flags.busy || last.swipe_id === 0));
+    actionsNode.append(button('上一条', () => ui('previous'), turnBusy || last.swipe_id === 0));
     const label = document.createElement('span'); label.textContent = `${last.swipe_id + 1} / ${last.swipes.length}`; actionsNode.append(label);
-    actionsNode.append(button('下一条', () => ui('next'), flags.busy || last.swipe_id === last.swipes.length - 1));
+    actionsNode.append(button('下一条', () => ui('next'), turnBusy || last.swipe_id === last.swipes.length - 1));
   }
-  if (flags.regenerateAvailable) actionsNode.append(button('重新生成', () => ui('regenerate'), flags.busy));
+  if (flags.regenerateAvailable) actionsNode.append(button('重新生成', () => ui('regenerate'), turnBusy));
   if (following && !focusInFrame()) followBottom();
   recordBottom();
   await updateScripts();
@@ -399,7 +411,9 @@ window.addEventListener('message', async event => {
       if (result.snapshot) {
         // Do not replace render metadata with the smaller authoritative host state.
         const previousMessages = new Map(snapshot.messages.map(message => [message.id, message]));
-        snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({ ...previousMessages.get(m.id), ...m })) };
+        snapshot = { ...snapshot, ...result.snapshot, messages: result.snapshot.messages.map(m => ({
+          ...previousMessages.get(m.id), ...m, displayChanges: m.displayChanges,
+        })) };
         if (coordinator) post(coordinator, { type: 'snapshot', snapshot });
         publishMessageFacts(snapshot);
       }

@@ -23,6 +23,7 @@ import io.github.zvensmoluya.tavernplayer.conversation.*
 import io.github.zvensmoluya.tavernplayer.presets.*
 import io.github.zvensmoluya.tavernplayer.ui.theme.TavernPlayerTheme
 import java.io.File
+import java.util.UUID
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -41,6 +42,182 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class BrowserLiveAndroidTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun eraOriginalTracksNeutralCandidatesAndRestoredPrompt() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("eraProbe") == "1")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        fun fixture(name: String) = InstrumentationRegistry.getInstrumentation().context.assets.open("era/$name").use { it.readBytes() }
+        val framework = fixture("framework.js").decodeToString()
+        check(hash(framework.toByteArray()) == "a0768dd0c855dac07cc6e2da51abfdff733d8e2745dcec2f37ef392035b438ed")
+        val modules = Json.parseToJsonElement(fixture("modules.json").decodeToString()).jsonObject
+        val root = File(context.cacheDir, "era-test-${UUID.randomUUID()}")
+        val graph = AppGraph(context)
+        val environment = BrowserEnvironment(context, graph.characterRepository.imageResources, WebResourceRepository(root, fetcher = { url ->
+            val filename = modules.getValue(url).jsonPrimitive.content
+            require(filename.matches(Regex("[0-9a-f]{64}\\.js")))
+            val bytes = fixture(filename)
+            check(hash(bytes) == filename.removeSuffix(".js"))
+            WebDownload(bytes, url, "application/javascript")
+        }), { _, _ -> null }, { null })
+        val preset = object : ActivePresetSource {
+            override val activePreset = MutableStateFlow(io.github.zvensmoluya.tavernplayer.content.BuiltInPresets.default)
+        }
+        val connections = ConnectionRepository(MemoryConnections(), MemoryCredentials(), { ModelCatalog(emptyList(), false) })
+        connections.save(ConnectionDraft("offline", "Offline", "test", ModelProtocol.OPENAI_CHAT_COMPLETIONS,
+            "https://example.invalid", "test"), "test", false)
+        val prompts = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val generator = object : ConversationGenerator {
+            override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow {
+                prompts.add(plan.messages.joinToString("\n") { it.content })
+                val coins = if (prompts.size == 1) 8 else 15
+                emit(GenerationEvent.TextDelta("Coins={{ERA:player.coins}}. "))
+                // Cover both an immediate answer and a stream that outlasts ERA's event queue.
+                if (prompts.size == 3) delay(700)
+                emit(GenerationEvent.TextDelta("<VariableEdit>{\"player\":{\"coins\":$coins}}</VariableEdit>"))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        fun repository() = ConversationRepository(root, graph.promptCompiler, prepareBrowser = environment::prepare)
+        var store = repository()
+        val source = buildJsonObject {
+            putJsonObject("extensions") { putJsonObject("tavern_helper") { putJsonArray("scripts") {
+                add(buildJsonObject { put("id", "era"); put("enabled", true); put("content", framework) })
+                add(buildJsonObject {
+                    put("id", "reader"); put("enabled", true)
+                    putJsonArray("buttons") { add(buildJsonObject { put("name", "Read opening") }) }
+                    put("content", """
+                        eventOn('era:writeDone', ({statWithoutMeta}) => {
+                          updateVariablesWith(v => ({...v, settled:statWithoutMeta.player.coins}), {type:'script'});
+                        });
+                        eventOn(getButtonEvent('Read opening'), () => {
+                          const mk = getVariables({type:'chat'}).ERAMetaData.SelectedMks[0];
+                          eventEmit('era:getSnapshotAtMk', {mk});
+                        });
+                        eventOn('era:queryResult', ({queryType, result}) => {
+                          if (queryType === 'getSnapshotAtMk') updateVariablesWith(v => ({...v, coins:result.statWithoutMeta.player.coins}), {type:'script'});
+                        });
+                    """.trimIndent())
+                })
+            } } }
+        }
+        val balance = io.github.zvensmoluya.tavernplayer.content.WorldBookEntryDefinition("balance", constant = true,
+            content = "BALANCE=<%= getvar('stat_data.player.coins', {defaults:-1}) %>")
+        val card = CharacterAsset("test-era", sourceSha256 = hash(framework.toByteArray()), name = "Actor",
+            firstMessage = "Coins={{ERA:player.coins}}. <VariableInsert>{\"player\":{\"coins\":10}}</VariableInsert>", rawCard = source,
+            worldBooks = listOf(io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition("book", entries = listOf(balance))))
+        val id = store.create(card, Persona("p", "Reader"), preset.captureActive()).id
+        val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val settled = AtomicReference<Int?>(null)
+        var earlyRegenerate = false
+        val clicks = CompletableDeferred<Unit>()
+        var clickCount = 0
+        lateinit var chat: ConversationSession
+        lateinit var web: WebView
+        lateinit var browser: BrowserSession
+        var updates: Job? = null
+        suspend fun open() {
+            settled.set(null)
+            withContext(Dispatchers.Main) {
+                chat = ConversationSession(connections, graph.promptCompiler, generator, store, preset, ejsRuntime = graph.ejsRuntime,
+                    browserEnvironment = environment)
+                chat.loadConversation(id)
+                val state = checkNotNull(withTimeoutOrNull(15000) { chat.uiState.first { it.conversationId == id && !it.busy && it.selectedConnection != null } }) { "Conversation did not open: ${chat.uiState.value.message}" }
+                web = WebView(compose.activity)
+                compose.activity.setContentView(web)
+                browser = BrowserSession(web, environment, state, { actor, revision, method, args ->
+                    try {
+                        val result = chat.invokeBrowser(actor, revision, method, args)
+                        // Tap in the gap between ERA's first durable balance and its later
+                        // metadata writes. No writeDone notification has returned for A yet.
+                        if (!earlyRegenerate && method == "variables.replace" && args["type"] == JsonPrimitive("chat") &&
+                            args["data"]?.jsonObject?.get("stat_data")?.jsonObject?.get("player")?.jsonObject?.get("coins") == JsonPrimitive(8)) {
+                            earlyRegenerate = true
+                            check(settled.get() != 8)
+                            web.evaluateJavascript("""
+                                (function tap() {
+                                  const b = [...document.querySelectorAll('#actions button')].find(b => b.textContent === '重新生成');
+                                  if (!b || b.disabled) return requestAnimationFrame(tap);
+                                  b.click(); b.click();
+                                })()
+                            """.trimIndent(), null)
+                            withTimeout(10000) { clicks.await() }
+                        }
+                        if (method == "era.settled") {
+                            // A companion can load after the initial broadcast. Observe the
+                            // acknowledged Room write independently of subscriber load order.
+                            val variables = result["snapshot"]?.jsonObject?.get("chatVariables")?.jsonObject
+                            variables?.get("stat_data")?.jsonObject?.get("player")?.jsonObject?.get("coins")
+                                ?.jsonPrimitive?.intOrNull?.let(settled::set)
+                        }
+                        result
+                    }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failures.add("$method: ${e.message}"); throw e }
+                }, { action, _ ->
+                    if (action == "regenerate") {
+                        chat.regenerate()
+                        if (++clickCount == 2) clicks.complete(Unit)
+                    }
+                }, failures::add)
+                browser.start()
+                updates = this@runBlocking.launch(Dispatchers.Main) { chat.uiState.collect(browser::update) }
+            }
+        }
+        suspend fun close() = withContext(Dispatchers.Main) {
+            updates?.cancelAndJoin(); updates = null; browser.release(); web.destroy(); chat.close().join()
+        }
+        suspend fun expectBalance(expected: Int) {
+            check(withTimeoutOrNull(35000) {
+                while (true) {
+                    val record = store.get(id)!!
+                    val data = record.runtimeState.browserChatVariables["stat_data"] as? JsonObject
+                    check(failures.isEmpty()) { "Expected $expected after ${prompts.size} requests, ${clickCount} clicks: $failures" }
+                    if (settled.get() == expected && !chat.uiState.value.busy && (data?.get("player") as? JsonObject)?.get("coins") == JsonPrimitive(expected)) break
+                    delay(100)
+                }
+                true
+            } == true) { "Expected balance $expected; last write=${settled.get()}; requests=${prompts.size}; " +
+                "notice=${evaluate("document.querySelector('#notice')?.textContent")}; $failures" }
+        }
+        suspend fun expectDisplay(floor: Int, coins: Int) {
+            check(withTimeoutOrNull(15000) {
+                while ("Coins=$coins." !in evaluate("document.querySelectorAll('article')[$floor]?.innerText")) delay(100)
+                true
+            } == true) { "Displayed balance missing at $floor: " + evaluate("document.querySelectorAll('article')[$floor]?.innerText") }
+            check("{{ERA:player.coins}}" in store.get(id)!!.turns[floor].selected.message.content)
+        }
+        try {
+            open()
+            expectBalance(10)
+            expectDisplay(0, 10)
+            withContext(Dispatchers.Main) { chat.updateInput("Continue."); chat.send() }
+            expectBalance(15)
+            check(earlyRegenerate && prompts.size == 2)
+            expectDisplay(2, 15)
+            withContext(Dispatchers.Main) {
+                web.evaluateJavascript("""Array.from(document.querySelectorAll('#scripts button')).find(b => b.textContent === 'Read opening').click()""", null)
+            }
+            check(withTimeoutOrNull(15000) {
+                while (store.get(id)!!.runtimeState.browserScriptVariables.values.none { it["coins"] == JsonPrimitive(10) }) delay(100)
+                true
+            } == true) { "Original opening query failed; $failures" }
+            withContext(Dispatchers.Main) { chat.previousVariant() }
+            expectBalance(8)
+            expectDisplay(2, 8)
+            close(); store.close(); store = repository()
+            open()
+            withContext(Dispatchers.Main) { chat.updateInput("Continue."); chat.send() }
+            expectBalance(15)
+            expectDisplay(0, 10)
+            expectDisplay(2, 8)
+            expectDisplay(4, 15)
+            check(prompts.size == 3 && "BALANCE=10" in prompts[0] && "BALANCE=10" in prompts[1] && "BALANCE=8" in prompts[2])
+        } finally {
+            if (updates != null) close()
+            store.close()
+            root.deleteRecursively()
+        }
+    }
 
     @Test fun browserLiveConversationAndRecovery() = runBlocking {
         val args = InstrumentationRegistry.getArguments()

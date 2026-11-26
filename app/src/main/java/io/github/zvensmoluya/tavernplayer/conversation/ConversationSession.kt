@@ -7,6 +7,7 @@ import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.tavernplayer.connections.ConnectionRepository
 import io.github.zvensmoluya.tavernplayer.connections.CredentialStatus
 import io.github.zvensmoluya.tavernplayer.connections.StoredConnection
+import io.github.zvensmoluya.tavernplayer.content.BrowserProgram
 import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.mvuProgram
 import io.github.zvensmoluya.tavernplayer.presets.ActivePresetSource
@@ -28,9 +29,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
@@ -107,6 +111,9 @@ data class ChatUiState(
     val running: Boolean get() = !browserOperationRunning && generationPhase != GenerationPhase.IDLE
     val browserGenerating: Boolean get() = browserOperationRunning && generationPhase != GenerationPhase.IDLE
     val busy: Boolean get() = generationPhase != GenerationPhase.IDLE || storageFailed || editingMessage || worldBookSaving || loadingConversation || browserOperationRunning
+    internal val eraScriptId: String? get() = browserSnapshot["era146ScriptId"]?.jsonPrimitive?.contentOrNull
+    val canRequestTurn: Boolean get() = !busy || (browserOperationRunning && generationPhase == GenerationPhase.IDLE &&
+        !storageFailed && !editingMessage && !worldBookSaving && !loadingConversation && eraScriptId != null)
     val selectedConnection: StoredConnection?
         get() = readyConnections.firstOrNull { it.id == selectedConnectionId }
 }
@@ -144,6 +151,9 @@ class ConversationSession(
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
     private val browserHostMutex = Mutex()
+    private data class EraSelection(val conversation: String, val epoch: Long, val variant: String, val script: String)
+    private val savedEraSelection = MutableStateFlow<EraSelection?>(null)
+    private var pendingEraAction: Job? = null
     private var browserGenerationId: String? = null
     private var pendingBrowserDraft: String? = null
     private var generationJob: Job? = null
@@ -224,6 +234,7 @@ class ConversationSession(
                 if (persistedRecord != null) persistNow()
                 val opened = conversationRepository?.openForPlay(conversationId, currentPreset, browserEnvironment?.fingerprint) ?: return@launch
                 epoch++
+                savedEraSelection.value = null
                 record = opened.record
                 persistedRecord = opened.record
                 displayCache.clear(); displayReasoningCache.clear()
@@ -335,10 +346,45 @@ class ConversationSession(
         }
     }
 
+    private fun eraSelection(state: ChatUiState): EraSelection? {
+        val script = state.eraScriptId ?: return null
+        val tail = record.turns.lastOrNull()?.selected ?: return null
+        return EraSelection(record.id, epoch, tail.id, script)
+    }
+
+    /** Accept a player's tap while ERA is finishing. Leave the bridge writable until it acknowledges. */
+    private fun waitForEra(draft: String? = null, action: () -> Unit): Boolean {
+        val state = _uiState.value
+        if (!state.canRequestTurn || state.readOnlyReason != null) return true
+        val selection = eraSelection(state) ?: return state.busy
+        if (pendingEraAction?.isActive == true) return true
+        if (!state.busy && savedEraSelection.value == selection) return false
+        pendingEraAction = scope.launch {
+            _uiState.update { it.copy(message = "正在等待角色状态保存…") }
+            val ready = withTimeoutOrNull(30_000) {
+                uiState.combine(savedEraSelection) { ui, saved ->
+                    val current = eraSelection(ui)
+                    when {
+                        current != selection || ui.storageFailed || (draft != null && ui.input != draft) -> false
+                        saved == selection && !ui.busy -> true
+                        else -> null
+                    }
+                }.first { it != null }
+            }
+            pendingEraAction = null
+            if (eraSelection(_uiState.value) == selection) {
+                if (ready == null) _uiState.update { it.copy(message = "ERA 尚未完成本轮保存，请检查网页运行提示后重试") }
+                else if (_uiState.value.message == "正在等待角色状态保存…") _uiState.update { it.copy(message = null) }
+                if (ready == true && (draft == null || _uiState.value.input == draft)) action()
+            }
+        }
+        return true
+    }
+
     fun send() {
         val state = _uiState.value
         val connection = state.selectedConnection
-        if (state.busy || state.input.isBlank()) return
+        if (state.input.isBlank() || waitForEra(state.input, ::send)) return
         if (connection == null) {
             _uiState.update { it.copy(message = "请先配置可用模型") }
             return
@@ -407,7 +453,7 @@ class ConversationSession(
     fun retry() {
         val state = _uiState.value
         val connection = state.selectedConnection ?: return
-        if (state.busy || !state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER) return
+        if (!state.retryAvailable || record.turns.lastOrNull()?.role != MessageRole.USER || waitForEra(action = ::retry)) return
         val capturedPreset = presetSource.captureActive()
         launchChatOperation {
             generate(connection, idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
@@ -418,7 +464,8 @@ class ConversationSession(
         val state = _uiState.value
         val connection = state.selectedConnection ?: return
         val last = record.turns.lastOrNull() ?: return
-        if (state.busy || last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER) return
+        if (last.role != MessageRole.ASSISTANT || record.turns.dropLast(1).lastOrNull()?.role != MessageRole.USER ||
+            waitForEra(action = ::regenerate)) return
         val capturedPreset = presetSource.captureActive()
         launchChatOperation {
             generate(connection, idGenerator(), appendAssistantTurn = false, preset = capturedPreset)
@@ -427,7 +474,7 @@ class ConversationSession(
 
     fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
         val state = _uiState.value
-        if (state.busy || sourceText.isBlank()) return
+        if (sourceText.isBlank() || waitForEra { editMessage(messageId, sourceText, mode) }) return
         val turnIndex = record.turns.indexOfFirst { it.selected.message.id == messageId }
         if (turnIndex < 0) return
         val turn = record.turns[turnIndex]
@@ -652,8 +699,19 @@ class ConversationSession(
             return buildJsonObject { put("snapshot", BrowserConversation.snapshot(record)); put("value", JsonNull) }
         }
         return browserHostMutex.withLock {
+            if (method == "era.settled") return@withLock finishEraWrite(actor, args)
             require(!_uiState.value.busy) { "会话正在处理其他操作" }
-            BrowserConversation.authorize(record, actor, revision)
+            // A player may type while the framework writes to a floor. Those operations
+            // depend on the committed history but do not use or overwrite a draft.
+            val eraWrite = actor.scriptId != null && actor.scriptId == _uiState.value.eraScriptId &&
+                (method == "messages.set" || method == "variables.replace")
+            val currentRevision = BrowserConversation.revision(record)
+            val writeRevision = if (eraWrite && revision.substringBeforeLast(':') == currentRevision.substringBeforeLast(':'))
+                currentRevision else revision
+            BrowserConversation.authorize(record, actor, writeRevision)
+            if (eraWrite && args["type"] == JsonPrimitive("chat") && args["data"] != record.runtimeState.browserChatVariables) {
+                savedEraSelection.value = null
+            }
             if (method == "chat.send") {
                 require(args.isEmpty() && record.draft.isNotBlank()) { "发送需要非空草稿" }
                 require(_uiState.value.selectedConnection != null) { "请先配置模型" }
@@ -677,7 +735,7 @@ class ConversationSession(
                 } else {
                     _uiState.update { it.copy(browserOperationRunning = true) }
                     try {
-                        executeBrowserCommand(actor, revision, method, args)
+                        executeBrowserCommand(actor, writeRevision, method, args)
                     } finally {
                         _uiState.update { it.copy(browserOperationRunning = false) }
                     }
@@ -688,6 +746,39 @@ class ConversationSession(
             }
             browserCommandResult(method, args, result)
         }
+    }
+
+    private suspend fun finishEraWrite(actor: BrowserActor, args: JsonObject): JsonObject {
+        val state = _uiState.value
+        val selection = eraSelection(state)
+        require(selection != null && actor.scriptId == selection.script && actor.turnId == null) { "当前脚本没有 ERA 写入归属" }
+        val meta = record.runtimeState.browserChatVariables["ERAMetaData"] as? JsonObject
+        val key = (meta?.get("SelectedMks") as? JsonArray)?.getOrNull(record.turns.lastIndex)
+        // A replay or a result from a retired candidate cannot unlock the next generation.
+        if (state.busy || args["variant"] != JsonPrimitive(selection.variant) || key !is JsonPrimitive ||
+            !key.isString || key != args["mk"]) return JsonObject(emptyMap())
+        val changes = args.getValue("changes").jsonObject
+        require(changes.size <= 4096 && changes.toString().length <= 1024 * 1024) { "楼层显示文字超过限制" }
+        val text = changes.mapValues { (_, value) -> value.jsonPrimitive.also { require(it.isString) }.content }
+        val turn = record.turns.last()
+        if (turn.selected.browserDisplayChanges != text) {
+            _uiState.update { it.copy(browserOperationRunning = true) }
+            try {
+                val variants = turn.variants.toMutableList()
+                variants[turn.selectedVariantIndex] = turn.selected.copy(browserDisplayChanges = text)
+                withContext(NonCancellable) {
+                    record = try { commit(record.copy(turns = record.turns.dropLast(1) + turn.copy(variants = variants))) }
+                    catch (error: Exception) { throw BrowserPersistenceException(error) }
+                    syncRecord()
+                }
+            } finally {
+                _uiState.update { it.copy(browserOperationRunning = false) }
+                pendingBrowserDraft?.let { draft -> pendingBrowserDraft = null; updateInput(draft) }
+            }
+        }
+        val result = browserCommandResult("era.settled", args, JsonNull)
+        savedEraSelection.value = selection
+        return result
     }
 
     private suspend fun executeBrowserCommand(actor: BrowserActor, revision: String, method: String, args: JsonObject): JsonElement {
@@ -1386,7 +1477,7 @@ class ConversationSession(
 
     private fun selectVariant(delta: Int) {
         if (_uiState.value.readOnlyReason != null) return
-        if (_uiState.value.busy) return
+        if (waitForEra { selectVariant(delta) }) return
         val lastIndex = record.turns.indexOfLast { it.role == MessageRole.ASSISTANT }
         if (lastIndex < 0) return
         val turn = record.turns[lastIndex]
@@ -1450,6 +1541,7 @@ class ConversationSession(
     ) {
         if (deferPublication) return
         val current = _uiState.value
+        if (savedEraSelection.value?.variant != record.turns.lastOrNull()?.selected?.id) savedEraSelection.value = null
         record = record.withDraft(input)
         _uiState.value = record.toUiState(
             input = record.draft,
@@ -1652,10 +1744,12 @@ class ConversationSession(
         }
     }
 
-    fun close() {
-        if (closing) return
+    /** Repository owners can await the last save before closing the database. */
+    fun close(): Job {
+        val lifetime = scope.coroutineContext[Job]!!
+        if (closing) return lifetime
         closing = true
-        val jobs = scope.coroutineContext[Job]!!.children.toList() + listOfNotNull(generationJob)
+        val jobs = lifetime.children.toList() + listOfNotNull(generationJob)
         jobs.forEach { it.cancel() }
         scope.launch {
             try {
@@ -1667,6 +1761,7 @@ class ConversationSession(
                 android.util.Log.e("ConversationSession", "Failed to save conversation on close", error)
             } finally { scope.coroutineContext[Job]!!.cancel() }
         }
+        return lifetime
     }
 
     private fun updateTrace(transform: GenerationTraceState.() -> GenerationTraceState) {
@@ -1765,12 +1860,17 @@ private fun ConversationRecord.toUiState(
     executionMode = executionMode,
     browserSnapshot = buildJsonObject {
         BrowserConversation.snapshot(this@toUiState).forEach { (key, value) -> put(key, value) }
-        put("program", Json.encodeToJsonElement(io.github.zvensmoluya.tavernplayer.content.BrowserProgram.serializer(), character.browserProgram ?: io.github.zvensmoluya.tavernplayer.content.BrowserProgram()))
+        put("program", Json.encodeToJsonElement(BrowserProgram.serializer(), character.browserProgram ?: BrowserProgram()))
         put("presetId", activePreset.id)
         put("presetHash", activePreset.contentSha256)
         val presetProgram = runCatching { io.github.zvensmoluya.tavernplayer.content.BrowserProgramReader.preset(activePreset.source) }
-            .getOrElse { io.github.zvensmoluya.tavernplayer.content.BrowserProgram(diagnostics = listOf("当前预设的脚本格式无法装载")) }
-        put("presetProgram", Json.encodeToJsonElement(io.github.zvensmoluya.tavernplayer.content.BrowserProgram.serializer(), presetProgram))
+            .getOrElse { BrowserProgram(diagnostics = listOf("当前预设的脚本格式无法装载")) }
+        put("presetProgram", Json.encodeToJsonElement(BrowserProgram.serializer(), presetProgram))
+        val era = listOfNotNull(character.browserProgram, presetProgram).firstNotNullOfOrNull { program ->
+            program.sources.firstOrNull { it.enabled && it.id !in program.blockedSourceIds &&
+                it.sha256 == "a0768dd0c855dac07cc6e2da51abfdff733d8e2745dcec2f37ef392035b438ed" }
+        }
+        put("era146ScriptId", era?.id)
     },
     conversationId = id,
     character = character,

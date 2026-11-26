@@ -175,6 +175,7 @@ class BrowserSession(
             }
             putJsonObject("flags") {
                 put("busy", state.busy); put("running", state.running); put("browserGenerating", state.browserGenerating)
+                put("canRequestTurn", state.canRequestTurn)
                 put("retryAvailable", state.retryAvailable); put("regenerateAvailable", state.regenerateAvailable)
                 put("variantNavigationAvailable", state.variantNavigationAvailable); put("notice", state.message)
             }
@@ -203,10 +204,12 @@ class BrowserSession(
                 }
                 method.startsWith("ui.") -> {
                     require(request["actorToken"] == null) { "作者页面不能调用播放器 UI 接口" }
-                    require(request["revision"]?.jsonPrimitive?.content == state.browserSnapshot["revision"]?.jsonPrimitive?.content) { "消息已更新，请重试" }
                     val action = method.removePrefix("ui.")
                     require(action in setOf("edit", "retry", "previous", "next", "regenerate")) { "未支持的界面操作" }
-                    require(!state.busy) { "会话正在处理操作" }
+                    val sameEraTail = action != "edit" && state.eraScriptId != null && args["variant"] is JsonPrimitive &&
+                        args["variant"] == state.browserSnapshot["messages"]?.jsonArray?.lastOrNull()?.jsonObject?.get("variantId")
+                    require(sameEraTail || request["revision"] == state.browserSnapshot["revision"]) { "消息已更新，请重试" }
+                    require(if (action == "edit") !state.busy else state.canRequestTurn) { "会话正在处理操作" }
                     uiAction(action, args["id"]?.jsonPrimitive?.contentOrNull)
                     buildJsonObject { put("accepted", true) }
                 }

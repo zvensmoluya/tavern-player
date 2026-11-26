@@ -346,6 +346,7 @@ data class MessageVariant(
     val browserOwnVariables: Boolean = false,
     val browserExtra: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
     val browserHead: ConversationRuntimeState? = null,
+    val browserDisplayChanges: Map<String, String> = emptyMap(),
 )
 
 @Serializable

@@ -28,6 +28,8 @@ Compose 保留导航、模型与预设选择、输入栏及编辑确认弹窗。
 
 独立的 MVU 加载语句与登记的 `mvu_zod` Schema 模块由已有 QuickJS MVU 宿主处理。原加载器不再进入 WebView，避免同一回复执行两次 MVU 更新。混合 MVU 加载器与其他副作用的脚本明确停用；多份 Schema 或不能在无 DOM 宿主装载的 Schema 不自动拆分。世界书中的 EJS 原模板按来源哈希登记，使用已有只读 QuickJS EJS 引擎；触发、Regex/Macro、求值缓存与预算继续走 PromptCompiler，无需模型适配产物。
 
+EJS 可通过 `await getwi(null, "标题")` 或 `await getwi("标题")` 读取普通世界书正文，别名为 `getWorldInfo`。按本轮参与编排的书序精确匹配标题（优先 comment，缺省用 name），首个命中生效，未命中返回空串。作者关闭自动激活的条目仍可被引用；玩家手动停用的条目跳过，玩家改写的正文以本轮快照为准。宿主按需传递命中的文字，计入 EJS 输入限额；返回文字按字面量使用。具名书、UID、正则匹配、附加上下文与嵌套 EJS 求值超出这组接口的支持范围。
+
 MagVarUpdate 的 jsDelivr 入口由同一套规则识别，覆盖角色和预设的脚本准备、WebView 的直接请求及资源重定向后的最终地址。支持 `cdn`、`testingcf`、`fastly` 三个 HTTPS 镜像。无 ref、`@master`、`@beta` 表示使用播放器内置的固定 MVU。独立的静态导入、字面量动态导入（含 `await`），以及先用单个模块级 `const` 保存字面地址再动态导入，均可在开场前识别。解析仅检查语法。与其他作者逻辑混用的已识别导入会停用，运行时才算出的地址由 WebView 资源入口复核。指定其他版本或不受支持的镜像时会显示来源与原因，该程序内的 MVU 注册一并停用。
 
 浮动分支按内置引擎的兼容范围运行。2026-11-25 核查时，`master` 与 `beta` 同指 `d03b7dc8`，原卡 CDN 返回的 bundle 与该次上游 beta 文件 SHA-256 相同（`a5d6166d43a78c7f…`），与播放器锁定的 `61010dab` 发布文件不同（`be149c7fb531c9f8…`）。回归样本 `3fe1f8be2566ee5b…` 通过实际导入、新建会话、读取开场变量、旧式更新及重新打开会话验证。Android 15 模拟器从系统文件选择器导入同一原件后，开场渲染一条消息，后台脚本帧数为零，网页通知为空。旧版样本的核查见 [C-08 依赖核查与接入验证](archive/legacy-mvu-dependency-audit-20260912.md)。更新后的程序在新建对话时准备，已有对话按下文的存档恢复规则继续。
@@ -37,6 +39,14 @@ MagVarUpdate 的 jsDelivr 入口由同一套规则识别，覆盖角色和预设
 网页尺寸同步（2026-09-16）：宿主 ResizeObserver 的测量与高度写入合并到下一动画帧；内外 iframe 高度未变时不重复写入，测量结果未变时不上报。页面销毁会断开监听并取消待执行任务。浏览器的 `ResizeObserver loop completed with undelivered notifications.` 与旧式 `ResizeObserver loop limit exceeded` 按精确文字识别：网页侧保留控制台 warning，Android 控制台入口保留日志，不插入影响布局的错误文字或显示加载失败／重试按钮。其他错误沿原路径报告；不吞掉包含该关键词的任意异常。此措施不保证任意作者布局收敛，也不改变作者 CSS 的现有 vh 处理范围。调查和验证见 [C-07 尺寸通知记录](resize-observer-investigation-20260916.md)。
 
 `errorCatched(fn)` 可包装同步或异步初始化函数：正常时保留参数、返回值和同步/异步行为，失败时显示诊断并继续抛出原错误。支持作者页面常用的 `$(errorCatched(...))` 启动方式。
+
+后台模块以 JavaScript 原文装载，其字符串中的 HTML 或 CSS 保留原值。脚本可从 `SillyTavern.name1`、`name2` 读取当前用户与角色的提示词名称。作者会话就绪后再注册 `APP_READY` 也能收到通知。
+
+已验证的一份 ERA 1.4.6 框架由 WebView 执行。Player 保存聊天变量和候选，EJS 在没有 MVU 的对话中从当前生成所选的聊天状态读取变量。该版本将多个通知排队后只读取最新楼层，因此宿主按框架源码哈希把消息和候选变化汇成一次已保存历史的同步通知。其他脚本继续接收各楼层的原事件。实验步骤和覆盖范围见 [C-11 样本记录](reference/community-samples.md)。
+
+对这份框架，玩家在状态同步期间发起发送、重试、重新生成或切换候选时，Player 暂存一次操作。框架发出 `era:writeDone` 后，宿主按顺序保存此前提交的变量和本次显示文字，并核对会话、候选和消息标识，再执行操作。等待期间更改待发送的草稿或换到另一候选会使原操作失效。同步超时会提示重试。
+
+ERA 的 `retrieveDisplayedMessage` 取得该楼层 Markdown 展示正文的副本，原脚本在副本中查找宏并修改文字节点。Player 按候选保存这些文字替换，渲染普通文本和静态富文本时逐节点应用。替换值按字面量显示。存档中的原始正文保留宏，作者交互页面仍由页面自己的脚本更新。
 
 参照提交和文件记录在 [upstream-contract.json](../tools/web-runtime/upstream-contract.json)。Tavern Helper 基线为 `3de7ef981f378517779eb32ab5ecb82c033e4db4`，ST 基线为 `8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8`。MVU、Schema 辅助库和 EJS 使用已有 [公共程序锁](../tools/mvu-probe/upstream-lock.json)。浏览器库由 npm lock 固定，构建产物附带许可证和文件哈希清单。
 

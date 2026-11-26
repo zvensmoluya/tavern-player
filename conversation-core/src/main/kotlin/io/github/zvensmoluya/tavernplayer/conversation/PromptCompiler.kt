@@ -422,10 +422,24 @@ class PromptCompiler(
         val ejsLiteralPrefix = "\uE000ejs-${java.util.UUID.randomUUID()}-"
         val ejsLiterals = linkedMapOf<String, String>()
         val ejsBlocks = Regex("<%[\\s\\S]*?%>")
+        val books = input.worldBookState.projectContent(worldBookText.books)
+        val activationOverrides = input.worldBookState.effectiveActivation(input.character.worldBooks)
+        val worldInfoByTitle by lazy {
+            buildMap<String, String> {
+                for (book in books.filter { activationOverrides.isBookEnabled(it.id) }) {
+                    val overrides = input.worldBookState.playerOverrides[book.id].orEmpty()
+                    for (entry in book.entries) {
+                        if (overrides[entry.id]?.mode == WorldBookEntryMode.DISABLED) continue
+                        val title = entry.comment.ifBlank { entry.name }
+                        if (title.isNotBlank() && title !in this) put(title, entry.content)
+                    }
+                }
+            }
+        }
         val activation = worldBookEngine.activate(
-            books = if (memoryEntries.isEmpty()) input.worldBookState.projectContent(worldBookText.books) else listOf(
+            books = if (memoryEntries.isEmpty()) books else listOf(
                 io.github.zvensmoluya.tavernplayer.content.WorldBookDefinition(NativeMemoryController.BOOK_ID, entries = memoryEntries)
-            ) + input.worldBookState.projectContent(worldBookText.books),
+            ) + books,
             characterScan = characterScan,
             additionalScanText = memoryEntries.joinToString("\n") { it.content },
             projectedHistory = projectedHistory.map { message ->
@@ -440,7 +454,7 @@ class PromptCompiler(
             macroContext = baseContext,
             transaction = transaction,
             previousState = input.runtimeState.worldBookEntries,
-            activationOverrides = input.worldBookState.effectiveActivation(input.character.worldBooks),
+            activationOverrides = activationOverrides,
             forcedBooks = input.worldBookState.forcedBooks,
             forcedEntries = input.worldBookState.forcedEntries(),
             turnIndex = input.runtimeState.generationIndex,
@@ -466,8 +480,9 @@ class PromptCompiler(
                     } else {
                         val output = input.ejsRenderer(EjsTemplateRequest(
                             "$bookId:${entry.id}", expanded.text,
-                            input.runtimeState.mvuState?.data ?: kotlinx.serialization.json.JsonObject(emptyMap()),
+                            input.runtimeState.mvuState?.data ?: input.runtimeState.browserChatVariables,
                             projectedHistory.map { EjsHistoryMessage(it.role.name.lowercase(), it.content) },
+                            worldInfoByTitle,
                         ))
                         val marker = if (output.isBlank()) "" else "$ejsLiteralPrefix${ejsLiterals.size}\uE001"
                         if (marker.isNotEmpty()) ejsLiterals[marker] = output

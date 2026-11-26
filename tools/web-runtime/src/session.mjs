@@ -9,6 +9,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 /** One author session: live objects and callbacks never pass through JSON or the native bridge. */
 export function createSession(initial) {
   let base = clone(initial), state = clone(initial), failed = null, queue = Promise.resolve();
+  let appReadyArgs;
   const pending = [], owners = new Set(), listeners = new Map(), globals = {}, globalOwners = new Map(), waiters = [];
   const check = owner => { if (failed) throw failed; if (owner && !owner.active) throw new Error('Runtime disposed'); };
   function changed() {
@@ -80,6 +81,10 @@ export function createSession(initial) {
   }
   function on(owner, name, fn, once = false, position) {
     check(owner);
+    if (name === undefined && typeof fn === 'function') {
+      console.debug('Cannot listen to an undefined Tavern event');
+      return { stop() {} };
+    }
     if (typeof name !== 'string' || typeof fn !== 'function') throw new Error('Invalid event listener');
     const list = listeners.get(name) ?? [];
     let item = list.find(value => value.owner === owner && value.fn === fn);
@@ -87,6 +92,10 @@ export function createSession(initial) {
     else if (!position) return { stop: () => remove(owner, name, fn) };
     const next = list.filter(value => value !== item);
     position === 'first' ? next.unshift(item) : next.push(item); listeners.set(name, next);
+    if (name === 'app_ready' && appReadyArgs && ready(name, item)) {
+      try { item.fn(...appReadyArgs)?.catch?.(error => owner.notify('error', error.message)); }
+      catch (error) { owner.notify('error', error.message); }
+    }
     return { stop: () => remove(owner, name, fn) };
   }
   function ready(name, item) {
@@ -96,6 +105,7 @@ export function createSession(initial) {
   }
   async function emit(name, args) {
     check();
+    if (name === 'app_ready') appReadyArgs = args;
     for (const item of [...(listeners.get(name) ?? [])]) if (ready(name, item)) {
       try {
         const result = item.fn(...args);
@@ -106,6 +116,7 @@ export function createSession(initial) {
   }
   function emitSync(name, args) {
     check();
+    if (name === 'app_ready') appReadyArgs = args;
     for (const item of [...(listeners.get(name) ?? [])]) if (ready(name, item)) {
       try {
         const result = item.fn(...args);

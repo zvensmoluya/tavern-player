@@ -10,12 +10,21 @@ const object = value => {
 const only = (value, keys) => { object(value); if (Object.keys(value).some(key => !keys.includes(key))) throw new Error('Unsupported argument'); };
 
 export const tavernEvents = Object.freeze({
+  APP_READY: 'app_ready',
   CHAT_CHANGED: 'chat_id_changed', MESSAGE_SENT: 'message_sent', MESSAGE_RECEIVED: 'message_received', MESSAGE_UPDATED: 'message_updated',
   MESSAGE_SWIPED: 'message_swiped', USER_MESSAGE_RENDERED: 'user_message_rendered',
   CHARACTER_MESSAGE_RENDERED: 'character_message_rendered', GENERATION_STARTED: 'generation_started',
   GENERATION_ENDED: 'generation_ended', GENERATION_STOPPED: 'generation_stopped',
 });
 export const mvuEvents = Object.freeze({ VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended' });
+// This release queues ST notifications, then looks up the tail instead of the supplied floor.
+// Player can commit a user floor and its answer before the queue drains. Let its existing
+// history reconciliation read the writable selection once, including both floors.
+export const settledHistoryEvent = 'player_history_settled';
+const era146Events = Object.freeze({ ...tavernEvents, MESSAGE_SENT: undefined,
+  // APP_READY already initializes this instance. A second startup reconciliation
+  // from CHAT_CHANGED could outlive its first writeDone and run in the next turn.
+  CHAT_CHANGED: undefined, MESSAGE_RECEIVED: settledHistoryEvent, MESSAGE_SWIPED: undefined, GENERATION_STARTED: undefined });
 export const iframeEvents = Object.freeze({
   MESSAGE_IFRAME_RENDER_STARTED: 'message_iframe_render_started', MESSAGE_IFRAME_RENDER_ENDED: 'message_iframe_render_ended',
   GENERATION_STARTED: 'js_generation_started', GENERATION_ENDED: 'js_generation_ended',
@@ -23,10 +32,12 @@ export const iframeEvents = Object.freeze({
 });
 
 /** A synchronous view plus an ordered durable command queue. No bridge call blocks JavaScript. */
-export function createHost({ initial, actor, request, notify = () => {}, session = createSession(initial) }) {
+export function createHost({ initial, actor, request, notify = () => {}, displayMessage, session = createSession(initial) }) {
   const owner = session.attach(notify, actor);
   const scriptSource = [initial.program, initial.presetProgram].flatMap(p => p?.sources ?? []).find(s => s.id === actor.scriptId);
   const scriptId = scriptSource?.declaredId ?? actor.scriptId;
+  const era146 = Boolean(actor.scriptId && actor.scriptId === initial.era146ScriptId);
+  let displayed;
   let scriptButtons = clone(scriptSource?.buttons ?? actor.buttons ?? []);
   const receive = next => session.receive(next);
   const enqueue = (method, args, project) => session.enqueue(owner, request, method, args, project);
@@ -329,6 +340,10 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     return true;
   }
   const api = {
+    SillyTavern: Object.freeze({
+      get name1() { return session.state.userName; },
+      get name2() { return session.state.characterName; },
+    }),
     // Match the helper's wrapper contract: report failures and rethrow them, never
     // turn a failed initializer into a successful result. Duck typing is needed
     // because author promises are created in a different iframe realm.
@@ -371,11 +386,23 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     eventClearEvent: name => session.remove(owner, name),
     eventClearListener: fn => session.clear(owner, fn),
     eventRemoveListener: remove, eventClearAll: () => session.clear(owner),
-    eventEmit: (name, ...args) => session.emit(name, args),
+    eventEmit: async (name, ...args) => {
+      if (!era146 || name !== 'era:writeDone') return session.emit(name, args);
+      const detail = args[0], message = session.state.messages[detail?.message_id];
+      if (!message || message !== session.state.messages.at(-1)) return session.emit(name, args);
+      const view = displayMessage(message);
+      displayed = { id: message.message_id, view };
+      try {
+        await session.emit(name, args);
+        // This command shares the ordered queue with the framework's chat writes.
+        // Its acknowledgement covers both the variables and this candidate's display.
+        await enqueue('era.settled', { variant: message.variantId, mk: detail.mk, changes: view.changes() });
+      } finally { if (displayed?.view === view) displayed = null; }
+    },
     eventEmitAndWait: (name, ...args) => session.emitSync(name, args),
     eventOnButton: (name, fn) => on('player_button:' + actor.scriptId + ':' + name, fn),
     initializeGlobal: initialize, waitGlobalInitialized,
-    tavern_events: tavernEvents, iframe_events: iframeEvents,
+    tavern_events: era146 ? era146Events : tavernEvents, iframe_events: iframeEvents,
     getWorldbookNames, getGlobalWorldbookNames, rebindGlobalWorldbooks, getCharWorldbookNames, rebindCharWorldbooks, getCharLorebooks,
     getWorldbook, createWorldbook, createOrReplaceWorldbook, deleteWorldbook, replaceWorldbook, updateWorldbookWith,
     createWorldbookEntries, deleteWorldbookEntries, setWorldbookEnabled, setWorldbookEntryEnabled,
@@ -405,6 +432,8 @@ export function createHost({ initial, actor, request, notify = () => {}, session
     },
     isValidMvuData: data => !!data && typeof data.stat_data === 'object' && 'schema' in data,
   };
+  if (era146) api.retrieveDisplayedMessage = id => displayed?.id === id ? displayed.view.element :
+    displayMessage(session.state.messages[id]).element;
   for (const name of ['triggerSlash', 'executeSlashCommands',
     'registerMvuSchema', 'setWorldbook', 'injectPrompts', 'replaceAllVariables']) api[name] = unsupported(name);
   // Retained function references must not operate after their owner is destroyed.

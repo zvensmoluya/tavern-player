@@ -5,6 +5,19 @@ import { createHost } from '../src/host.mjs';
 
 const initial = () => ({ revision: 'r0', chatVariables: {}, scriptVariables: {}, messages: [], worldbooks: [], mvu: null });
 
+test('a late script receives app readiness and can register past an unknown event', () => {
+  const { session, a } = pair();
+  const seen = [];
+  session.emitSync(a.api.tavern_events.APP_READY, []);
+  a.api.eventOn(a.api.tavern_events.UNAVAILABLE, () => seen.push('unexpected'));
+  a.api.eventOnce(a.api.tavern_events.APP_READY, () => seen.push('ready'));
+  a.api.eventOn('custom', () => seen.push('custom'));
+  session.emitSync('custom', []);
+  session.emitSync(a.api.tavern_events.APP_READY, []);
+  assert.deepEqual(seen, ['ready', 'custom']);
+  assert.throws(() => a.api.eventOn('invalid', 1));
+});
+
 test('draft deltas preserve historical payloads and message deltas isolate incoming objects', () => {
   const session = createSession({ ...initial(), messages: [
     { turnId: 'a', variantId: 'a1', data: { score: 1 } },

@@ -17,6 +17,36 @@ class QuickJsEjsRuntimeTest {
         EjsRuntimeContract.verify(bundle())
     }
 
+    @Test fun worldInfoReadsEffectiveTextAndMissingTitlesThroughPromptCompilation() = runBlocking {
+        val controller = WorldBookEntryDefinition("controller", constant = true,
+            content = """<%- await getwi(null, "Stage") %>|<%- await getWorldInfo("Missing") %>END""")
+        val stage = WorldBookEntryDefinition("stage", comment = "Stage", enabled = false, content = "Original stage")
+        val book = WorldBookDefinition("book", entries = listOf(controller, stage))
+        val character = DemoConversationContent.character.copy(worldBooks = listOf(book))
+        val snapshot = character.snapshot().copy(browserProgram = BrowserProgramReader.character(character))
+        val input = NormalGenerationInput(snapshot, DemoConversationContent.persona,
+            listOf(ConversationMessage("u", MessageRole.USER, "Continue.", "Traveler")), BuiltInPresets.default,
+            modelContextTokens = 32768, modelOutputTokens = 1024)
+        val runtime = QuickJsEjsRuntime(loadBundle = { bundle() })
+        val cache = mutableMapOf<EjsTemplateRequest, String>()
+        suspend fun compile(override: WorldBookEntryOverride): CompilationResult {
+            val state = ConversationWorldBookState(playerOverrides = mapOf(book.id to mapOf(stage.id to override)))
+            return runtime.compile(PromptCompiler(), input.copy(worldBookState = state), cache)
+        }
+        for ((override, expected) in listOf(
+            WorldBookEntryOverride() to "Original stage|END",
+            WorldBookEntryOverride(content = "Edited stage") to "Edited stage|END",
+            WorldBookEntryOverride(mode = WorldBookEntryMode.DISABLED) to "|END",
+        )) {
+            val result = compile(override)
+            assertTrue(result.toString(), result is CompilationResult.Success)
+            val plan = (result as CompilationResult.Success).plan
+            assertTrue(plan.messages.any { expected in it.content })
+            assertFalse(stage.id in plan.activatedWorldBookEntries)
+        }
+        assertTrue(compile(WorldBookEntryOverride(content = "<%= 1 %>")) is CompilationResult.Failure)
+    }
+
     @Test fun loopingAndSuspendedTemplatesAreInterruptedAndNextRenderIsFresh() = runBlocking {
         val runtime = QuickJsEjsRuntime(loadBundle = { bundle() }, timeoutMillis = 200)
         for (template in listOf("<% while (true) {} %>", "<% await new Promise(() => {}) %>")) {

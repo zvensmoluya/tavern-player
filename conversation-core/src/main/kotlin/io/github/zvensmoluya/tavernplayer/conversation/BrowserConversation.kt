@@ -39,6 +39,9 @@ object BrowserConversation {
                 put("id", selected.message.id); put("role", turn.role.name.lowercase())
                 put("name", selected.message.authorName)
                 put("message", selected.message.content); put("sourceText", selected.message.sourceText)
+                if (selected.browserDisplayChanges.isNotEmpty()) putJsonObject("displayChanges") {
+                    selected.browserDisplayChanges.forEach { (source, replacement) -> put(source, replacement) }
+                }
                 put("is_hidden", selected.browserHidden); put("swipe_id", turn.selectedVariantIndex)
                 put("data", variables(selected)); put("extra", selected.browserExtra)
                 putJsonArray("swipes") { turn.variants.forEach { add(it.message.content) } }

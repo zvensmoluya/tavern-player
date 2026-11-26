@@ -98,6 +98,18 @@ class BrowserProgramPreparerTest {
         fun identity(state: ConversationRuntimeState) = state.mvuState!!.data.getValue("stat_data").jsonObject
             .getValue("user").jsonObject.getValue("身份").jsonArray.first().jsonPrimitive.content
         assertEquals("User", identity(record.runtimeState))
+        val ejs = QuickJsEjsRuntime(loadBundle = { File(assets.parentFile, "app-assets/ejs/runtime.js").readText() })
+        val input = NormalGenerationInput(record.character, record.persona,
+            record.turns.map { it.selected.message } + ConversationMessage("u", MessageRole.USER, "Continue.", "User"),
+            BuiltInPresets.default, runtimeState = record.runtimeState, modelContextTokens = 131072)
+        val result = ejs.compile(PromptCompiler(), input, mutableMapOf())
+        assertTrue("First send must compile", result is CompilationResult.Success)
+        val plan = (result as CompilationResult.Success).plan
+        assertEquals(4, plan.trace.count { it.stage == "ejs" })
+        val openingStage = record.character.worldBooks.single().entries.single { it.sourceId == "4" }
+        assertFalse(openingStage.enabled)
+        assertTrue("First send must include the opening stage text",
+            plan.messages.any { openingStage.content.trim() in it.content })
         val reply = "Reply.\n<UpdateVariable>\n_.set('user.身份', 'User', 'Visitor');\n</UpdateVariable>"
         val update = requireNotNull(runtime.update(record.character, reply, record.runtimeState, persona = record.persona))
         assertTrue(update.diagnostics.toString(), update.diagnostics.none { it.level == "error" })

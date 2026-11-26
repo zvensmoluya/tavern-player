@@ -43,6 +43,19 @@ class EjsPromptIntegrationTest {
         assertEquals(source, base.character.worldBooks.single().entries.single().content)
     }
 
+    @Test fun `EJS reads the selected checkpoint or the conversation chat variables`() {
+        val base = input()
+        val chat = buildJsonObject { putJsonObject("stat_data") { put("score", 8) } }
+        val runtime = base.runtimeState.copy(browserChatVariables = chat)
+        for ((state, expected) in listOf(runtime to runtime.mvuState!!.data, runtime.copy(mvuState = null) to chat)) {
+            val result = PromptCompiler().compile(base.copy(runtimeState = state, ejsRenderer = { request ->
+                assertEquals(expected, request.variables)
+                "SCORE=" + request.variables.getValue("stat_data").jsonObject.getValue("score")
+            })) as CompilationResult.Success
+            assertTrue(result.plan.messages.any { "SCORE=" in it.content })
+        }
+    }
+
     @Test fun `only enabled and triggered entries execute and source checks cannot be bypassed`() {
         val base = input()
         val book = base.character.worldBooks.single()
