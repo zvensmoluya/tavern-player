@@ -12,11 +12,14 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
+import androidx.webkit.WebViewCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zvensmoluya.modelgateway.*
 import io.github.zvensmoluya.modelgateway.catalog.ModelCatalog
 import io.github.zvensmoluya.tavernplayer.app.AppGraph
+import io.github.zvensmoluya.tavernplayer.characters.CharacterImageRepository
+import io.github.zvensmoluya.tavernplayer.characters.CharacterRepository
 import io.github.zvensmoluya.tavernplayer.characters.CharacterSaveResult
 import io.github.zvensmoluya.tavernplayer.connections.*
 import io.github.zvensmoluya.tavernplayer.conversation.*
@@ -46,19 +49,11 @@ class BrowserLiveAndroidTest {
     @Test fun eraOriginalTracksNeutralCandidatesAndRestoredPrompt() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("eraProbe") == "1")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        fun fixture(name: String) = InstrumentationRegistry.getInstrumentation().context.assets.open("era/$name").use { it.readBytes() }
-        val framework = fixture("framework.js").decodeToString()
+        val framework = eraFixture("framework.js").decodeToString()
         check(hash(framework.toByteArray()) == "a0768dd0c855dac07cc6e2da51abfdff733d8e2745dcec2f37ef392035b438ed")
-        val modules = Json.parseToJsonElement(fixture("modules.json").decodeToString()).jsonObject
         val root = File(context.cacheDir, "era-test-${UUID.randomUUID()}")
         val graph = AppGraph(context)
-        val environment = BrowserEnvironment(context, graph.characterRepository.imageResources, WebResourceRepository(root, fetcher = { url ->
-            val filename = modules.getValue(url).jsonPrimitive.content
-            require(filename.matches(Regex("[0-9a-f]{64}\\.js")))
-            val bytes = fixture(filename)
-            check(hash(bytes) == filename.removeSuffix(".js"))
-            WebDownload(bytes, url, "application/javascript")
-        }), { _, _ -> null }, { null })
+        val environment = BrowserEnvironment(context, graph.characterRepository.imageResources, eraResources(root), { _, _ -> null }, { null })
         val preset = object : ActivePresetSource {
             override val activePreset = MutableStateFlow(io.github.zvensmoluya.tavernplayer.content.BuiltInPresets.default)
         }
@@ -214,6 +209,105 @@ class BrowserLiveAndroidTest {
             check(prompts.size == 3 && "BALANCE=10" in prompts[0] && "BALANCE=10" in prompts[1] && "BALANCE=8" in prompts[2])
         } finally {
             if (updates != null) close()
+            store.close()
+            root.deleteRecursively()
+        }
+    }
+
+    private fun eraFixture(name: String) = InstrumentationRegistry.getInstrumentation().context.assets
+        .open("era/$name").use { it.readBytes() }
+
+    private fun eraResources(root: File): WebResourceRepository {
+        val modules = Json.parseToJsonElement(eraFixture("modules.json").decodeToString()).jsonObject
+        return WebResourceRepository(root, fetcher = { url ->
+            val filename = modules.getValue(url).jsonPrimitive.content
+            require(filename.matches(Regex("[0-9a-f]{64}\\.js")))
+            val bytes = eraFixture(filename)
+            check(hash(bytes) == filename.removeSuffix(".js"))
+            WebDownload(bytes, url, "application/javascript")
+        })
+    }
+
+    @Test fun originalOpeningRoutesAndRefreshesWithUnavailableImages() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("eraCardProbe") == "1")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val bytes = File(context.getExternalFilesDir(null), "C-11.png").readBytes()
+        check(hash(bytes) == "eaa0451cfbc70b9f1f2d1fc239bc22e0d018ff2b61935ea0b840a322c8545a1b")
+        val root = File(context.cacheDir, "era-card-${UUID.randomUUID()}")
+        val graph = AppGraph(context)
+        val library = CharacterRepository(root)
+        val card = (library.import(bytes, "C-11.png") as CharacterSaveResult.Saved).character
+        val images = CharacterImageRepository(root, library::get, library::assetFile, fetcher = { _, _ -> error("HTTP 403") })
+        val environment = BrowserEnvironment(context, images, eraResources(root), library::assetFile, library::avatarFile)
+        val preset = object : ActivePresetSource {
+            override val activePreset = MutableStateFlow(io.github.zvensmoluya.tavernplayer.content.BuiltInPresets.default)
+        }
+        val connections = ConnectionRepository(MemoryConnections(), MemoryCredentials(), { ModelCatalog(emptyList(), false) })
+        connections.save(ConnectionDraft("offline", "Offline", "test", ModelProtocol.OPENAI_CHAT_COMPLETIONS,
+            "https://example.invalid", "test"), "test", false)
+        val requests = AtomicInteger()
+        val generator = object : ConversationGenerator {
+            override fun stream(connection: StoredConnection, plan: GenerationPlan) = flow {
+                check(requests.incrementAndGet() == 1)
+                emit(GenerationEvent.TextDelta("""Continue. <VariableEdit>{"世界":{"地点":"Probe location"}}</VariableEdit><StatusPlaceHolderImpl/>"""))
+                emit(GenerationEvent.Finished("stop"))
+            }
+        }
+        val store = ConversationRepository(root, graph.promptCompiler, prepareBrowser = environment::prepare)
+        val id = store.create(card, Persona("p", "Reader"), preset.captureActive()).id
+        val observed = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val operations = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val failures = java.util.concurrent.CopyOnWriteArrayList<String>()
+        lateinit var web: WebView
+        lateinit var browser: BrowserSession
+        lateinit var chat: ConversationSession
+        var updates: Job? = null
+        suspend fun awaitStage(stage: String, ready: suspend () -> Boolean) {
+            check(withTimeoutOrNull(45000) {
+                while (!ready()) delay(100)
+                true
+            } == true) { "$stage: observed=$observed, failures=${failures.distinct()}, requests=$requests, state=${chat.uiState.value.message}, host=${operations.takeLast(24)}" }
+        }
+        try {
+            withContext(Dispatchers.Main) {
+                chat = ConversationSession(connections, graph.promptCompiler, generator, store, preset, ejsRuntime = graph.ejsRuntime,
+                    browserEnvironment = environment)
+                chat.loadConversation(id)
+                val state = withTimeout(15000) { chat.uiState.first { it.conversationId == id && !it.busy && it.selectedConnection != null } }
+                web = WebView(compose.activity)
+                compose.activity.setContentView(web)
+                val origins = setOf("https://c-${hash(id).take(24)}.cards.invalid")
+                WebViewCompat.addWebMessageListener(web, "CardProbe", origins) { _, msg, _, _, _ -> msg.data?.let(observed::add) }
+                val driver = InstrumentationRegistry.getInstrumentation().context.assets.open("era-card-ui.js").bufferedReader().use { it.readText() }
+                WebViewCompat.addDocumentStartJavaScript(web, driver, origins)
+                browser = BrowserSession(web, environment, state, { actor, revision, method, args ->
+                    val before = chat.uiState.value.browserSnapshot["revision"]?.jsonPrimitive?.content?.substringAfter(':')
+                    operations.add("$method ${if (actor.scriptId == null) "page" else "script"} ${revision.substringAfter(':')} / $before")
+                    val result = chat.invokeBrowser(actor, revision, method, args)
+                    if (method == "era.settled") {
+                        val vars = result["snapshot"]?.jsonObject?.get("chatVariables")?.jsonObject
+                        if (vars?.get("stat_data")?.jsonObject?.get("世界")?.jsonObject?.get("地点") == JsonPrimitive("Probe location"))
+                            observed.add("saved")
+                    }
+                    result
+                }, { _, _ -> }, failures::add)
+                browser.start()
+                updates = this@runBlocking.launch(Dispatchers.Main) { chat.uiState.collect(browser::update) }
+            }
+            awaitStage("opening") { store.get(id)?.turns?.first()?.selectedVariantIndex == 1 &&
+                "options" in observed && "placeholder" in observed && !chat.uiState.value.busy }
+            withContext(Dispatchers.Main) { chat.updateInput("Continue."); chat.send() }
+            awaitStage("reply") { "refreshed" in observed && "saved" in observed && !chat.uiState.value.busy }
+            val record = checkNotNull(store.get(id))
+            check(record.turns.size == 3 && requests.get() == 1)
+            check(record.runtimeState.browserChatVariables["stat_data"]?.jsonObject?.get("世界")?.jsonObject?.get("地点") == JsonPrimitive("Probe location"))
+            check(images.states.value.getValue(card.id).entries.any { !it.saved && it.error == "HTTP 403" })
+            check(failures.isEmpty()) { failures.distinct().toString() }
+        } finally {
+            withContext(Dispatchers.Main) {
+                updates?.cancelAndJoin()
+                if (updates != null) { browser.release(); web.destroy(); chat.close().join() }
+            }
             store.close()
             root.deleteRecursively()
         }

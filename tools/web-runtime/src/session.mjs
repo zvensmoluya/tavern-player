@@ -11,6 +11,9 @@ export function createSession(initial) {
   let base = clone(initial), state = clone(initial), failed = null, queue = Promise.resolve();
   let appReadyArgs;
   const pending = [], owners = new Set(), listeners = new Map(), globals = {}, globalOwners = new Map(), waiters = [];
+  // A page can retire itself by selecting a different swipe. Keep the receipt in the
+  // conversation's realm until the native operation has returned its committed revision.
+  const receipts = new Map();
   const check = owner => { if (failed) throw failed; if (owner && !owner.active) throw new Error('Runtime disposed'); };
   function changed() {
     for (const owner of owners) {
@@ -139,6 +142,8 @@ export function createSession(initial) {
   function stop(error) {
     if (failed) return;
     failed = error instanceof Error ? error : new Error(String(error)); pending.length = 0; state = clone(base);
+    for (const receipt of receipts.values()) receipt.reject(failed);
+    receipts.clear();
     listeners.clear();
     for (const waiter of waiters.splice(0)) waiter.reject(failed);
     changed();
@@ -157,7 +162,25 @@ export function createSession(initial) {
       const owner = { id: actor.id, actor, active: true, notify, targets: new Set(), changed: null, closed, cancelEvents };
       owners.add(owner); return owner;
     },
-    disposeFrame(id) { for (const owner of [...owners]) if (owner.id === id) dispose(owner); },
+    request(token, id, send) {
+      return new Promise((resolve, reject) => {
+        const key = token + ':' + id;
+        receipts.set(key, { token, id, resolve, reject });
+        try { send(); } catch (error) { receipts.delete(key); reject(error); }
+      });
+    },
+    completeRequest({ token, id, result, error }) {
+      const key = token + ':' + id, receipt = receipts.get(key);
+      if (!receipt) return;
+      receipts.delete(key);
+      if (error) receipt.reject(new Error(error)); else receipt.resolve(result);
+    },
+    disposeFrame(id, accepted = []) {
+      for (const [key, receipt] of receipts) if (receipt.token === id && !accepted.includes(receipt.id)) {
+        receipts.delete(key); receipt.reject(new Error('Runtime disposed'));
+      }
+      for (const owner of [...owners]) if (owner.id === id) dispose(owner);
+    },
     destroy() { for (const owner of [...owners]) dispose(owner); stop(new Error('Session disposed')); },
     install(owner, target) { check(owner); owner.targets.add(target); for (const name of globalOwners.keys()) bind(owner, name); },
     observe(owner, callback) { check(owner); owner.changed = callback; callback(state); },

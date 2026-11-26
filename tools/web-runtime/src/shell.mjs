@@ -11,6 +11,7 @@ let measuredViewportHeight = window.innerHeight;
 let observedScrollY = window.scrollY;
 let renderQueue = Promise.resolve(), coordinator = null, factSnapshot = null;
 let historyPending = false;
+const receivedDuringGeneration = new Set();
 // Upstream generation notifications emit without awaiting listeners. A listener may itself await
 // another generation; holding a global event queue here would deadlock its streaming notifications.
 function lifecycle(name, args) { broadcast(name, args).catch(error => notice(error.message)); }
@@ -26,13 +27,24 @@ function publishMessageFacts(next) {
     historyPending = false;
     lifecycle(settledHistoryEvent, [next.messages.length - 1]);
   }
+  if (!next.generating && receivedDuringGeneration.size) {
+    for (const message of next.messages) {
+      if (receivedDuringGeneration.has(message.variantId) && message.status === 'COMPLETE')
+        lifecycle(tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    }
+    receivedDuringGeneration.clear();
+  }
   if (previous.messages === next.messages && previous.mvu === next.mvu) return;
   const previousMessages = new Map(previous.messages.map(message => [message.turnId, message]));
   for (const message of next.messages) {
     const before = previousMessages.get(message.turnId);
-    if (!before && message.status === 'COMPLETE') lifecycle(message.role === 'user' ? tavernEvents.MESSAGE_SENT : tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    if (!before && message.status === 'COMPLETE' && message.role === 'user') lifecycle(tavernEvents.MESSAGE_SENT, [message.message_id]);
     if (before && before.swipe_id !== message.swipe_id) lifecycle(tavernEvents.MESSAGE_SWIPED, [message.message_id]);
-    if (message.status === 'COMPLETE' && before?.status === 'STREAMING') lifecycle(tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    if (message.status === 'COMPLETE' && ((!before && message.role !== 'user') || before?.status === 'STREAMING')) {
+      // MESSAGE_RECEIVED handlers may edit the reply. The native generation still owns it during finalization.
+      if (next.generating) receivedDuringGeneration.add(message.variantId);
+      else lifecycle(tavernEvents.MESSAGE_RECEIVED, [message.message_id]);
+    }
     if (before && before.message !== message.message && message.status === 'COMPLETE') lifecycle(tavernEvents.MESSAGE_UPDATED, [message.message_id]);
   }
   if (JSON.stringify(previous.mvu) !== JSON.stringify(next.mvu) && next.mvu) lifecycle(mvuEvents.VARIABLE_UPDATE_ENDED, [next.mvu, previous.mvu]);
@@ -102,7 +114,7 @@ async function createFrame(kind, html, target, sourceId) {
   const element = document.createElement('iframe');
   element.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   element.setAttribute('referrerpolicy', 'no-referrer'); element.title = kind === 'script' ? '会话脚本' : '消息内容';
-  const frame = { element, token: result.token, origin: new URL(result.url).origin, kind, messageId: target?.message_id };
+  const frame = { element, token: result.token, origin: new URL(result.url).origin, kind, messageId: target?.message_id, requests: new Set() };
   frames.set(result.token, frame);
   if (kind === 'page') lifecycle(iframeEvents.MESSAGE_IFRAME_RENDER_STARTED, [frame.token]);
   if (kind === 'session') { element.name = 'player_author_session'; element.hidden = true; element.style.display = 'none'; }
@@ -111,7 +123,7 @@ async function createFrame(kind, html, target, sourceId) {
 }
 function dispose(frame) {
   if (!frame) return;
-  if (coordinator && frame !== coordinator) post(coordinator, { type: 'dispose-owner', token: frame.token });
+  if (coordinator && frame !== coordinator) post(coordinator, { type: 'dispose-owner', token: frame.token, accepted: [...frame.requests] });
   post(frame, { type: 'dispose' });
   frame.element.remove();
   frames.delete(frame.token);
@@ -405,6 +417,7 @@ window.addEventListener('message', async event => {
       const item = [...scriptFrames.values()].find(item => item.frame === frame); if (item && Array.isArray(data.message)) scriptButtons(item, data.message);
     } else notice(data.message);
   } else if (data.type === 'request') {
+    frame.requests.add(data.id);
     try {
       if (frame.kind === 'static' || frame.kind === 'session') throw new Error('Static HTML has no host capability');
       const result = await rpc('host.' + data.method, data.args, { actorToken: frame.token, revision: data.revision });
@@ -428,8 +441,11 @@ window.addEventListener('message', async event => {
         }).catch(error => notice(error.message));
         await renderQueue;
       }
-      post(frame, { type: 'result', id: data.id, result });
-    } catch (error) { post(frame, { type: 'result', id: data.id, error: error.message }); }
+      // The coordinator already received the committed snapshot above. A refresh may have
+      // delivered a newer native delta while rendering, so acknowledge only the return value.
+      post(coordinator, { type: 'command-result', token: frame.token, id: data.id, result: { value: result.value } });
+    } catch (error) { post(coordinator, { type: 'command-result', token: frame.token, id: data.id, error: error.message }); }
+    finally { frame.requests.delete(data.id); }
   } else if (data.type === 'event-ack') {
     const item = eventAcks.get(data.id); if (!item || item.frame !== frame) return;
     eventAcks.delete(data.id); data.error ? item.reject(new Error(data.error)) : item.resolve();

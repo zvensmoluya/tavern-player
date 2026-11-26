@@ -73,6 +73,6 @@ class BrowserEnvironment(
 
     companion object {
         val ASSETS = setOf("index.html", "parent.html", "chat.css", "message.css", "shell.js", "parent.js", "programs.js", "libraries.js",
-            "jquery.js", "lodash.js", "vue.js", "manifest.json", "LICENSES.txt")
+            "jquery.js", "lodash.js", "vue.js", "vue-router.js", "manifest.json", "LICENSES.txt")
     }
 }

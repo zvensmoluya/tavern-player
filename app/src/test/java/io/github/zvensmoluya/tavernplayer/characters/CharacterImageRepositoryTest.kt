@@ -56,6 +56,36 @@ class CharacterImageRepositoryTest {
         assertEquals(state.entries.map { it.sha256 }, offline.states.value.getValue(card.id).entries.map { it.sha256 })
     }
 
+    @Test fun unavailableWebImageIsRetryableWithoutOverwritingOriginals() = runBlocking {
+        val root = temporary.newFolder()
+        val missing = "https://images.example/missing.png"
+        val cached = "https://images.example/cached.png"
+        val character = card(cached, missing)
+        val requests = mutableListOf<String>()
+        var denied = true
+        val store = repository(root, character) { url, _ ->
+            requests += url
+            if (denied && url == missing) error("HTTP 403")
+            png
+        }
+        store.resolveForWeb(character.id, cached)
+        repeat(2) {
+            val failed = store.resolveForWeb(character.id, missing)
+            assertFalse(failed.saved)
+            assertEquals("HTTP 403", failed.error)
+        }
+        assertTrue(store.resolveForWeb(character.id, cached).saved)
+        assertEquals(listOf(cached, missing), requests)
+        denied = false
+        store.prepare(character.id)
+        assertEquals(listOf(cached, missing, missing), requests)
+        val restored = repository(root, character) { _, _ -> error("offline") }
+        for (url in listOf(cached, missing)) {
+            val entry = restored.resolveForWeb(character.id, url)
+            assertArrayEquals(png, restored.file(character.id, entry)!!.readBytes())
+        }
+    }
+
     @Test fun retriesFailuresAndCorruptFilesWithoutLosingCompletedImages() = runBlocking {
         val root = temporary.newFolder()
         val card = card("https://images.example/a.png", "https://images.example/b.png")

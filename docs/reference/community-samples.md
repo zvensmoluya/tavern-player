@@ -39,6 +39,8 @@ C-11 的世界书含 25 个 EJS 条目，其中 24 个启用。以空变量和�
 
 Android 模拟器实验采用上述原框架、中性开场、固定模型回复和调用公开查询接口的独立脚本。原框架的事件队列延迟读取末楼，用户楼与回复快速连续提交时曾把回复的消息标识记到错误的位置，导致余额变成空对象。Player 仅对上述源码哈希在生成结束、候选已保存时通知框架按当前历史同步。开场值为 10，回复 A 为 8，重新生成 B 为 15。从 B 查询开场得到 10，切回 A 得到 8。重建 Room 仓库和 WebView 后发送下一轮，三次生成请求中的世界书余额依次为 10、10、8。
 
-时序回归在 A 首次写入余额 8 后、框架尚未报告完成时，连续点击网页中的「重新生成」两次。Player 收下一个操作，在当前候选的变量、消息标识和显示文字保存后开始生成 B。读档后立即发送也经过同一检查。实验核对了各候选画面中的 `{{ERA:player.coins}}`、持久正文中的原始占位符和下一轮 EJS 世界书值。完整原卡的开场选择器、状态栏画面、真实模型与其他 ERA 版本仍需独立验证。
+时序回归在 A 首次写入余额 8 后、框架尚未报告完成时，连续点击网页中的「重新生成」两次。Player 收下一个操作，在当前候选的变量、消息标识和显示文字保存后开始生成 B。读档后立即发送也经过同一检查。实验核对了各候选画面中的 `{{ERA:player.coins}}`、持久正文中的原始占位符和下一轮 EJS 世界书值。这组中性候选测试只覆盖框架。
 
 复现时先运行 `node tools/web-runtime/prepare-era-probe.mjs`。它按原件和依赖的哈希准备测试 APK 专用素材。构建并安装 debug 与 androidTest 包后，用 instrumentation 参数 `-e eraProbe 1` 单独运行 `BrowserLiveAndroidTest#eraOriginalTracksNeutralCandidatesAndRestoredPrompt`。模拟器运行期间所有模型回复和模块均来自本地测试输入。
+
+完整 C-11 原卡另用 `BrowserLiveAndroidTest#originalOpeningRoutesAndRefreshesWithUnavailableImages` 验证。将上面记录哈希的原 PNG 复制到模拟器应用专属外部目录的 `files/C-11.png`，使用同一份模块夹具和 instrumentation 参数 `-e eraCardProbe 1`。测试在独立角色库和存档中点击原开场的第一个候选，待世界信息出现后切换到选项页，核对缺图占位的实际尺寸。随后本地生成器回复一次并更新地点，测试同时核对新楼层状态栏的文字和持久变量。图片下载器固定返回 HTTP 403，测试不访问模型服务。 Android 模拟器使用五份独立新存档连续通过此流程。

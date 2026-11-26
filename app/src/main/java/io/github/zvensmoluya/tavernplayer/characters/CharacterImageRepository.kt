@@ -9,6 +9,7 @@ import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
@@ -23,6 +24,7 @@ data class CharacterImageEntry(
     val bytes: Long = 0,
     val mediaType: String? = null,
     val error: String? = null,
+    internal val retryAfterNanos: Long? = null,
 ) { val saved: Boolean get() = sha256 != null }
 
 data class CharacterImageState(
@@ -120,6 +122,7 @@ class CharacterImageRepository internal constructor(
                 if (saved.length() == old.bytes && saved.length() in 1..MAX_IMAGE_BYTES.toLong() && hash(saved.readBytes()) == old.sha256)
                     return@withLock old
             }
+            old?.retryAfterNanos?.let { if (System.nanoTime() - it < 0) return@withLock old }
             require(old != null || state.entries.size < 512) { "图片引用超过 512 项" }
             val entry = old ?: CharacterImageEntry(CharacterImageReference(id, uri, listOf("runtime")))
             if (old == null) state = state.copy(entries = state.entries + entry)
@@ -135,12 +138,11 @@ class CharacterImageRepository internal constructor(
                 val existing = File(folder, "$sha.image").takeIf { it.isFile }?.length() ?: 0L
                 require(used - existing + bytes.size <= MAX_CHARACTER_BYTES) { "角色图片已达到 256 MiB 上限" }
                 saveImage(folder, sha, bytes)
-                entry.copy(sha256 = sha, bytes = bytes.size.toLong(), mediaType = info.mediaType, error = null)
+                CharacterImageEntry(entry.reference, sha, bytes.size.toLong(), info.mediaType)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                val failed = state.copy(entries = state.entries.map { if (it.reference.id == id) entry.copy(error = error.message?.take(160)) else it })
-                persist(characterId, failed); publish(characterId, failed)
-                throw error
+                CharacterImageEntry(entry.reference, error = error.message?.take(160) ?: "图片下载失败",
+                    retryAfterNanos = System.nanoTime() + TimeUnit.MINUTES.toNanos(1))
             }
             val updated = state.copy(entries = state.entries.map { if (it.reference.id == id) next else it })
             persist(characterId, updated); publish(characterId, updated)

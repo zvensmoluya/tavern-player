@@ -74,7 +74,10 @@ class BrowserSession(
                     android.util.Log.w("PlayerWeb", consoleMessage.message())
                     return true
                 }
-                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
+                // Author programs also use console.error for recoverable states (e.g. waiting for initial data).
+                // Script exceptions are reported by the frame error/rejection listeners as well.
+                if (consoleMessage.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
+                    (consoleMessage.sourceId().orEmpty().startsWith("$ROOT_ORIGIN/") || consoleMessage.message().startsWith("Uncaught ")))
                     onFailure("网页程序报告错误：${consoleMessage.message().take(240)}")
                 return true
             }
@@ -90,6 +93,9 @@ class BrowserSession(
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                 return try { response(request) }
                 catch (error: Exception) {
+                    if (request.method == "GET" && !request.isForMainFrame && isImageRequest(request)) {
+                        return result("image/svg+xml", MISSING_IMAGE)
+                    }
                     scope.launch { onFailure("网页资源不可用：${error.message?.take(180) ?: "读取失败"}") }
                     result("text/plain", "Resource unavailable".toByteArray(), status = 403)
                 }
@@ -303,14 +309,10 @@ class BrowserSession(
         val value = uri.toString()
         require(uri.scheme in setOf("http", "https")) { "不支持的网页资源协议" }
         blockedMvuResponse(value)?.let { return it }
-        val destination = request.requestHeaders.entries.find { it.key.equals("Sec-Fetch-Dest", true) }?.value
-        val accept = request.requestHeaders.entries.find { it.key.equals("Accept", true) }?.value.orEmpty()
-        val image = destination == "image" || accept.startsWith("image/") || Regex("\\.(png|jpe?g|webp)$", RegexOption.IGNORE_CASE).containsMatchIn(uri.path.orEmpty()) ||
-            environment.images.states.value[character.assetId]?.entries?.any { it.reference.uri == value } == true
         return runBlocking {
-            if (image) {
+            if (isImageRequest(request)) {
                 val entry = environment.images.resolveForWeb(character.assetId, value)
-                val file = environment.images.file(character.assetId, entry) ?: error("图片尚未保存")
+                val file = environment.images.file(character.assetId, entry) ?: return@runBlocking result("image/svg+xml", MISSING_IMAGE)
                 result(entry.mediaType ?: "image/png", file.readBytes())
             } else {
                 val (entry, original) = environment.resources.resolve(conversationId, character.sourceSha256, value)
@@ -322,6 +324,16 @@ class BrowserSession(
                 result(mime, bytes)
             }
         }
+    }
+
+    private fun isImageRequest(request: WebResourceRequest): Boolean {
+        val destination = request.requestHeaders.entries.find { it.key.equals("Sec-Fetch-Dest", true) }?.value
+        if (!destination.isNullOrEmpty() && destination != "empty") return destination == "image"
+        val accept = request.requestHeaders.entries.find { it.key.equals("Accept", true) }?.value.orEmpty()
+        val uri = request.url
+        return accept.startsWith("image/") || IMAGE_SUFFIX.containsMatchIn(uri.path.orEmpty()) ||
+            uri.toString() == "$authorOrigin/avatar" ||
+            environment.images.states.value[character.assetId]?.entries?.any { it.reference.uri == uri.toString() } == true
     }
 
     private fun blockedMvuResponse(address: String): WebResourceResponse? {
@@ -345,5 +357,15 @@ class BrowserSession(
             WebViewCompat.removeWebMessageListener(webView, "PlayerBridge")
         webView.stopLoading()
     }
-    companion object { const val ROOT_ORIGIN = "https://player.invalid" }
+    companion object {
+        const val ROOT_ORIGIN = "https://player.invalid"
+        private val IMAGE_SUFFIX = Regex("\\.(png|jpe?g|webp)$", RegexOption.IGNORE_CASE)
+        private val MISSING_IMAGE = """<svg xmlns="http://www.w3.org/2000/svg" width="48" height="36" viewBox="0 0 48 36">
+            <title>图片暂不可用</title>
+            <g fill="none" stroke="#858b90" stroke-width="2" stroke-linejoin="round">
+              <rect x="10" y="7" width="28" height="22" rx="3"/>
+              <circle cx="18" cy="14" r="2"/><path d="m12 26 8-8 5 5 4-4 7 7"/>
+              <path d="m9 32 30-28" stroke-width="3"/>
+            </g></svg>""".toByteArray(Charsets.UTF_8)
+    }
 }

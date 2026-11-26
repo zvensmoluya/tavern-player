@@ -8,7 +8,7 @@ import { isResizeObserverNotification, observeFrameSize } from './resize-observe
 
 function main() {
   const config = JSON.parse(document.getElementById('configuration').textContent);
-  const page = document.getElementById('page'), pending = new Map();
+  const page = document.getElementById('page');
   let sequence = 0, disposed = false, viewportHeight = Number(config.viewportHeight) || 800;
   let staticReady = false, staticHead = null, staticHtml = config.html, renderedStaticHtml = null;
   let stopSizeObserver = null, lastReportedHeight = null;
@@ -26,7 +26,8 @@ function main() {
       const data = event.data;
       if (data.type === 'snapshot') session.receive(data.snapshot);
       else if (data.type === 'delta') session.receiveDelta(data);
-      else if (data.type === 'dispose-owner') session.disposeFrame(data.token);
+      else if (data.type === 'command-result') session.completeRequest(data);
+      else if (data.type === 'dispose-owner') session.disposeFrame(data.token, data.accepted);
       else if (data.type === 'fatal') session.stop(new Error(data.message));
       else if (data.type === 'dispose') session.destroy();
       else if (data.type === 'event') {
@@ -40,10 +41,10 @@ function main() {
   const session = window.parent.frames['player_author_session']?.PlayerAuthorSession;
   if (!session) throw new Error('Author session is unavailable');
   const host = createHost({ initial: session.state, actor: config.actor, session,
-    request: (method, args, revision) => new Promise((resolve, reject) => {
-      const id = String(++sequence); pending.set(id, { resolve, reject });
-      send({ type: 'request', id, method, args, revision });
-    }), notify, displayMessage: displayedMessage,
+    request: (method, args, revision) => {
+      const id = String(++sequence);
+      return session.request(config.actor.id, id, () => send({ type: 'request', id, method, args, revision }));
+    }, notify, displayMessage: displayedMessage,
 
   });
   Object.assign(globalThis, { $, jQuery: $ });
@@ -57,12 +58,6 @@ function main() {
   host.onDispose(() => {
     stopSizeObserver?.(); stopSizeObserver = null;
     disposed = true; page.remove();
-    for (const item of pending.values()) item.reject(new Error('Runtime disposed'));
-    pending.clear();
-  });
-  host.onStop(error => {
-    for (const item of pending.values()) item.reject(error);
-    pending.clear();
   });
   window.addEventListener('pagehide', () => host.dispose(), { once: true });
   let draftQueue = Promise.resolve();
@@ -151,13 +146,8 @@ function main() {
   window.addEventListener('message', async event => {
     if (event.source !== window.parent || event.origin !== config.rootOrigin || event.data?.epoch !== config.epoch) return;
     const data = event.data;
-    if (data.type === 'result') {
-      const item = pending.get(data.id); if (!item) return;
-      pending.delete(data.id); data.error ? item.reject(new Error(data.error)) : item.resolve(data.result);
-    } else if (data.type === 'fatal') {
+    if (data.type === 'fatal') {
       session.stop(new Error(data.message));
-      for (const p of pending.values()) p.reject(new Error(data.message));
-      pending.clear();
     } else if (data.type === 'dispose') {
       host.dispose();
     } else if (data.type === 'viewport') {
@@ -175,7 +165,7 @@ function main() {
     return '<!doctype html><html><head>' + prefix + '</head><body>' + html + '</body></html>';
   }
   const origin = location.origin;
-  const libraries = config.kind === 'static' ? '' : ['jquery', 'lodash', 'vue', 'libraries'].map(name => `<script src="${origin}/web/${name}.js"></script>`).join('');
+  const libraries = config.kind === 'static' ? '' : ['jquery', 'lodash', 'vue', 'vue-router', 'libraries'].map(name => `<script src="${origin}/web/${name}.js"></script>`).join('');
   // 正文排版基线由主壳与 static 帧共用；作者文档里更靠后的样式仍然覆盖它。
   const baseline = config.kind === 'static' ? `<link rel="stylesheet" href="${origin}/web/message.css">` : '';
   const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries + baseline +

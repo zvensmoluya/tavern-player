@@ -11,13 +11,14 @@ for (const name of ['shell', 'parent', 'programs']) {
 }
 for (const file of ['index.html', 'chat.css', 'message.css', 'parent.html']) await copyFile(`src/${file}`, `${output}/${file}`);
 for (const [name, path] of [['jquery', 'jquery/dist/jquery.js'], ['lodash', 'lodash/lodash.js'],
-  ['vue', 'vue/dist/vue.global.prod.js']]) await copyFile(`node_modules/${path}`, `${output}/${name}.js`);
+  ['vue', 'vue/dist/vue.global.prod.js'], ['vue-router', 'vue-router/dist/vue-router.global.prod.js']])
+  await copyFile(`node_modules/${path}`, `${output}/${name}.js`);
 await build({ entryPoints: ['src/libraries.mjs'], bundle: true, format: 'iife', outfile: `${output}/libraries.js`, target: 'es2020' });
-const names = ['shell.js', 'parent.js', 'programs.js', 'index.html', 'chat.css', 'message.css', 'parent.html', 'jquery.js', 'lodash.js', 'vue.js', 'libraries.js'];
+const names = ['shell.js', 'parent.js', 'programs.js', 'index.html', 'chat.css', 'message.css', 'parent.html', 'jquery.js', 'lodash.js', 'vue.js', 'vue-router.js', 'libraries.js'];
 const hashes = Object.fromEntries(await Promise.all(names.map(async name => [name, createHash('sha256').update(await readFile(`${output}/${name}`)).digest('hex')])));
 await writeFile(`${output}/manifest.json`, JSON.stringify({ profile: 'player-web-1', files: hashes }, null, 2));
 let licenses = '';
-for (const [name, file] of [['jquery', 'LICENSE.txt'], ['lodash', 'LICENSE'], ['vue', 'LICENSE'],
+for (const [name, file] of [['jquery', 'LICENSE.txt'], ['lodash', 'LICENSE'], ['vue', 'LICENSE'], ['@vue/shared', 'LICENSE'], ['vue-router', 'LICENSE'],
   ['zod', 'LICENSE'], ['yaml', 'LICENSE'], ['marked', 'LICENSE'], ['dompurify', 'LICENSE'], ['acorn', 'LICENSE'],
   ['postcss', 'LICENSE'], ['postcss-value-parser', 'LICENSE'], ['nanoid', 'LICENSE'], ['picocolors', 'LICENSE'], ['source-map-js', 'LICENSE']]) {
   licenses += `\n\n${name}\n${await readFile(`node_modules/${name}/${file}`, 'utf8')}`;

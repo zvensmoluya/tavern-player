@@ -175,6 +175,23 @@ test('candidate snapshots invalidate old owners before their queued writes can r
   assert.equal(calls, 0); assert.deepEqual(session.state.chatVariables, {});
 });
 
+test('a self-retiring swipe finishes its accepted command before the next script write', async () => {
+  const state = initial(), session = createSession(state), sent = [];
+  const page = session.attach(() => {}, { id: 'page' }), script = session.attach(() => {}, { id: 'script' });
+  const swipe = session.enqueue(page, () => session.request('page', '1', () => sent.push('swipe')), 'messages.set', {});
+  const write = session.enqueue(script, async (_method, _args, revision) => { sent.push(revision); }, 'variables.replace', {});
+  await Promise.resolve();
+  session.disposeFrame('page', ['1']);
+  await Promise.resolve();
+  assert.deepEqual(sent, ['swipe']);
+  session.completeRequest({ token: 'page', id: '1', result: { snapshot: { ...state, revision: 'r1' } } });
+  await Promise.all([swipe, write]);
+  assert.deepEqual(sent, ['swipe', 'r1']);
+  const dropped = session.request('retired', '2', () => {});
+  session.disposeFrame('retired', []);
+  await assert.rejects(dropped, /disposed/);
+});
+
 test('disposing a page releases dispatch waiting on its unfinished async callback', async () => {
   const { a, b } = pair(); let continued = false;
   a.api.eventOn('slow', () => new Promise(() => {}));

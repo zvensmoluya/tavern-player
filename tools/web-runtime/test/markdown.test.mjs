@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import { completeHtmlPrefix, segmentMarkdown } from '../src/markdown.mjs';
 import { marked } from 'marked';
 
+test('standalone author markers leave the following document fence intact', () => {
+  const html = '<head><style>.panel{color:red}</style></head><body>Panel</body>';
+  for (const [marker, language] of [['<opening7 />', 'html'], ['<panel mode>', 'text']]) {
+    const source = marker + '\r\n```' + language + '\n' + html + '\n```\n\nAfter';
+    const parts = segmentMarkdown(source);
+    assert.deepEqual(parts.map(p => p.kind), ['normal', 'page', 'normal']);
+    assert.equal(parts[1].text, html);
+    for (let i = source.indexOf('`'); i < source.indexOf('After'); i++) {
+      const normal = segmentMarkdown(source.slice(0, i), true).filter(p => p.kind === 'normal');
+      assert.doesNotMatch(normal.map(p => p.text).join(''), /panel\{|&lt;head|```|language-/);
+    }
+  }
+  for (const tag of ['pre', 'script', 'div', 'code']) {
+    const raw = '<' + tag + '>\n```html\n' + html + '\n```\n</' + tag + '>';
+    assert.equal(segmentMarkdown(raw).some(p => p.kind === 'page'), false);
+  }
+  const literal = '````markdown\n<card-marker/>\n```html\n' + html + '\n```\n````';
+  assert.equal(segmentMarkdown(literal)[0].text, marked.parse(literal));
+});
+
 test('streamed HTML fences never expose document source before the body arrives', () => {
   const source = 'Hello\n\n```html\n<!doctype html><html><head><style>.card{color:red}</style></head><body><p>World</p></body></html>\n```';
   for (let end = source.indexOf('```') + 1; end <= source.length; end++) {
