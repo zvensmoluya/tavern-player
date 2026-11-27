@@ -9,11 +9,11 @@ const message = (display, index) => ({ id: 'm' + index, turnId: 't' + index, var
   role: 'assistant', status: 'COMPLETE', message: display, display, data: {}, extra: {}, swipes: [display], swipes_data: [{}], swipes_info: [{}], swipe_id: 0, is_hidden: false, reasoning: [] });
 
 // Host stand-in: the shell only reaches native through PlayerBridge, answered here by a binding.
-async function open(browser, viewport, displays) {
+async function open(browser, viewport, displays, presetScripts = []) {
   const page = await browser.newPage({ viewport });
   const frames = new Map(); let serial = 0;
   let snapshot = { conversationId: 'c', revision: 'r0', chatVariables: {}, scriptVariables: {}, draft: '', mvu: null, worldbooks: [],
-    program: { sources: [] }, presetProgram: { sources: [] }, presetHash: 'preset', messages: displays.map(message) };
+    program: { sources: [] }, presetProgram: { sources: presetScripts }, presetHash: 'preset', messages: displays.map(message) };
   const flags = { busy: false, running: false };
   await page.exposeBinding('_testPost', async (_, raw) => {
     const req = JSON.parse(raw); let result = null;
@@ -21,7 +21,8 @@ async function open(browser, viewport, displays) {
     else if (req.method === 'frame.create') {
       const token = String(++serial);
       const message = snapshot.messages.find(value => value.id === req.args.messageId);
-      frames.set(token, { html: req.args.html, kind: req.args.kind, actor: { id: token, turnId: message?.turnId, variantId: message?.variantId }, snapshot, epoch, rootOrigin: root, viewportHeight: 700 });
+      const script = presetScripts.find(source => source.id === req.args.sourceId);
+      frames.set(token, { html: script?.content ?? req.args.html, kind: req.args.kind, actor: { id: token, scriptId: script?.id, turnId: message?.turnId, variantId: message?.variantId }, snapshot, epoch, rootOrigin: root, viewportHeight: 700 });
       result = { token, url: origin + '/frame/' + token };
     } else if (req.method === 'frame.dispose') frames.delete(req.args.token);
     else throw new Error('Unexpected request ' + req.method);
@@ -32,7 +33,7 @@ async function open(browser, viewport, displays) {
     const url = new URL(route.request().url());
     let body, type;
     if (url.pathname.startsWith('/frame/')) {
-      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', JSON.stringify(frames.get(url.pathname.split('/').at(-1))).replaceAll('<', '\\u003c'));
+      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', () => JSON.stringify(frames.get(url.pathname.split('/').at(-1))).replaceAll('<', '\\u003c'));
       type = 'text/html';
     } else {
       const name = url.pathname.split('/').at(-1);
@@ -201,5 +202,54 @@ test('keyboard-sized viewports keep the reader anchored and defer to focused aut
     await page.waitForFunction(() => document.activeElement?.tagName !== 'IFRAME');
     await push(message(tall(5), 4));
     await page.waitForFunction(() => document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80);
+  } finally { await browser.close(); }
+});
+
+test('preset script controls float within the viewport and leave the chat reachable', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const source = { id: 'floating', enabled: true, sha256: 'one', buttons: [], content: `
+      const doc = parent.document;
+      const root = doc.body.appendChild(doc.createElement('div'));
+      root.style.cssText = 'height:0;pointer-events:none';
+      const button = root.appendChild(doc.createElement('button'));
+      button.textContent = 'Open panel';
+      button.style.cssText = 'position:fixed;right:12px;bottom:60px;pointer-events:auto';
+      const panel = root.appendChild(doc.createElement('section'));
+      panel.style.cssText = 'position:fixed;inset:0;background:white;pointer-events:auto;display:none';
+      const close = panel.appendChild(doc.createElement('button'));
+      close.textContent = 'Close panel';
+      button.onclick = () => { panel.style.display = 'block'; };
+      const entry = { name: 'Panel settings', visible: true };
+      appendInexistentScriptButtons([entry]);
+      appendInexistentScriptButtons([entry]);
+      eventOn(getButtonEvent(entry.name), button.onclick);
+      close.onclick = () => { panel.style.display = 'none'; };
+      toastr.success('Ready for use');
+    ` };
+    const { page } = await open(browser, { width: 360, height: 548 },
+      Array.from({ length: 16 }, (_, i) => 'A chat message ' + i),
+      [source, { id: 'background', enabled: true, sha256: 'two', content: 'void 0' }]);
+    await page.locator('#toast').filter({ hasText: 'Ready for use' }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll('.script-surface').length === 2);
+    const surface = page.frameLocator('.script-surface').first();
+    const launcher = surface.getByText('Open panel');
+    await launcher.click();
+    const panel = surface.locator('section');
+    assert.deepEqual(await panel.boundingBox(), { x: 0, y: 0, width: 360, height: 548 });
+    await page.setViewportSize({ width: 360, height: 320 });
+    await page.waitForFunction(() => document.elementFromPoint(4, 312)?.matches('.script-surface'));
+    assert.equal((await panel.boundingBox()).height, 320);
+    await surface.getByText('Close panel').click();
+    await page.waitForFunction(() => !document.elementFromPoint(20, 80)?.matches('.script-surface'));
+    const start = await page.evaluate(() => scrollY);
+    await page.mouse.move(40, 110);
+    await page.mouse.wheel(0, -180);
+    await page.waitForFunction(y => scrollY < y, start);
+    await page.locator('#bottom').click();
+    await page.locator('#scripts').getByRole('button', { name: 'Panel settings' }).click();
+    assert.equal(await panel.isVisible(), true);
+    await page.waitForFunction(() => document.getElementById('toast').textContent === '');
+    assert.equal(await page.locator('#notice').textContent(), '');
   } finally { await browser.close(); }
 });

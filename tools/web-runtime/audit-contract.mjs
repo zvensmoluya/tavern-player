@@ -39,8 +39,12 @@ function properties(node, prefix = '') {
     if (property.type !== 'Property' || property.computed) continue;
     const name = prefix + (property.key.name ?? property.key.value);
     bindings.set(name, stub(property.value) ? 'rejecting-stub' : 'binding-present');
-    const value = property.value.type === 'Identifier' ? objects.get(property.value.name) : property.value;
-    if (value?.type === 'ObjectExpression') properties(value, name + '.');
+    const candidates = property.value.type === 'ConditionalExpression'
+      ? [property.value.consequent, property.value.alternate] : [property.value];
+    for (const candidate of candidates) {
+      const value = candidate.type === 'Identifier' ? objects.get(candidate.name) : candidate;
+      if (value?.type === 'ObjectExpression') properties(value, name + '.');
+    }
   }
 }
 walk(tree, node => {

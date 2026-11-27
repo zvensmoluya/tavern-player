@@ -2,6 +2,7 @@ import $ from 'jquery';
 import { createHost, tavernEvents } from './host.mjs';
 import { createSession } from './session.mjs';
 import DOMPurify from 'dompurify';
+import { observeScriptSurface } from './script-surface.mjs';
 import { patchChildren } from './dom-patch.mjs';
 import { displayedMessage } from './displayed-message.mjs';
 import { isResizeObserverNotification, observeFrameSize } from './resize-observer.mjs';
@@ -97,14 +98,14 @@ function main() {
           staticHead = target.document.head.cloneNode(true); staticReady = true; renderStatic();
         }
         stopSizeObserver?.();
-        stopSizeObserver = observeFrameSize(target, measure);
+        if (config.kind !== 'script') stopSizeObserver = observeFrameSize(target, measure);
         measure(); send({ type: 'loaded' });
       });
     },
   };
 
   function measure() {
-    if (disposed) return;
+    if (disposed || config.kind === 'script') return;
     try {
       const body = page.contentDocument?.body;
       if (body) {
@@ -173,6 +174,8 @@ function main() {
     `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
   if (config.kind === 'script') {
     // Module strings can contain entire HTML documents. Never search the JS for a head or rewrite its CSS.
+    const stopSurface = observeScriptSurface(rects => send({ type: 'script-surface', rects }));
+    host.onDispose(stopSurface);
     page.hidden = true;
     const source = config.html.replace(/<\/script/gi, '<\\/script');
     page.srcdoc = '<!doctype html><html><head>' + prefix + '</head><body><script type="module">' + source + '</script></body></html>';

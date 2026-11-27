@@ -58,6 +58,13 @@ function rpc(method, args = {}, extra = {}) {
 }
 function post(frame, data) { frame.element.contentWindow?.postMessage({ ...data, epoch }, frame.origin); }
 function notice(message) { document.getElementById('notice').textContent = String(message ?? ''); }
+let toastTimer;
+function showToast(message) {
+  const toast = document.getElementById('toast');
+  clearTimeout(toastTimer);
+  toast.textContent = String(message ?? '');
+  toastTimer = setTimeout(() => { toast.textContent = ''; }, 3500);
+}
 function button(text, action, disabled = false) {
   const node = document.createElement('button'); node.textContent = text; node.disabled = disabled;
   node.addEventListener('click', () => Promise.resolve(action()).catch(error => notice(error.message)));
@@ -375,7 +382,9 @@ async function updateScripts() {
   for (const [id, item] of scriptFrames) if (wanted.get(id)?.sha256 !== item.hash) { dispose(item.frame); item.node.remove(); scriptFrames.delete(id); }
   for (const [id, source] of wanted) if (!scriptFrames.has(id)) {
     const frame = await createFrame('script', '', null, id), node = document.createElement('span');
-    frame.element.hidden = true; node.append(frame.element); document.getElementById('scripts').append(node);
+    frame.element.className = 'script-surface';
+    document.body.append(frame.element);
+    document.getElementById('scripts').append(node);
     const item = { frame, node, hash: source.sha256 }; scriptFrames.set(id, item); scriptButtons(item, source.buttons ?? []);
   }
 }
@@ -402,7 +411,16 @@ window.addEventListener('message', async event => {
   const frame = [...frames.values()].find(f => f.element.contentWindow === event.source && f.origin === event.origin);
   if (!frame) return;
   const data = event.data;
-  if (data.type === 'resize') {
+  if (data.type === 'script-surface' && frame.kind === 'script' && Array.isArray(data.rects)) {
+    const paths = [];
+    for (const rect of data.rects) {
+      if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) continue;
+      const [left, top, right, bottom] = rect;
+      if (left < right && top < bottom) paths.push(`M${left} ${top}H${right}V${bottom}H${left}Z`);
+    }
+    frame.element.style.pointerEvents = paths.length ? 'auto' : '';
+    frame.element.style.clipPath = paths.length ? `path('${paths.join(' ')}')` : '';
+  } else if (data.type === 'resize' && frame.kind !== 'script') {
     const height = Number(data.height);
     if (Number.isFinite(height) && height > 0) {
       // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
@@ -423,7 +441,8 @@ window.addEventListener('message', async event => {
   } else if (data.type === 'notice') {
     if (data.level === 'buttons') {
       const item = [...scriptFrames.values()].find(item => item.frame === frame); if (item && Array.isArray(data.message)) scriptButtons(item, data.message);
-    } else notice(data.message);
+    } else if (data.level === 'success' || data.level === 'info') showToast(data.message);
+    else notice(data.message);
   } else if (data.type === 'request') {
     frame.requests.add(data.id);
     try {

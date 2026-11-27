@@ -379,6 +379,14 @@ export function createHost({ initial, actor, request, notify = () => {}, display
     getScriptId: () => { if (!actor.scriptId) throw new Error('Not a script context'); return scriptId; },
     getButtonEvent: name => 'player_button:' + actor.scriptId + ':' + name,
     replaceScriptButtons: buttons => { if (!actor.scriptId) throw new Error('Not a script context'); if (!Array.isArray(buttons)) throw new Error('Buttons must be an array'); scriptButtons = clone(buttons); notify('buttons', scriptButtons); },
+    appendInexistentScriptButtons: buttons => {
+      if (!actor.scriptId) throw new Error('Not a script context');
+      if (!Array.isArray(buttons)) throw new Error('Buttons must be an array');
+      const names = new Set(scriptButtons.map(button => button.name));
+      const additions = buttons.filter(button => !names.has(button.name));
+      if (additions.length) api.replaceScriptButtons([...scriptButtons, ...additions]);
+      return clone(scriptButtons);
+    },
     getScriptButtons: () => clone(scriptButtons),
     eventOn: (name, fn) => on(name, fn), eventOnce: (name, fn) => on(name, fn, true),
     eventMakeFirst: (name, fn) => session.on(owner, name, fn, false, 'first'),

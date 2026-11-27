@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "helperCommit": "dd8327d437eb0cdbd1eddc23b5491812870aa7d8",
   "meaning": "Binding presence is not compatibility. Domains, namespace members, aliases and source dependencies are inventoried separately. No conformance percentage is computed.",
-  "hostSourceSha256": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
+  "hostSourceSha256": "c43fac56d554d6e15cafd5792a8f5abd89a8ff2d9345f9c3655490a6369b4bc8",
   "playerSources": {
-    "src/host.mjs": "29057f0be6c621f6e3c1d030df6378887f1f27fa7b7ab0dbca938e28556247bb",
-    "src/session.mjs": "b9b6b56eaa9ab0390f064a0c1a5a68a905c165480e2cbc18bb4ed18a9e46a045",
-    "src/parent.mjs": "cacdee4f7e03ec619959a25e700b39adf4f241e33b78dab9063cc8fa160dc1fc",
-    "src/shell.mjs": "0af2d62aa86bc4564605e9809ba528286c9d2bdb8d6d94440b92ed96da797b19"
+    "src/host.mjs": "c43fac56d554d6e15cafd5792a8f5abd89a8ff2d9345f9c3655490a6369b4bc8",
+    "src/session.mjs": "7ff5bce89f795025191812dbc1af85324c7631d618862151e255edeed09c0c1d",
+    "src/parent.mjs": "9a4068931f121322e4343746af32eb11bcfa7c48249208f84802c87ed852fadc",
+    "src/shell.mjs": "0dfa57ec067a4b6ef187fd382c85b6b07bee98233948a79ca73a98fab348f933"
   },
   "sources": {
     "@types/function/audio.d.ts": "02c7ace1acbb1949037aca6f2156e4f109212dd6b9642a63d06934316b24c908",
@@ -322,7 +322,7 @@
           "name": "tavern_events.APP_READY",
           "kind": "object-member",
           "declaration": "@types/iframe/event.d.ts",
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "tavern_events.CHARACTER_DELETED",
@@ -989,7 +989,7 @@
           "declaration": "@types/function/displayed_message.d.ts",
           "line": 21,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "rotateChatMessages",
@@ -1558,7 +1558,7 @@
           "declaration": "@types/iframe/script.d.ts",
           "line": 76,
           "declarationCount": 1,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "getAllEnabledScriptButtons",
@@ -2550,7 +2550,7 @@
           "declaration": "@types/iframe/exported.sillytavern.d.ts",
           "line": 2,
           "declarationCount": 2,
-          "playerBinding": "absent"
+          "playerBinding": "binding-present"
         },
         {
           "name": "SillyTavern.accountStorage",
@@ -3368,7 +3368,7 @@
     {
       "name": "retrieveDisplayedMessage",
       "declarationTarget": "retrieveDisplayedMessage",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "refreshOneMessage",
@@ -4070,7 +4070,7 @@
     {
       "name": "retrieveDisplayedMessage",
       "target": "retrieveDisplayedMessage",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "refreshOneMessage",
@@ -4782,7 +4782,7 @@
     {
       "name": "appendInexistentScriptButtons",
       "target": "_appendInexistentScriptButtons",
-      "playerBinding": "absent"
+      "playerBinding": "binding-present"
     },
     {
       "name": "getScriptName",
