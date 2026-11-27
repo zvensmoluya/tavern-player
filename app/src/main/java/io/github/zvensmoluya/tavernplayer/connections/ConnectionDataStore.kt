@@ -10,7 +10,9 @@ import io.github.zvensmoluya.modelgateway.ModelProtocol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
@@ -32,6 +34,7 @@ import java.io.IOException
 
 interface ConnectionStateStore {
     val state: Flow<GatewayAppState>
+    suspend fun current(): GatewayAppState = state.first()
     suspend fun update(transform: (GatewayAppState) -> GatewayAppState)
 }
 
@@ -39,18 +42,22 @@ class JsonConnectionDataStore(
     private val dataStore: DataStore<Preferences>,
     scope: CoroutineScope,
 ) : ConnectionStateStore {
-    override val state: Flow<GatewayAppState> = dataStore.data
-        .catch { error ->
-            if (error is IOException) emit(androidx.datastore.preferences.core.emptyPreferences())
-            else throw error
-        }
+    private val snapshots = dataStore.data
         .map { preferences ->
             preferences[STATE_JSON]
                 ?.let { value -> runCatching { decodeState(value) }.getOrNull() }
                 ?: GatewayAppState()
         }
         .flowOn(Dispatchers.Default)
-        .shareIn(scope, SharingStarted.Lazily, replay = 1)
+
+    override val state = snapshots.retryWhen { error, _ ->
+        if (error !is IOException) return@retryWhen false
+        delay(1000)
+        true
+    }.shareIn(scope, SharingStarted.Lazily, replay = 1)
+
+    // Commands can immediately follow a committed edit, before the UI observer has caught up.
+    override suspend fun current(): GatewayAppState = snapshots.first()
 
     override suspend fun update(transform: (GatewayAppState) -> GatewayAppState) {
         dataStore.edit { preferences ->
@@ -102,7 +109,6 @@ private fun StoredConnection.toJson(): JsonObject = buildJsonObject {
     catalogEndpoint?.let { put("catalogEndpoint", it) }
     put("authScheme", authScheme.name)
     credentialRef?.let { put("credentialRef", it) }
-    credentialMask?.let { put("credentialMask", it) }
     put("approvedOrigins", buildJsonArray { approvedOrigins.sorted().forEach { add(it) } })
     put("selectedModel", selectedModel)
     put("modelCache", buildJsonObject {
@@ -157,7 +163,6 @@ private fun JsonObject.toConnection(): StoredConnection {
             ConnectionTemplates.forProtocol(protocol).authScheme
         },
         credentialRef = credentialRef,
-        credentialMask = string("credentialMask"),
         approvedOrigins = array("approvedOrigins").mapNotNull { it.jsonPrimitive.contentOrNull }.toSet(),
         selectedModel = string("selectedModel").orEmpty(),
         modelCache = ModelCache(

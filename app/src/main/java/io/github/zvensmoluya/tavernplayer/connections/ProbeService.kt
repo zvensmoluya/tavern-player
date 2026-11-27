@@ -47,6 +47,7 @@ sealed interface ProbeEvent {
     data class Reasoning(val delta: String) : ProbeEvent
     data class Usage(val value: ProbeUsage) : ProbeEvent
     data class Finished(val reason: String?) : ProbeEvent
+    data object Failed : ProbeEvent
     data class Diagnostic(val summary: String) : ProbeEvent
 }
 
@@ -143,7 +144,7 @@ private fun ResponsesEvent.toProbeEvent(): ProbeEvent = when (this) {
     is ResponsesEvent.ReasoningDelta -> ProbeEvent.Reasoning(text)
     is ResponsesEvent.Usage -> ProbeEvent.Usage(usage.toProbeUsage())
     is ResponsesEvent.Finished -> ProbeEvent.Finished(status)
-    is ResponsesEvent.Failed -> ProbeEvent.Diagnostic("Responses 请求失败${message?.let { ": $it" }.orEmpty()}")
+    is ResponsesEvent.Failed -> ProbeEvent.Failed
     is ResponsesEvent.Started -> ProbeEvent.Diagnostic("Responses stream 已建立")
     is ResponsesEvent.Lifecycle -> ProbeEvent.Diagnostic("Responses ${name}")
     is ResponsesEvent.Unknown -> ProbeEvent.Diagnostic("收到未识别的 Responses 事件")
@@ -164,7 +165,7 @@ private fun AnthropicMessagesEvent.toProbeEvent(): ProbeEvent = when (this) {
     is AnthropicMessagesEvent.SignatureDelta -> ProbeEvent.Diagnostic("收到 Anthropic thinking signature")
     is AnthropicMessagesEvent.Usage -> ProbeEvent.Usage(usage.toProbeUsage())
     is AnthropicMessagesEvent.Finished -> ProbeEvent.Finished(reason)
-    is AnthropicMessagesEvent.Failed -> ProbeEvent.Diagnostic("Anthropic 请求失败${message?.let { ": $it" }.orEmpty()}")
+    is AnthropicMessagesEvent.Failed -> ProbeEvent.Failed
     is AnthropicMessagesEvent.Started -> ProbeEvent.Diagnostic("Anthropic stream 已建立")
     is AnthropicMessagesEvent.Lifecycle -> ProbeEvent.Diagnostic("Anthropic ${name}")
     is AnthropicMessagesEvent.Unknown -> ProbeEvent.Diagnostic("收到未识别的 Anthropic 事件")
@@ -176,7 +177,7 @@ private fun GeminiInteractionsEvent.toProbeEvent(): ProbeEvent = when (this) {
     is GeminiInteractionsEvent.Signature -> ProbeEvent.Diagnostic("收到 Gemini thought signature")
     is GeminiInteractionsEvent.Usage -> ProbeEvent.Usage(usage.toProbeUsage())
     is GeminiInteractionsEvent.Finished -> ProbeEvent.Finished(status)
-    is GeminiInteractionsEvent.Failed -> ProbeEvent.Diagnostic("Interactions 请求失败${message?.let { ": $it" }.orEmpty()}")
+    is GeminiInteractionsEvent.Failed -> ProbeEvent.Failed
     is GeminiInteractionsEvent.Started -> ProbeEvent.Diagnostic("Interactions stream 已建立")
     is GeminiInteractionsEvent.StepStarted,
     is GeminiInteractionsEvent.StepFinished,

@@ -1,5 +1,8 @@
 package io.github.zvensmoluya.tavernplayer.connections
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -68,7 +71,6 @@ class JsonConnectionDataStoreTest {
                 catalogEndpoint = template.catalogEndpoint,
                 authScheme = AuthScheme.BEARER,
                 credentialRef = "credential_one",
-                credentialMask = "•••• 1234",
                 approvedOrigins = setOf("https://api.openai.com:443"),
                 selectedModel = "chat-model",
                 modelTokenLimitOverrides = mapOf(
@@ -76,9 +78,32 @@ class JsonConnectionDataStoreTest {
                 ),
             )
 
+            assertEquals(GatewayAppState(), store.state.first())
             store.update { it.copy(connections = listOf(connection), recentConnectionId = connection.id) }
 
-            assertEquals(GatewayAppState(connections = listOf(connection), recentConnectionId = "one"), store.state.first())
+            assertEquals(GatewayAppState(connections = listOf(connection), recentConnectionId = "one"), store.current())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `a transient storage read error does not freeze the shared connection list`() = runBlocking {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+        try {
+            val expected = GatewayAppState(recentConnectionId = "saved")
+            val prefs = preferencesOf(stringPreferencesKey("gateway_state_json_v1") to JsonConnectionDataStore.encodeState(expected))
+            var reads = 0
+            val flaky = object : DataStore<Preferences> {
+                override val data = kotlinx.coroutines.flow.flow {
+                    if (++reads == 1) throw java.io.IOException("temporary read error")
+                    emit(prefs)
+                }
+                override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(prefs)
+            }
+            val store = JsonConnectionDataStore(flaky, scope)
+            assertEquals(expected, kotlinx.coroutines.withTimeout(5000) { store.state.first() })
+            assertEquals(2, reads)
         } finally {
             scope.cancel()
         }

@@ -44,7 +44,6 @@ data class StoredConnection(
     val catalogEndpoint: String?,
     val authScheme: AuthScheme,
     val credentialRef: String?,
-    val credentialMask: String?,
     val approvedOrigins: Set<String>,
     val selectedModel: String,
     val modelCache: ModelCache = ModelCache(),
@@ -76,6 +75,13 @@ data class StoredConnection(
         )
     }
 }
+
+internal fun activeConnectionId(ready: List<StoredConnection>, recentId: String?, currentId: String?): String? =
+    when {
+        ready.any { it.id == recentId } -> recentId
+        ready.any { it.id == currentId } -> currentId
+        else -> ready.firstOrNull()?.id
+    }
 
 data class GatewayAppState(
     val schemaVersion: Int = CURRENT_SCHEMA_VERSION,

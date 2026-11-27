@@ -1494,7 +1494,6 @@ class ChatViewModelTest {
         catalogEndpoint = null,
         authScheme = AuthScheme.NONE,
         credentialRef = null,
-        credentialMask = null,
         approvedOrigins = emptySet(),
         selectedModel = "model",
         modelCache = ModelCache(),

@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation
 
+import io.github.zvensmoluya.tavernplayer.connections.activeConnectionId
+import io.github.zvensmoluya.tavernplayer.connections.credentialFailureText
 import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuMessageResult
 import io.github.zvensmoluya.tavernplayer.conversation.mvu.MvuConversationRuntime
 import io.github.zvensmoluya.tavernplayer.conversation.ejs.QuickJsEjsRuntime
@@ -203,11 +205,7 @@ class ConversationSession(
                     connection.selectedModel.isNotBlank() && repository.credentialStatus(connection) in READY_STATUSES
                 }.sortedBy { it.name.lowercase() }
                 val current = _uiState.value.selectedConnectionId
-                val selected = when {
-                    ready.any { it.id == gatewayState.recentConnectionId } -> gatewayState.recentConnectionId
-                    ready.any { it.id == current } -> current
-                    else -> ready.firstOrNull()?.id
-                }
+                val selected = activeConnectionId(ready, gatewayState.recentConnectionId, current)
                 _uiState.update {
                     it.copy(readyConnections = ready, selectedConnectionId = selected, loadingConnections = false)
                 }
@@ -910,9 +908,9 @@ class ConversationSession(
     fun selectConnection(connectionId: String) {
         val state = _uiState.value
         if (state.busy || state.readyConnections.none { it.id == connectionId }) return
-        _uiState.update { it.copy(selectedConnectionId = connectionId, message = null) }
         scope.launch {
             runCatching { repository.activate(connectionId) }
+                .onSuccess { _uiState.update { it.copy(selectedConnectionId = connectionId, message = null) } }
                 .onFailure { error -> _uiState.update { it.copy(message = error.userMessage()) } }
         }
     }
@@ -1951,9 +1949,8 @@ private fun PersistedMessageStatus.toUiStatus(): ChatMessageStatus = when (this)
 private fun Long.toIntSafe(): Int? = takeIf { it in 1..Int.MAX_VALUE }?.toInt()
 
 private fun Throwable.userMessage(): String = when (this) {
-    is GatewayException.Authentication,
-    is GatewayException.AuthenticationFailure,
-    -> "API Key 不可用"
+    is GatewayException.Authentication -> credentialFailureText(null)
+    is GatewayException.AuthenticationFailure -> credentialFailureText(status)
     is GatewayException.RateLimited -> "请求过于频繁，请稍后再试"
     is GatewayException.Network -> "无法连接到模型服务"
     is GatewayException.Security -> "API 地址未获授权"

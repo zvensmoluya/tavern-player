@@ -88,7 +88,6 @@ class ConnectionRepositoryTest {
         )
 
         assertEquals(CredentialStatus.READY, repository.credentialStatus(original))
-        assertEquals("•••• 1234", original.credentialMask)
         assertFalse(JsonConnectionDataStore.encodeState(stateStore.value).contains("secret-1234"))
 
         val moved = repository.save(
@@ -104,10 +103,38 @@ class ConnectionRepositoryTest {
 
         credentials.delete(requireNotNull(approved.credentialRef))
         assertEquals(CredentialStatus.MISSING, repository.credentialStatus(approved))
+        val failedSave = runCatching { repository.save(approved.toDraft(), "", false) }
+        assertTrue(failedSave.exceptionOrNull() is GatewayException.Authentication)
+        assertEquals(approved, repository.requireConnection(approved.id))
 
         repository.delete(approved.id)
         assertTrue(stateStore.value.connections.isEmpty())
         assertFalse(credentials.contains(requireNotNull(approved.credentialRef)))
+    }
+
+    @Test
+    fun `failed key replacement preserves the previously published credential`() = runBlocking {
+        val state = FakeConnectionStateStore()
+        val keys = FakeCredentialStore()
+        var failWrite = false
+        val fallible = object : ConnectionStateStore by state {
+            override suspend fun update(transform: (GatewayAppState) -> GatewayAppState) {
+                if (failWrite) throw IOException("disk full")
+                state.update(transform)
+            }
+        }
+        val repo = ConnectionRepository(fallible, keys, { error("unused") })
+        val template = ConnectionTemplates.openAiResponses
+        val draft = ConnectionDraft("one", "Custom", template.id, template.protocol, address(template), "test-model")
+        val old = repo.save(draft, "fixture-first", false)
+        failWrite = true
+        assertTrue(runCatching { repo.save(draft, "fixture-next", false) }.exceptionOrNull() is IOException)
+        assertEquals(old, repo.requireConnection(old.id))
+        assertEquals("fixture-first", keys.getOrNull(requireNotNull(old.credentialRef)))
+        failWrite = false
+        val saved = repo.save(draft, "fixture-next", false)
+        assertEquals("fixture-next", keys.getOrNull(requireNotNull(saved.credentialRef)))
+        assertFalse(keys.contains(requireNotNull(old.credentialRef)))
     }
 
     @Test
@@ -124,7 +151,6 @@ class ConnectionRepositoryTest {
                     catalogEndpoint = ConnectionTemplates.geminiInteractions.catalogEndpoint,
                     authScheme = AuthScheme.X_GOOG_API_KEY,
                     credentialRef = "credential_one",
-                    credentialMask = "•••• 1234",
                     approvedOrigins = setOf("https://generativelanguage.googleapis.com:443"),
                     selectedModel = "gemini-test",
                     modelCache = ModelCache(
@@ -144,7 +170,11 @@ class ConnectionRepositoryTest {
             recentConnectionId = "one",
         )
 
-        val decoded = JsonConnectionDataStore.decodeState(JsonConnectionDataStore.encodeState(state))
+        val encoded = JsonConnectionDataStore.encodeState(state)
+        val legacy = encoded.replace("\"id\":\"one\"", "\"id\":\"one\",\"credentialMask\":\"•••• 1234\"")
+        assertTrue(legacy.contains("credentialMask"))
+        val decoded = JsonConnectionDataStore.decodeState(legacy)
+        assertFalse(JsonConnectionDataStore.encodeState(decoded).contains("credentialMask"))
 
         assertEquals(state, decoded)
         assertEquals(GatewayAppState.CURRENT_SCHEMA_VERSION, decoded.schemaVersion)
@@ -163,7 +193,6 @@ class ConnectionRepositoryTest {
             catalogEndpoint = "https://gateway.example.test/v1/models",
             authScheme = AuthScheme.NONE,
             credentialRef = null,
-            credentialMask = null,
             approvedOrigins = emptySet(),
             selectedModel = "custom-model",
             modelCache = ModelCache(
@@ -202,7 +231,6 @@ class ConnectionRepositoryTest {
             catalogEndpoint = "https://127.0.0.1:1/models",
             authScheme = AuthScheme.NONE,
             credentialRef = null,
-            credentialMask = null,
             approvedOrigins = emptySet(),
             selectedModel = "manual-model",
             modelCache = cached,
@@ -307,7 +335,6 @@ class ConnectionRepositoryTest {
             catalogEndpoint = "https://gateway.example.test/v1/models",
             authScheme = AuthScheme.NONE,
             credentialRef = null,
-            credentialMask = null,
             approvedOrigins = emptySet(),
             selectedModel = "model-a",
             modelCache = ModelCache(models = listOf(StoredModel("model-a", "Model A"))),
@@ -334,6 +361,7 @@ class ConnectionRepositoryTest {
 
         assertEquals("https://other.example.test/responses", moved.streamEndpoint)
         assertEquals("https://other.example.test/models", moved.catalogEndpoint)
+        assertTrue(moved.modelCache.models.isEmpty())
     }
 
     private fun repository(
@@ -347,7 +375,7 @@ class ConnectionRepositoryTest {
     }
 }
 
-private class FakeConnectionStateStore(
+internal class FakeConnectionStateStore(
     initial: GatewayAppState = GatewayAppState(),
 ) : ConnectionStateStore {
     private val mutable = MutableStateFlow(initial)
@@ -359,7 +387,7 @@ private class FakeConnectionStateStore(
     }
 }
 
-private class FakeCredentialStore : CredentialStore {
+internal class FakeCredentialStore : CredentialStore {
     private val secrets = mutableMapOf<String, String>()
     override suspend fun put(credentialId: String, secret: String) { secrets[credentialId] = secret }
     override suspend fun getOrNull(credentialId: String): String? = secrets[credentialId]

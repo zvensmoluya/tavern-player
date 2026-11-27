@@ -10,6 +10,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import io.github.zvensmoluya.tavernplayer.ui.ScrollableBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -216,7 +217,7 @@ internal fun ReaderUsageSheet(
     title: String, mode: WorldBookEntryMode, canRestore: Boolean, busy: Boolean, global: Boolean = false,
     onDismiss: () -> Unit, onSelect: (WorldBookEntryMode) -> Unit, onRestore: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ScrollableBottomSheet(onDismissRequest = onDismiss,
         containerColor = ReaderColors.Paper, contentColor = ReaderColors.Ink,
         modifier = Modifier.testTag("worldBookUsageSheet")) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp)) {

@@ -14,4 +14,10 @@ internal fun providerHttpFailureText(status: Int, diagnostic: String): String {
     return "模型服务返回 HTTP $status：$bounded"
 }
 
+internal fun credentialFailureText(httpStatus: Int?): String = when (httpStatus) {
+    401 -> "服务未接受本次请求的身份验证（HTTP 401），请检查已保存的 API Key 和地址"
+    403 -> "服务拒绝访问（HTTP 403），请检查访问权限或网络限制"
+    else -> "无法读取本机保存的 API Key，请重试或重新保存"
+}
+
 private const val PROVIDER_DETAIL_LIMIT = 400

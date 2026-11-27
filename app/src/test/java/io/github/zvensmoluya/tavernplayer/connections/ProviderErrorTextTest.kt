@@ -6,6 +6,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderErrorTextTest {
+    @Test fun `credential errors identify where the request failed`() {
+        assertTrue(credentialFailureText(null).contains("本机"))
+        assertTrue(credentialFailureText(401).contains("身份验证（HTTP 401）"))
+        assertTrue(credentialFailureText(403).contains("拒绝访问（HTTP 403）"))
+    }
+
     @Test fun `the provider body reaches the user unchanged`() {
         val body = """{"error":{"message":"Unsupported parameter: 'top_p' is not supported with this model."}}"""
         val text = providerHttpFailureText(400, body)

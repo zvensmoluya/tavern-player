@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.connections
 import io.github.zvensmoluya.modelgateway.AuthScheme
 import io.github.zvensmoluya.modelgateway.CredentialResolver
 import io.github.zvensmoluya.modelgateway.GatewayException
+import io.github.zvensmoluya.modelgateway.SecretValue
 import io.github.zvensmoluya.modelgateway.ModelGateway
 import io.github.zvensmoluya.modelgateway.ModelProtocol
 import io.github.zvensmoluya.modelgateway.catalog.ModelCatalog
@@ -18,7 +19,6 @@ import okhttp3.OkHttpClient
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -78,6 +78,39 @@ class ProbeServiceRouteFallbackTest {
         }
     }
 
+    @Test
+    fun `a denied probe retries the same saved key in the same process`() = runTest {
+        ProbeServer().use { server ->
+            val credentials = object : CredentialStore by NoProbeCredentials {
+                override suspend fun getOrNull(credentialId: String) = "fixture-key"
+                override suspend fun contains(credentialId: String) = true
+            }
+            val stateStore = FakeProbeStateStore()
+            val connection = server.connection().copy(
+                protocol = ModelProtocol.OPENAI_CHAT_COMPLETIONS,
+                streamEndpoint = server.url("/api/v1/chat/completions"),
+                apiAddress = server.url("/api/v1"),
+                authScheme = AuthScheme.BEARER,
+                credentialRef = "fixture",
+            ).let { it.copy(approvedOrigins = it.currentOrigins()) }
+            stateStore.seed(GatewayAppState(connections = listOf(connection)))
+            val service = server.probeService(stateStore, credentials)
+            val input = ProbeInput("", "Hello")
+            for (status in listOf(401, 403)) {
+                server.enqueueHttpFailure(status)
+                val error = runCatching { service.stream(connection, input).toList() }.exceptionOrNull()
+                assertEquals(status, (error as GatewayException.AuthenticationFailure).status)
+            }
+            server.enqueueSse("""data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}""" + "\n\ndata: [DONE]\n\n")
+            assertEquals("OK", service.stream(connection, input).toList().filterIsInstance<ProbeEvent.Text>().single().delta)
+            repeat(3) {
+                val request = server.nextRequest()
+                assertEquals("/api/v1/chat/completions", request.url.encodedPath)
+                assertEquals("Bearer fixture-key", request.headers["Authorization"])
+            }
+        }
+    }
+
     private fun responsesStream(text: String): String = buildString {
         append("event: response.output_text.delta\n")
         append("data: {\"type\":\"response.output_text.delta\",\"delta\":\"$text\"}\n\n")
@@ -118,16 +151,15 @@ class ProbeServiceRouteFallbackTest {
             catalogEndpoint = localAddress + "/models",
             authScheme = AuthScheme.NONE,
             credentialRef = null,
-            credentialMask = null,
             approvedOrigins = emptySet(),
             selectedModel = "test-model",
         )
 
-        fun probeService(stateStore: ConnectionStateStore) = ProbeService(
-            gateway = ModelGateway(credentialResolver = CredentialResolver { null }, client = client),
+        fun probeService(stateStore: ConnectionStateStore, credentials: CredentialStore = NoProbeCredentials) = ProbeService(
+            gateway = ModelGateway(credentialResolver = CredentialResolver { credentials.getOrNull(it)?.let(::SecretValue) }, client = client),
             repository = ConnectionRepository(
                 stateStore = stateStore,
-                credentialStore = NoProbeCredentials,
+                credentialStore = credentials,
                 catalogLoader = { ModelCatalog(emptyList(), truncated = false) },
             ),
         )
@@ -147,15 +179,11 @@ class ProbeServiceRouteFallbackTest {
         }
 
         /** Fails with the queue size instead of blocking forever when a request never arrives. */
-        fun takePaths(count: Int): List<String> = List(count) { index ->
-            val request = server.takeRequest(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            assertNotNull(
-                "第 ${index + 1} 个请求在 ${REQUEST_TIMEOUT_SECONDS}s 内没有到达" +
-                    "（已收到 ${server.requestCount} 个请求）",
-                request,
-            )
-            request!!.url.encodedPath
+        fun nextRequest() = requireNotNull(server.takeRequest(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            "等待请求超时，已收到 ${server.requestCount} 个请求"
         }
+
+        fun takePaths(count: Int): List<String> = List(count) { nextRequest().url.encodedPath }
 
         override fun close() = server.close()
 

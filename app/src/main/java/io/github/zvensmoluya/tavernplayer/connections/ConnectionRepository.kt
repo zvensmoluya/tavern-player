@@ -5,8 +5,10 @@ import io.github.zvensmoluya.modelgateway.ConnectionTarget
 import io.github.zvensmoluya.modelgateway.GatewayException
 import io.github.zvensmoluya.modelgateway.catalog.ModelCatalog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import java.net.URI
 import java.util.UUID
 
@@ -24,8 +26,7 @@ class ConnectionRepository(
         confirmCredentialReuse: Boolean,
     ): StoredConnection {
         if (draft.id.isBlank()) throw GatewayException.Configuration("Connection id is required")
-        if (draft.name.isBlank()) throw GatewayException.Configuration("Connection name is required")
-        val currentState = state.first()
+        val currentState = stateStore.current()
         val previous = currentState.connections.firstOrNull { it.id == draft.id }
         val apiAddress = draft.apiAddress.trim().trimEnd('/')
         // Saving a name, model or credential must not discard the route a fallback already learned:
@@ -47,10 +48,10 @@ class ConnectionRepository(
                 else put(selectedModel, limits)
             }
         }.toMap()
-        val ref = previous?.credentialRef ?: "credential_${safeConnectionId(draft.id)}"
         val credential = newCredential.trim()
-        val hasStoredCredential = previous?.credentialRef?.let { credentialStore.contains(it) } == true
-        val authScheme = if (credential.isNotEmpty() || hasStoredCredential) {
+        val ref = if (credential.isNotEmpty()) "credential_${UUID.randomUUID()}" else previous?.credentialRef
+        val requiresCredential = previous != null && previous.authScheme != AuthScheme.NONE
+        val authScheme = if (credential.isNotEmpty() || requiresCredential) {
             ConnectionTemplates.forProtocol(draft.protocol).authScheme
         } else {
             AuthScheme.NONE
@@ -64,7 +65,7 @@ class ConnectionRepository(
         ).validate()
         val candidate = StoredConnection(
             id = draft.id,
-            name = draft.name.trim(),
+            name = draft.name.trim().ifBlank { endpoints.streamEndpoint.toHttpUrl().host },
             templateId = draft.templateId,
             protocol = draft.protocol,
             apiAddress = apiAddress,
@@ -72,27 +73,20 @@ class ConnectionRepository(
             catalogEndpoint = endpoints.catalogEndpoint,
             authScheme = authScheme,
             credentialRef = if (authScheme == AuthScheme.NONE) null else ref,
-            credentialMask = previous?.credentialMask,
             approvedOrigins = previous?.approvedOrigins.orEmpty(),
             selectedModel = selectedModel,
-            modelCache = previous?.modelCache ?: ModelCache(),
+            modelCache = previous?.takeIf {
+                it.apiAddress == apiAddress && it.protocol == draft.protocol
+            }?.modelCache ?: ModelCache(),
             modelTokenLimitOverrides = tokenLimitOverrides,
         )
         val currentOrigins = candidate.currentOrigins()
         val stored = when {
             authScheme == AuthScheme.NONE -> candidate.copy(
                 credentialRef = null,
-                credentialMask = null,
                 approvedOrigins = emptySet(),
             )
-            credential.isNotEmpty() -> {
-                credentialStore.put(ref, credential)
-                candidate.copy(
-                    credentialRef = ref,
-                    credentialMask = maskCredential(credential),
-                    approvedOrigins = currentOrigins,
-                )
-            }
+            credential.isNotEmpty() -> candidate.copy(approvedOrigins = currentOrigins)
             previous?.credentialRef == null || !credentialStore.contains(previous.credentialRef) -> {
                 throw GatewayException.Authentication("需要重新输入密钥")
             }
@@ -101,21 +95,34 @@ class ConnectionRepository(
             else -> candidate
         }
         validationTarget.copy(authorizedOrigins = stored.approvedOrigins).validate()
-        stateStore.update { state ->
-            state.copy(
-                connections = state.connections.filterNot { it.id == stored.id } + stored,
-                recentConnectionId = stored.id,
-            )
-        }
-        if (authScheme == AuthScheme.NONE) {
-            previous?.credentialRef?.let { credentialStore.delete(it) }
+        // Publish the new reference only after its key is durable. A failed settings write
+        // leaves the old reference and key usable, including after an app restart.
+        withContext(NonCancellable) {
+            if (credential.isNotEmpty()) credentialStore.put(requireNotNull(ref), credential)
+            try {
+                stateStore.update { state ->
+                    val current = state.connections.firstOrNull { it.id == stored.id }
+                    if (current != previous) throw GatewayException.Configuration("Connection changed during save")
+                    state.copy(
+                        connections = state.connections.filterNot { it.id == stored.id } + stored,
+                    )
+                }
+            } catch (error: Exception) {
+                if (credential.isNotEmpty()) credentialStore.delete(requireNotNull(ref))
+                throw error
+            }
+            previous?.credentialRef?.takeIf { it != stored.credentialRef }?.let { credentialStore.delete(it) }
         }
         return stored
     }
 
     suspend fun refreshModels(connectionId: String): ModelDiscoveryResult {
         val connection = requireConnection(connectionId)
-        runCatching { ensureReady(connection) }.exceptionOrNull()?.let { error ->
+        try {
+            ensureReady(connection)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
             return ModelDiscoveryResult.Unavailable(error.toDiscoveryFailure())
         }
         var lastRouteFailure: GatewayException.HttpFailure? = null
@@ -289,7 +296,7 @@ class ConnectionRepository(
     }
 
     suspend fun delete(connectionId: String) {
-        val connection = state.first().connections.firstOrNull { it.id == connectionId }
+        val connection = stateStore.current().connections.firstOrNull { it.id == connectionId }
         stateStore.update { state ->
             state.copy(
                 connections = state.connections.filterNot { it.id == connectionId },
@@ -317,7 +324,7 @@ class ConnectionRepository(
     }
 
     suspend fun requireConnection(id: String): StoredConnection =
-        state.first().connections.firstOrNull { it.id == id }
+        stateStore.current().connections.firstOrNull { it.id == id }
             ?: throw GatewayException.Configuration("Connection does not exist")
 
     companion object {
@@ -325,8 +332,6 @@ class ConnectionRepository(
 
         fun newConnectionId(): String = UUID.randomUUID().toString()
 
-        private fun safeConnectionId(id: String): String =
-            id.replace(Regex("[^A-Za-z0-9_-]"), "_").take(96).ifBlank { "connection" }
     }
 }
 

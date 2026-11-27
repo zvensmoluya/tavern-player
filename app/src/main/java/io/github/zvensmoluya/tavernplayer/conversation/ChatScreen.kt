@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -31,16 +32,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import io.github.zvensmoluya.tavernplayer.ui.ScrollableBottomSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -150,7 +153,17 @@ fun ChatScreen(
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
     var editingText by remember(state.conversationId) { mutableStateOf("") }
     var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
+    val modelFeedback = remember { SnackbarHostState() }
+    var requestedConnection by remember(state.conversationId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(requestedConnection, state.selectedConnectionId) {
+        val id = requestedConnection ?: return@LaunchedEffect
+        if (state.selectedConnectionId == id) {
+            state.readyConnections.find { it.id == id }?.let { modelFeedback.showSnackbar("已选用 ${it.selectedModel}") }
+            requestedConnection = null
+        }
+    }
     Scaffold(
+        snackbarHost = { SnackbarHost(modelFeedback) },
         topBar = {
             TopAppBar(
                 title = {
@@ -251,6 +264,7 @@ fun ChatScreen(
             connections = state.readyConnections,
             selectedId = state.selectedConnectionId,
             onSelect = {
+                requestedConnection = it
                 actions.selectConnection(it)
                 modelPickerVisible = false
             },
@@ -384,7 +398,7 @@ private fun ModelPicker(
     onManage: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ScrollableBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -392,25 +406,30 @@ private fun ModelPicker(
             Text("选择模型", style = MaterialTheme.typography.titleLarge)
             if (connections.isEmpty()) {
                 Text(
-                    "还没有可用连接。可以先保留当前对话，再去配置模型。",
+                    "还没有可用连接。请先添加服务并选择模型。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            connections.forEach { connection ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().testTag("connection-${connection.id}"),
-                    onClick = { onSelect(connection.id) },
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text(
-                            connection.selectedModel,
-                            fontWeight = if (connection.id == selectedId) FontWeight.Bold else FontWeight.Normal,
-                        )
-                        Text(
-                            "${connection.protocol.displayName()} · ${connection.name}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            LazyColumn(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(connections, key = StoredConnection::id) { connection ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().testTag("connection-${connection.id}"),
+                        onClick = { onSelect(connection.id) },
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(
+                                connection.selectedModel,
+                                fontWeight = if (connection.id == selectedId) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            Text(
+                                if (connection.id == selectedId) "${connection.name} · 当前使用" else connection.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -422,7 +441,7 @@ private fun ModelPicker(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PresetPicker(
+internal fun PresetPicker(
     presets: List<PresetAsset>,
     selectedId: String,
     enabled: Boolean,
@@ -430,33 +449,38 @@ private fun PresetPicker(
     onManage: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ScrollableBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("选择预设", style = MaterialTheme.typography.titleLarge)
-            presets.forEach { preset ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().testTag("quick-preset-${preset.id}"),
-                    enabled = enabled,
-                    onClick = { onSelect(preset.id) },
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text(
-                            preset.name,
-                            fontWeight = if (preset.id == selectedId) FontWeight.Bold else FontWeight.Normal,
-                        )
-                        Text(
-                            "${preset.prompts.count { !it.marker }} 个快速项 · ${preset.regexScripts.size} Regex · " +
-                                if (preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) {
-                                    "回复 ${preset.generationSettings.maxOutputTokens}"
-                                } else {
-                                    "回复上限关闭"
-                                },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            LazyColumn(
+                modifier = Modifier.weight(1f, fill = false).testTag("presetChoices"),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(presets, key = PresetAsset::id) { preset ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().testTag("quick-preset-${preset.id}"),
+                        enabled = enabled,
+                        onClick = { onSelect(preset.id) },
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text(
+                                preset.name,
+                                fontWeight = if (preset.id == selectedId) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            Text(
+                                "${preset.prompts.count { !it.marker }} 个快速项 · ${preset.regexScripts.size} Regex · " +
+                                    if (preset.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT)) {
+                                        "回复 ${preset.generationSettings.maxOutputTokens}"
+                                    } else {
+                                        "回复上限关闭"
+                                    },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -469,7 +493,7 @@ private fun PresetPicker(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ScrollableBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().testTag("traceSheet"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),

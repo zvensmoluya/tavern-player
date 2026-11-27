@@ -148,6 +148,3 @@ class AndroidKeystoreCredentialStore(context: Context) : CredentialStore, Creden
         private val SAFE_ID = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }
-
-fun maskCredential(secret: String): String =
-    if (secret.length <= 4) "••••" else "•••• ${secret.takeLast(4)}"

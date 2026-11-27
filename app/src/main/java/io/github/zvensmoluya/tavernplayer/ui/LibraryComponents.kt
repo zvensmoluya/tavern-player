@@ -20,7 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
-fun LibraryHeader(title: String, subtitle: String, actions: @Composable RowScope.() -> Unit = {}) {
+fun LibraryHeader(title: String, subtitle: String? = null, actions: @Composable RowScope.() -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             .padding(start = 24.dp, end = 12.dp, top = 20.dp, bottom = 18.dp),
@@ -28,7 +28,7 @@ fun LibraryHeader(title: String, subtitle: String, actions: @Composable RowScope
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium,
+            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         actions()
