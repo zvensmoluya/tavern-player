@@ -73,7 +73,7 @@ Your default identity, global world books, and imported presets are optional. To
 - The built-in default preset can be edited and restored but not deleted. Imported presets and saved copies retain immutable restore points. The active preset is global: each generation captures a snapshot, and switching affects subsequent generations. History display uses the current preset's display regex and `show_thoughts`.
 - Preset switches follow the actual `prompt_order`. Individual request parameters can be disabled while retaining local values; disabled parameters are omitted from compatible requests and exports.
 - Sending applies world books, character regex, macros, prompt assembly, and context budgeting, mapping parameters to five supported OpenAI, Anthropic, or Gemini protocols. When the model catalog lacks capacity information, preset-declared budgets are used as unverified limits; token limits can be overridden per model ID.
-- The single default identity supplies user attribution and persona macros. The preset determines whether and where its description enters the request; existing conversations retain their identity snapshot.
+- The single default identity supplies user attribution and persona macros. The preset determines whether and where its description enters the request; existing conversations retain their identity snapshot. The optional chat avatar switch on the profile tab shows character and player portraits beside their names in both new and existing conversations. It defaults to off.
 - History edits can preserve later messages or explicitly truncate them and restore runtime state from the edit point. Message variants, character snapshots, and runtime state are persisted.
 
 </details>

@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 
 data class CharacterLibraryUiState(
     val layout: CharacterLibraryLayout = CharacterLibraryLayout.GRID,
+    val showChatAvatars: Boolean = false,
     val openingConversation: Boolean = false,
     val loadingCharacters: Boolean = true,
     val loadingConversations: Boolean = true,
@@ -86,6 +87,12 @@ class CharacterLibraryViewModel(
                 _uiState.update { it.copy(message = "无法读取布局偏好，暂用两列视图") }
             }
             try {
+                preferences?.showChatAvatars?.first()?.let { show -> _uiState.update { it.copy(showChatAvatars = show) } }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: java.io.IOException) {
+                _uiState.update { it.copy(message = "无法读取聊天头像偏好") }
+            }
+            try {
                 characterRepository.initialize()
                 defaultPersonaSource.initialize()
             } catch (cancelled: CancellationException) {
@@ -121,6 +128,17 @@ class CharacterLibraryViewModel(
             }
         }
         loadConversations()
+    }
+
+    fun setShowChatAvatars(show: Boolean) {
+        viewModelScope.launch {
+            try {
+                preferences?.setShowChatAvatars(show)
+                _uiState.update { it.copy(showChatAvatars = show) }
+            } catch (_: java.io.IOException) {
+                _uiState.update { it.copy(message = "聊天头像设置保存失败") }
+            }
+        }
     }
 
     fun setLayout(layout: CharacterLibraryLayout) {

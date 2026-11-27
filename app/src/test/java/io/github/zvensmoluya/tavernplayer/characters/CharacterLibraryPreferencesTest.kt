@@ -14,16 +14,26 @@ class CharacterLibraryPreferencesTest {
 
     @Test fun `layout defaults to grid and survives reopening its store`() = runBlocking {
         val file = File(temporary.newFolder(), "ui.preferences_pb")
-        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        val first = CharacterLibraryPreferences(PreferenceDataStoreFactory.create(scope = firstScope) { file })
+        withStore(file) {
+            assertEquals(CharacterLibraryLayout.GRID, layout.first())
+            setLayout(CharacterLibraryLayout.LIST)
+        }
+        withStore(file) { assertEquals(CharacterLibraryLayout.LIST, layout.first()) }
+    }
+
+    @Test fun `chat avatars default to hidden and survive reopening the store`() = runBlocking {
+        val file = File(temporary.newFolder(), "ui.preferences_pb")
+        withStore(file) {
+            assertEquals(false, showChatAvatars.first())
+            setShowChatAvatars(true)
+        }
+        withStore(file) { assertEquals(true, showChatAvatars.first()) }
+    }
+
+    private suspend fun withStore(file: File, check: suspend CharacterLibraryPreferences.() -> Unit) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
-            assertEquals(CharacterLibraryLayout.GRID, first.layout.first())
-            first.setLayout(CharacterLibraryLayout.LIST)
-        } finally { firstScope.coroutineContext.job.cancelAndJoin() }
-        val secondScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        try {
-            val reopened = CharacterLibraryPreferences(PreferenceDataStoreFactory.create(scope = secondScope) { file })
-            assertEquals(CharacterLibraryLayout.LIST, reopened.layout.first())
-        } finally { secondScope.coroutineContext.job.cancelAndJoin() }
+            CharacterLibraryPreferences(PreferenceDataStoreFactory.create(scope = scope) { file }).check()
+        } finally { scope.coroutineContext.job.cancelAndJoin() }
     }
 }

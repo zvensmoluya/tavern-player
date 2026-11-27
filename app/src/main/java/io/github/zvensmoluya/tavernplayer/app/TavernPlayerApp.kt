@@ -111,7 +111,8 @@ fun TavernPlayerApp(
                         libraryState, characterLibraryViewModel::avatarPath, characterLibraryViewModel::openConversation,
                         onOpenCharacters = { navigateHome(AppSurface.CHARACTER_LIBRARY) },
                     )
-                    AppSurface.MY -> MyScreen(libraryState.persona, ::openPersona, ::openPresets, ::openWorldBooks)
+                    AppSurface.MY -> MyScreen(libraryState.persona, ::openPersona, ::openPresets, ::openWorldBooks,
+                        libraryState.showChatAvatars, characterLibraryViewModel::setShowChatAvatars)
                     AppSurface.MODELS -> ModelConnectionsRoute(viewModel = connectionsViewModel())
                     AppSurface.CHARACTER_LIBRARY -> CharacterLibraryRoute(
                         state = libraryState,
@@ -161,7 +162,7 @@ fun TavernPlayerApp(
                         conversationId = requireNotNull(activeConversationId),
                         viewModel = chatViewModel(),
                         presetViewModel = presetViewModel,
-                        characterLibraryViewModel = characterLibraryViewModel,
+                        showChatAvatars = libraryState.showChatAvatars,
                         onBack = { activeConversationId = null; surface = returnFromChat },
                         onOpenModels = ::openModels,
                         onOpenPresets = ::openPresets,
@@ -225,7 +226,7 @@ private fun OpenedConversation(
     conversationId: String,
     viewModel: ChatViewModel,
     presetViewModel: () -> PresetViewModel,
-    characterLibraryViewModel: CharacterLibraryViewModel,
+    showChatAvatars: Boolean,
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
@@ -240,7 +241,7 @@ private fun OpenedConversation(
     if (state.conversationId == conversationId && !state.loadingConversation) {
         ChatRoute(viewModel, presetViewModel(),
             onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets,
-            onOpenGlobalWorldBooks = onOpenGlobalWorldBooks)
+            onOpenGlobalWorldBooks = onOpenGlobalWorldBooks, showChatAvatars = showChatAvatars)
     } else {
         BackHandler { if (!state.loadingConversation) onBack() }
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),

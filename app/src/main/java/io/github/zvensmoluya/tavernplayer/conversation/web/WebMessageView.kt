@@ -1,6 +1,17 @@
 package io.github.zvensmoluya.tavernplayer.conversation.web
 
 import android.graphics.Color
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.webkit.WebView
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,9 +42,22 @@ fun WebMessageView(
     invoke: suspend (BrowserActor, String, String, JsonObject) -> JsonObject,
     onAction: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
+    showChatAvatars: Boolean = false,
 ) {
+    val resolver = LocalContext.current.contentResolver
+    val avatars = key(showChatAvatars, state.conversationId, state.character.assetId, state.persona.avatar, environment) {
+        val loaded by produceState(ChatAvatars.Empty) {
+            if (showChatAvatars) value = withContext(Dispatchers.IO) {
+                ChatAvatars(buildMap {
+                    resolver.chatThumbnail(environment?.avatarFile(state.character.assetId)?.path)?.let { put(MessageRole.ASSISTANT, it) }
+                    resolver.chatThumbnail(state.persona.avatar)?.let { put(MessageRole.USER, it) }
+                })
+            }
+        }
+        loaded
+    }
     if (state.readOnlyReason != null || environment == null) {
-        SavedMessages(state, modifier)
+        SavedMessages(state, avatars, modifier)
         return
     }
 
@@ -78,7 +102,7 @@ fun WebMessageView(
                 TextButton(onClick = { restart++ }) { Text("重试加载网页") }
                 if (!showSavedText) TextButton(onClick = { showSavedText = true }) { Text("阅读已保存的文字") }
             }
-            if (showSavedText) SavedMessages(state, Modifier.fillMaxSize())
+            if (showSavedText) SavedMessages(state, avatars, Modifier.fillMaxSize())
             else AndroidView(
                 modifier = Modifier.fillMaxSize().testTag("webChatContent"),
                 factory = { context ->
@@ -94,7 +118,7 @@ fun WebMessageView(
                         }
                     }
                 },
-                update = { session?.update(state) },
+                update = { session?.update(state, avatars.webSources) },
                 onRelease = { web -> session?.release(); session = null; view = null; web.destroy() },
             )
         }
@@ -102,11 +126,16 @@ fun WebMessageView(
 }
 
 @Composable
-private fun SavedMessages(state: ChatUiState, modifier: Modifier) {
+private fun SavedMessages(state: ChatUiState, avatars: ChatAvatars, modifier: Modifier) {
     LazyColumn(modifier) {
         items(state.messages, key = { it.message.id }) { item ->
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text(item.message.authorName)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    avatars.images[item.message.role]?.let {
+                        Image(it.asImageBitmap(), contentDescription = null, Modifier.size(24.dp).clip(CircleShape))
+                    }
+                    Text(item.message.authorName)
+                }
                 Text(item.message.content)
             }
         }

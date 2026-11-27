@@ -163,15 +163,39 @@ function richText(html) {
 // HTML styles never share the trusted player's document or controls.
 const SANITIZE = { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
   FORBID_ATTR: ['srcdoc'] };
+let chatAvatars = {};
+function renderByline(row, message) {
+  const avatar = chatAvatars[message.role];
+  if (!row.header) {
+    row.header = document.createElement('header');
+    row.byline = document.createElement('span');
+    row.byline.className = 'message-byline';
+    row.name = document.createElement('span');
+    row.byline.append(row.name);
+    row.header.append(row.byline, button('编辑', () => ui('edit', row.message.id), flags.busy));
+  }
+  if (row.name.textContent !== message.name) row.name.textContent = message.name;
+  if (avatar === row.avatarSrc) return;
+  row.avatarSrc = avatar;
+  row.byline.querySelector('img')?.remove();
+  if (avatar) {
+    const image = document.createElement('img');
+    image.alt = '';
+    image.addEventListener('error', () => image.remove(), { once: true });
+    image.src = avatar;
+    row.byline.prepend(image);
+  }
+}
+
 function newRow() {
-  return { element: document.createElement('article'), frames: [], segments: [], headerKey: null, header: null, name: null,
+  return { element: document.createElement('article'), frames: [], segments: [], avatarSrc: null, header: null, byline: null, name: null,
     reasoningKey: null, reasoning: null, reasoningText: null, status: null, statusText: null, reasoningOpen: false,
     message: null, lastRenderedMessage: null, parsedSource: null, parsedIncomplete: null, parsedParts: null, rendered: false, forced: false };
 }
 function clearRow(row) {
   row.frames.forEach(dispose); row.frames = [];
   row.segments = []; row.element.replaceChildren();
-  row.headerKey = null; row.header = null; row.name = null;
+  row.avatarSrc = null; row.header = null; row.byline = null; row.name = null;
   row.reasoningKey = null; row.reasoning = null; row.reasoningText = null;
   row.status = null; row.statusText = null;
   row.lastRenderedMessage = null;
@@ -266,15 +290,7 @@ async function buildSegment(row, message, part, kind, previous) {
 async function renderRow(row, message) {
   row.message = message;
   if (row.forced) { row.forced = false; clearRow(row); }
-  const headerKey = JSON.stringify([message.name]);
-  if (row.headerKey !== headerKey) {
-    row.headerKey = headerKey;
-    if (!row.header) {
-      row.header = document.createElement('header'); row.name = document.createElement('span');
-      row.header.append(row.name, button('编辑', () => ui('edit', row.message.id), flags.busy));
-    }
-    row.name.textContent = message.name;
-  }
+  renderByline(row, message);
   const reasoning = message.reasoning ?? [], reasoningKey = JSON.stringify(reasoning);
   if (!reasoning.length) {
     if (row.reasoning) { row.reasoning.remove(); row.reasoning = null; row.reasoningText = null; }
@@ -348,7 +364,7 @@ async function render() {
     row.element.dataset.role = message.role;
     if (row.lastRenderedMessage !== message || row.forced) {
       await renderRow(row, message); row.lastRenderedMessage = message;
-    }
+    } else if (row.avatarSrc !== chatAvatars[message.role]) renderByline(row, message);
     row.element.querySelector('header button').disabled = flags.busy;
     if (messagesNode.children[position] !== row.element) messagesNode.insertBefore(row.element, messagesNode.children[position] ?? null);
   }
@@ -499,6 +515,8 @@ async function apply(packet) {
   } else snapshot = packet.snapshot;
   if (previous && snapshot.messages.length > previous.messages.length)
     shown += snapshot.messages.length - previous.messages.length;
+  const avatarsChanged = packet.avatars !== undefined;
+  if (avatarsChanged || packet.type === 'snapshot') chatAvatars = packet.avatars ?? {};
   flags = packet.flags;
   await ensureCoordinator();
   if (packet.type === 'delta') post(coordinator, { type: 'delta', changes: packet.changes, messages: packet.messages,
@@ -508,7 +526,7 @@ async function apply(packet) {
   notice(flags.notice);
   const draftOnly = packet.type === 'delta' && !packet.messages.length && !packet.order &&
     Object.keys(packet.changes).every(key => key === 'draft' || key === 'revision') && JSON.stringify(oldFlags) === JSON.stringify(flags);
-  if (!draftOnly) await render();
+  if (!draftOnly || avatarsChanged) await render();
   publishMessageFacts(snapshot);
   if (!previous) { lifecycle(tavernEvents.CHAT_CHANGED, [snapshot.conversationId]); return; }
   const generation = snapshot.generation, prior = previous.generation;

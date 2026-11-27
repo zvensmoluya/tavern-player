@@ -3,6 +3,7 @@ package io.github.zvensmoluya.tavernplayer.conversation.web
 import io.github.zvensmoluya.tavernplayer.conversation.blockingGet
 
 import android.webkit.WebView
+import androidx.core.view.allViews
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -184,6 +185,63 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
             assertEquals(record.runtimeState.browserChatVariables, record.turns.last().selected.nativeHead()!!.browserChatVariables)
             root.deleteRecursively()
         }
+    }
+
+    @Test fun savedConversationDisplaysOptionalAvatarsByRole() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val graph = AppGraph(context)
+        val root = File(context.cacheDir, "chat-avatars-${UUID.randomUUID()}").apply { mkdirs() }
+        fun portrait(name: String, color: Int): File {
+            val bitmap = android.graphics.Bitmap.createBitmap(140, 120, android.graphics.Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(color)
+            return File(root, name).also { file ->
+                file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+        }
+        val characterImage = portrait("character.png", android.graphics.Color.RED)
+        val userImage = portrait("user.png", android.graphics.Color.BLUE)
+        val environment = BrowserEnvironment(context, graph.browserEnvironment.images, graph.browserEnvironment.resources,
+            assetFile = { _, _ -> null }, avatarFile = { characterImage })
+        val record = ConversationRecord(id = "history", character = CharacterAsset("card", name = "Actor").snapshot(),
+            persona = Persona("p", "Reader", avatar = userImage.toURI().toString()),
+            turns = MessageRole.entries.map { role ->
+                val text = role.name
+                ConversationTurn(text, role, listOf(MessageVariant(text, ConversationMessage(text, role, text, text))))
+            }, createdAtEpochMillis = 1, updatedAtEpochMillis = 1, executionMode = ConversationExecutionMode.BROWSER)
+        val show = androidx.compose.runtime.mutableStateOf(false)
+        val persona = androidx.compose.runtime.mutableStateOf(record.persona)
+        val state = ChatUiState(conversationId = record.id, character = record.character,
+            browserSnapshot = BrowserConversation.snapshot(record), executionMode = record.executionMode)
+        try {
+            compose.setContent {
+                WebMessageView(state.copy(persona = persona.value), environment,
+                    invoke = { _, _, _, _ -> error("Unexpected author operation") },
+                    onAction = { _, _ -> }, showChatAvatars = show.value)
+            }
+            val web = compose.runOnIdle { compose.activity.window.decorView.allViews.filterIsInstance<WebView>().single() }
+            fun evaluate(script: String): String {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                val result = AtomicReference("")
+                compose.runOnUiThread { web.evaluateJavascript(script) { result.set(it); latch.countDown() } }
+                check(latch.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                return result.get()
+            }
+            compose.waitUntil(20_000) { evaluate("document.querySelectorAll('article').length") == "3" }
+            val widthScript = "document.querySelector('article[data-role=user] .message-segment').getBoundingClientRect().width"
+            val width = evaluate(widthScript)
+            assertEquals("0", evaluate("document.querySelectorAll('header img').length"))
+            compose.runOnIdle { show.value = true }
+            compose.waitUntil(10_000) { evaluate("Array.from(document.querySelectorAll('header img')).filter(i => i.naturalWidth > 0).length") == "2" }
+            val avatar = "role => document.querySelector('article[data-role=' + role + '] header img')"
+            assertEquals("true", evaluate("((img) => !img('system') && img('assistant').src !== img('user').src && img('user').width === 24)($avatar)"))
+            assertEquals(width, evaluate(widthScript))
+            compose.runOnIdle { persona.value = record.persona.copy(avatar = File(root, "missing.png").path) }
+            compose.waitUntil(10_000) { evaluate("((img) => !!img('assistant') && !img('user'))($avatar)") == "true" }
+            assertEquals("true", evaluate("document.querySelector('article[data-role=user] header').textContent.includes('USER')"))
+            compose.runOnIdle { show.value = false }
+            compose.waitUntil(10_000) { evaluate("document.querySelectorAll('header img').length") == "0" }
+        } finally { root.deleteRecursively() }
     }
 
     @Test fun longHistoryMaintainsReadingPositionAndAppendsStreamingText() {

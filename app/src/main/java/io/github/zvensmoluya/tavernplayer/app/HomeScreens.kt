@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.app
 
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -115,7 +117,8 @@ internal fun ConversationLibraryScreen(
 }
 
 @Composable
-internal fun MyScreen(persona: Persona, onOpenPersona: () -> Unit, onOpenPresets: () -> Unit, onOpenWorldBooks: () -> Unit) {
+internal fun MyScreen(persona: Persona, onOpenPersona: () -> Unit, onOpenPresets: () -> Unit, onOpenWorldBooks: () -> Unit,
+    showChatAvatars: Boolean, onShowChatAvatars: (Boolean) -> Unit) {
     Scaffold(topBar = { LibraryHeader("我的", "你的身份与故事偏好") }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
@@ -139,6 +142,14 @@ internal fun MyScreen(persona: Persona, onOpenPersona: () -> Unit, onOpenPresets
             }
             item {
                 SettingsEntry("全局世界书", "选择跨角色使用的背景知识", PlayerSymbol.BOOK, "openGlobalWorldBooks", onOpenWorldBooks)
+            }
+            item {
+                Row(Modifier.fillMaxWidth().toggleable(value = showChatAvatars, role = Role.Switch,
+                    onValueChange = onShowChatAvatars).padding(horizontal = 18.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("显示聊天头像", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    Switch(checked = showChatAvatars, onCheckedChange = null)
+                }
             }
             item { Text("Tavern Player", Modifier.fillMaxWidth().padding(top = 24.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,

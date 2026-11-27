@@ -73,12 +73,14 @@ fun ChatRoute(
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
     onOpenGlobalWorldBooks: () -> Unit = {},
+    showChatAvatars: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsState()
     val presetState by presetViewModel.uiState.collectAsState()
     ChatScreen(
         state = state,
         presets = presetState.presets,
+        showChatAvatars = showChatAvatars,
         browserEnvironment = viewModel.browserEnvironment,
         browserInvoke = viewModel::invokeBrowser,
         actions = ChatScreenActions(
@@ -143,6 +145,7 @@ fun ChatScreen(
     browserInvoke: suspend (BrowserActor, String, String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject = { _, _, _, _ -> error("网页宿主未连接") },
     // 底部条自己让开系统栏与键盘，Scaffold 便以它的高度把消息区压到键盘之上；测试可注入固定值断言这一点。
     bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
+    showChatAvatars: Boolean = false,
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     BackHandler { if (!state.busy) actions.back() }
@@ -231,6 +234,7 @@ fun ChatScreen(
         },
     ) { padding ->
         io.github.zvensmoluya.tavernplayer.conversation.web.WebMessageView(state, browserEnvironment, browserInvoke,
+            showChatAvatars = showChatAvatars,
             onAction = { action, id -> when (action) {
                 "edit" -> state.messages.find { it.message.id == id }?.let { message ->
                     editingMessageId = message.message.id; editingText = message.message.sourceText

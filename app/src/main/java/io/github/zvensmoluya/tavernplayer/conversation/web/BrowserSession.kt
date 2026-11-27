@@ -37,6 +37,8 @@ class BrowserSession(
     private var failed = false
     private var updateJob: Job? = null
     private var lastSend = 0L
+    private var avatars = JsonObject(emptyMap())
+    private var sentAvatars: JsonObject? = null
     private var sentSnapshot: JsonObject? = null
     private var preparedPresetHash: String? = null
     private var preparedPreset: JsonElement = JsonNull
@@ -116,9 +118,10 @@ class BrowserSession(
         preparePreset()
     }
 
-    fun update(next: ChatUiState) {
+    fun update(next: ChatUiState, chatAvatars: JsonObject = avatars) {
         if (released || next.conversationId != conversationId) return
         state = next
+        avatars = chatAvatars
         if (!next.running && !next.browserGenerating) preparePreset()
         updateJob?.cancel()
         val elapsed = android.os.SystemClock.uptimeMillis() - lastSend
@@ -178,6 +181,10 @@ class BrowserSession(
                 if (order != previous["messages"]!!.jsonArray.map { it.jsonObject.getValue("turnId") }) {
                     put("order", JsonArray(order))
                 }
+            }
+            if (sentAvatars != avatars || previous == null) {
+                put("avatars", avatars)
+                sentAvatars = avatars
             }
             putJsonObject("flags") {
                 put("busy", state.busy); put("running", state.running); put("browserGenerating", state.browserGenerating)

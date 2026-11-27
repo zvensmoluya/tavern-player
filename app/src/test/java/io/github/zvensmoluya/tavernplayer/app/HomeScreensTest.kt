@@ -92,16 +92,19 @@ class HomeScreensTest {
 
     @Test fun `my screen exposes persona presets and world books`() {
         var persona = 0; var presets = 0; var books = 0
+        var showAvatars by mutableStateOf(false)
         compose.setContent { TavernPlayerTheme {
             rootView = LocalView.current
             HomeScaffold(AppSurface.MY, onNavigate = {}) {
-                MyScreen(CharacterLibraryUiState().persona, { persona++ }, { presets++ }, { books++ })
+                MyScreen(CharacterLibraryUiState().persona, { persona++ }, { presets++ }, { books++ }, showAvatars) { showAvatars = it }
             }
         } }
         compose.onNodeWithTag("openPersona").performClick()
         compose.onNodeWithTag("openPresetsFromMy").performClick()
         compose.onNodeWithTag("openGlobalWorldBooks").performClick()
         assertEquals(listOf(1, 1, 1), listOf(persona, presets, books))
+        compose.onNodeWithText("显示聊天头像").assertIsOff().performClick()
+        compose.onNodeWithText("显示聊天头像").assertIsOn()
         capture("my")
     }
 
