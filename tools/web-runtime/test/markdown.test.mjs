@@ -67,6 +67,15 @@ test('ordinary fenced examples, inline code and completed HTML snippets remain c
   assert.match(segmentMarkdown('```\nplain code', true)[0].text, /plain code/);
 });
 
+test('a wider display fence keeps captured Markdown inside one author page', () => {
+  const html = '<html><body>Before\n```\nStatus\n```\nAfter</body></html>';
+  const source = 'Time\n\n````html\n' + html + '\n````\n\nChoices';
+  assert.deepEqual(segmentMarkdown(source).map(part => part.kind), ['normal', 'page', 'normal']);
+  assert.equal(segmentMarkdown(source)[1].text, html);
+  const preview = segmentMarkdown(source.slice(0, source.indexOf('After')), true);
+  assert.deepEqual(preview.map(part => part.kind), ['normal', 'pending']);
+});
+
 test('formatted blocks preserve the order of static text and independent pages from one message', () => {
   const story = '<html><body><p>A &amp; B</p></body></html>';
   const actions = '<head><title>Options</title></head>';

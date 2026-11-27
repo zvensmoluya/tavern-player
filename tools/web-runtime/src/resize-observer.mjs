@@ -1,3 +1,5 @@
+export const MAX_FRAME_HEIGHT = 100000;
+
 export function isResizeObserverNotification(message) {
   return message === 'ResizeObserver loop completed with undelivered notifications.' ||
     message === 'ResizeObserver loop limit exceeded';

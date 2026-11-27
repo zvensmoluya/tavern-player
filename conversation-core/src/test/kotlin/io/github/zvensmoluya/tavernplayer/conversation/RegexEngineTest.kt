@@ -191,6 +191,33 @@ class RegexEngineTest {
     }
 
     @Test
+    fun `lookbehind branch cannot steal an earlier match from its sibling`() {
+        val brackets = rule("brackets", """(?<=<note>[\s\S]*?)<|>(?=[\s\S]*?<\/note>)""", "", markdownOnly = true)
+        val fold = rule("fold", """^<note[^>]*>([\s\S]*?)</note>""", "<details>$1</details>", markdownOnly = true)
+        val input = "<note>\n<step>one\ntwo\n</note>\nstory"
+        fun project(rules: List<RegexDefinition>) = engine.apply(input, rules, RegexPlacement.AI_OUTPUT,
+            RegexProjection.DISPLAY, context = context(), transaction = MacroTransaction())
+        assertEquals("<note\n<step>one\ntwo\n</note>\nstory", project(listOf(brackets)).text)
+        val result = project(listOf(brackets, fold))
+        assertEquals("<details>one\ntwo\n</details>\nstory", result.text)
+        assertTrue(result.diagnostics.isEmpty())
+    }
+
+    @Test
+    fun `only the display document fence grows around inserted Markdown fences`() {
+        val template = "```html\n<!-- reader -->\n<html><body>\n$1\n</body></html>\n```\n"
+        val page = rule("page", "/<story>([\\s\\S]*?)<\\/story>/", template, markdownOnly = true, promptOnly = true)
+        val story = "before\n````\nstatus\n````\nafter"
+        fun project(projection: RegexProjection) = engine.apply("<story>$story</story>", listOf(page),
+            RegexPlacement.AI_OUTPUT, projection, context = context(), transaction = MacroTransaction()).text
+        val expected = template.replace("$1", story)
+        assertEquals("`````" + expected.removePrefix("```").removeSuffix("```\n") + "`````\n", project(RegexProjection.DISPLAY))
+        assertEquals(expected, project(RegexProjection.PROMPT))
+        val twoPages = template + template
+        assertEquals(twoPages.replace("$1", story), protectDisplayPageFence(twoPages, twoPages.replace("$1", story)))
+    }
+
+    @Test
     fun `community style variable lookbehind completes as a forward deletion`() {
         val result = engine.apply(
             "她的语气轻柔，像春风一样，令人安心。",

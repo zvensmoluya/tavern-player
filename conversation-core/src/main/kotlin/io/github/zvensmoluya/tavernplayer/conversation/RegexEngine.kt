@@ -70,7 +70,7 @@ class CharacterRegexEngine(
             }
             val ruleTransaction = transaction.fork()
             when (val execution = executionStrategy.execute(ruleTimeoutMillis) {
-                runRule(current, rule, context, ruleTransaction)
+                runRule(current, rule, context, ruleTransaction, projection)
             }) {
                 is RegexExecutionResult.Success -> {
                     val result = execution.value
@@ -122,7 +122,7 @@ class CharacterRegexEngine(
                     Pattern.quote(macroEngine.evaluate(match.value, context, transaction.fork()).text)
                 }
             }
-            val compiled = compileJavascriptPattern(patternSource, mutableListOf(), rule.id) ?: return@execute false
+            val compiled = compileJavascriptPattern(patternSource, mutableListOf(), rule.id, text.length) ?: return@execute false
             compiled.pattern.matcher(InterruptibleCharSequence(text)).find()
         }
         return (result as? RegexExecutionResult.Success)?.value == true
@@ -133,6 +133,7 @@ class CharacterRegexEngine(
         rule: RegexDefinition,
         context: MacroContext,
         transaction: MacroTransaction,
+        projection: RegexProjection,
     ): RuleResult {
         val diagnostics = mutableListOf<CompilationDiagnostic>()
         val source = when (rule.substitutionMode) {
@@ -147,7 +148,7 @@ class CharacterRegexEngine(
             }
         }
         val compiled = try {
-            compileJavascriptPattern(source, diagnostics, rule.id)
+            compileJavascriptPattern(source, diagnostics, rule.id, input.length)
         } catch (error: PatternSyntaxException) {
             diagnostics += warning("INVALID_REGEX_PATTERN", "Regex“${rule.name}”无法编译：${error.description}", rule.id)
             return RuleResult(input, diagnostics, false)
@@ -156,7 +157,7 @@ class CharacterRegexEngine(
         val matcher = compiled.pattern.matcher(InterruptibleCharSequence(input))
         val output = StringBuffer(input.length)
         while (matcher.find()) {
-            val replacement = buildReplacement(rule, compiled, matcher, context, transaction, diagnostics)
+            val replacement = buildReplacement(rule, compiled, matcher, context, transaction, diagnostics, projection)
             matcher.appendReplacement(output, Matcher.quoteReplacement(replacement))
             if (output.length > MAX_INPUT_CHARS) {
                 diagnostics += warning("REGEX_OUTPUT_LIMIT", "Regex“${rule.name}”输出超过 1 MiB，已跳过该规则", rule.id)
@@ -175,6 +176,7 @@ class CharacterRegexEngine(
         context: MacroContext,
         transaction: MacroTransaction,
         diagnostics: MutableList<CompilationDiagnostic>,
+        projection: RegexProjection,
     ): String {
         val template = MATCH_MACRO.replace(rule.replaceString) { "\$0" }
         val withGroups = CAPTURE_REFERENCE.replace(template) { reference ->
@@ -201,13 +203,17 @@ class CharacterRegexEngine(
         }
         val expanded = macroEngine.evaluate(withGroups, context, transaction)
         diagnostics += expanded.diagnostics
-        return compiled.preservedPrefix(matcher) + expanded.text
+        val replacement = if (projection == RegexProjection.DISPLAY) {
+            protectDisplayPageFence(template, expanded.text)
+        } else expanded.text
+        return compiled.preservedPrefix(matcher) + replacement
     }
 
     private fun compileJavascriptPattern(
         value: String,
         diagnostics: MutableList<CompilationDiagnostic>,
         sourceId: String,
+        inputLength: Int,
     ): CompiledRegex? {
         var pattern = value
         var flagsText = ""
@@ -235,7 +241,21 @@ class CharacterRegexEngine(
         if ('s' in flagsText) flags = flags or Pattern.DOTALL
         // Java Pattern is already code-point aware for the supported constructs. JS /u does not
         // make \w or \d Unicode-wide, so UNICODE_CHARACTER_CLASS would be an incompatible widening.
-        val lookbehindRewrite = rewriteLeadingPositiveLookbehind(pattern)
+        // Consuming a lookbehind prefix would move its branch ahead of an earlier
+        // match of a sibling alternative. Keep the assertion zero-width in that case.
+        val competingBranches = pattern.startsWith("(?<=") && pattern.hasTopLevelAlternative()
+        val lookbehindRewrite = if (competingBranches) null else rewriteLeadingPositiveLookbehind(pattern)
+        if (competingBranches) {
+            val end = pattern.leadingGroupClosingIndex()!!
+            val assertion = pattern.substring(0, end)
+            // ICU requires a finite maximum. No match can span more than the input.
+            for (suffix in listOf("[\\s\\S]*?", "[\\s\\S]*")) {
+                if (!assertion.endsWith(suffix)) continue
+                val lazy = if (suffix.endsWith('?')) "?" else ""
+                pattern = assertion.removeSuffix(suffix) + "[\\s\\S]{0,$inputLength}" + lazy + pattern.substring(end)
+                break
+            }
+        }
         if (lookbehindRewrite != null) {
             pattern = lookbehindRewrite.pattern
             diagnostics += warning(
@@ -341,7 +361,11 @@ private fun rewriteLeadingPositiveLookbehind(pattern: String): LookbehindRewrite
     )
 }
 
-private fun String.leadingGroupClosingIndex(): Int? {
+private fun String.hasTopLevelAlternative(): Boolean = structuralDelimiterIndex(findAlternative = true) != null
+
+private fun String.leadingGroupClosingIndex(): Int? = structuralDelimiterIndex(findAlternative = false)
+
+private fun String.structuralDelimiterIndex(findAlternative: Boolean): Int? {
     var depth = 0
     var inCharacterClass = false
     var index = 0
@@ -353,8 +377,9 @@ private fun String.leadingGroupClosingIndex(): Int? {
             '(' -> if (!inCharacterClass) depth++
             ')' -> if (!inCharacterClass) {
                 depth--
-                if (depth == 0) return index
+                if (!findAlternative && depth == 0) return index
             }
+            '|' -> if (findAlternative && !inCharacterClass && depth == 0) return index
         }
         index++
     }

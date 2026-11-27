@@ -149,6 +149,47 @@ test('resize notifications do not alter layout while real script errors remain v
   } finally { await browser.close(); }
 });
 
+test('auto-height message frames keep their reading width and allow scrolling past the height cap', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });
+  try {
+    const panel = '<style>::-webkit-scrollbar{width:12px}.list{height:40px;overflow:auto}</style>' +
+      '<div class="list"><div style="height:200px"></div></div>' +
+      '<details><summary>Expand</summary><div style="height:320px"></div></details>';
+    const { page } = await open(browser, { width: 420, height: 700 }, [
+      '<div id="article">' + panel + '</div>', card('<body id="reader">' + panel + '</body>'),
+    ]);
+    for (const selector of ['#article', '#reader']) {
+      const frame = await authorFrame(page, selector);
+      await frame.waitForFunction(() => innerHeight === document.body.offsetHeight);
+      const result = await frame.evaluate(() => {
+        const width = document.documentElement.clientWidth;
+        const list = document.querySelector('.list');
+        list.scrollTop = 20;
+        document.querySelector('summary').click();
+        // Force layout before the asynchronous frame resize can catch up with the open details.
+        return { width, expandedWidth: document.documentElement.clientWidth,
+          listOffset: list.scrollTop, listGutter: list.offsetWidth - list.clientWidth };
+      });
+      assert.equal(result.expandedWidth, result.width);
+      assert.equal(result.listOffset, 20);
+      assert.equal(result.listGutter, 12);
+      await frame.waitForFunction(() => innerHeight >= 360);
+    }
+    const frame = await authorFrame(page, '#reader');
+    await frame.evaluate(() => { document.body.style.height = '101000px'; });
+    await frame.waitForFunction(() => innerHeight === 100000);
+    assert.equal(await frame.evaluate(() => innerWidth - document.documentElement.clientWidth), 12);
+    // Put the outer scroller at its end. The remaining 1000px belongs to the inner document.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const rect = await page.locator('article iframe').last().boundingBox();
+    await page.mouse.move(rect.x + 20, Math.min(600, rect.y + rect.height - 20));
+    await page.mouse.wheel(0, 1500);
+    await frame.waitForFunction(() => scrollY + innerHeight >= document.documentElement.scrollHeight - 1);
+    await frame.evaluate(() => { document.body.style.height = ''; document.querySelector('summary').click(); });
+    await frame.waitForFunction(() => innerHeight < 320 && scrollY === 0);
+  } finally { await browser.close(); }
+});
+
 test('author vh layout follows the visible viewport without reloading the page', async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {

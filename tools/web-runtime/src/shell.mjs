@@ -3,6 +3,7 @@ import { tavernEvents, mvuEvents, iframeEvents, settledHistoryEvent } from './ho
 import { segmentMarkdown } from './markdown.mjs';
 import { patchChildren } from './dom-patch.mjs';
 import { applyDisplayChanges } from './displayed-message.mjs';
+import { MAX_FRAME_HEIGHT } from './resize-observer.mjs';
 
 const messagesNode = document.getElementById('messages'), actionsNode = document.getElementById('actions');
 const pending = new Map(), frames = new Map(), rows = new Map(), scriptFrames = new Map(), eventAcks = new Map();
@@ -440,7 +441,7 @@ window.addEventListener('message', async event => {
     const height = Number(data.height);
     if (Number.isFinite(height) && height > 0) {
       // 实测高度记在帧上：该段按契约重建时用它预置新 iframe，文档高度不会骤降。
-      frame.height = Math.min(height, 100000);
+      frame.height = Math.min(height, MAX_FRAME_HEIGHT);
       if (frame.element.style.height === frame.height + 'px') return;
       frame.element.style.height = frame.height + 'px';
       if (frame.revealed !== false) { if (following && !focusInFrame()) followBottom(); recordBottom(); }

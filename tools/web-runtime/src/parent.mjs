@@ -5,7 +5,7 @@ import DOMPurify from 'dompurify';
 import { observeScriptSurface } from './script-surface.mjs';
 import { patchChildren } from './dom-patch.mjs';
 import { displayedMessage } from './displayed-message.mjs';
-import { isResizeObserverNotification, observeFrameSize } from './resize-observer.mjs';
+import { isResizeObserverNotification, MAX_FRAME_HEIGHT, observeFrameSize } from './resize-observer.mjs';
 
 function main() {
   const config = JSON.parse(document.getElementById('configuration').textContent);
@@ -109,10 +109,10 @@ function main() {
     try {
       const body = page.contentDocument?.body;
       if (body) {
-        const height = Math.min(100000, Math.max(1, body.scrollHeight, body.offsetHeight)) + 'px';
+        const height = Math.min(MAX_FRAME_HEIGHT, Math.max(1, body.scrollHeight, body.offsetHeight)) + 'px';
         if (page.style.height !== height) page.style.height = height;
       }
-      const height = Math.min(100000, document.body.scrollHeight);
+      const height = Math.min(MAX_FRAME_HEIGHT, document.body.scrollHeight);
       if (height !== lastReportedHeight) {
         lastReportedHeight = height;
         send({ type: 'resize', height });
@@ -169,9 +169,16 @@ function main() {
   const libraries = config.kind === 'static' ? '' : ['jquery', 'lodash', 'vue', 'vue-router', 'libraries'].map(name => `<script src="${origin}/web/${name}.js"></script>`).join('');
   // 正文排版基线由主壳与 static 帧共用；作者文档里更靠后的样式仍然覆盖它。
   const baseline = config.kind === 'static' ? `<link rel="stylesheet" href="${origin}/web/message.css">` : '';
+  // A growing document briefly overflows before measure() runs. Android WebView may
+  // take its viewport scrollbar style from body. Leave component scrollbars alone,
+  // and restore the author's viewport scrollbar once the frame reaches its cap.
+  const autoHeightStyle = config.kind === 'script' ? '' : `@media (max-height:${MAX_FRAME_HEIGHT - 1}px){
+    :root{scrollbar-width:none!important}
+    :root::-webkit-scrollbar,:root body::-webkit-scrollbar{width:0!important}
+  }`;
   const prefix = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,interactive-widget=resizes-content">' + libraries + baseline +
     '<script>parent.PlayerFrame.install(window);</script>' +
-    `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>`;
+    `<style>html{color-scheme:light dark}:root{--player-frame-vh:${viewportHeight / 100}px}body{margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}${autoHeightStyle}</style>`;
   if (config.kind === 'script') {
     // Module strings can contain entire HTML documents. Never search the JS for a head or rewrite its CSS.
     const stopSurface = observeScriptSurface(rects => send({ type: 'script-surface', rects }));
