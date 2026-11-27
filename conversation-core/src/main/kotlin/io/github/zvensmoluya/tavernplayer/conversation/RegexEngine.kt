@@ -218,7 +218,7 @@ class CharacterRegexEngine(
                 return null
             }
             pattern = value.substring(1, closing)
-            flagsText = value.substring(closing + 1)
+            flagsText = value.substring(closing + 1).trimEnd()
         }
         val unsupported = flagsText.filterNot { it in "gimsu" }
         if (unsupported.isNotEmpty()) {

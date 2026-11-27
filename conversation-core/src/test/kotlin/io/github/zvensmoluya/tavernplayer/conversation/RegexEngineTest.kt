@@ -68,6 +68,26 @@ class RegexEngineTest {
     }
 
     @Test
+    fun `trailing whitespace on literal flags preserves separate display and prompt rules`() {
+        val rules = listOf(
+            rule("display", "/<action>(.*?)<\\/action>/gi ", "[$1]", markdownOnly = true),
+            rule("prompt", "/<action>(.*?)<\\/action>/gi ", "", promptOnly = true),
+            rule("spaces", " end ", "!", promptOnly = true),
+        )
+        val source = "<ACTION>one</ACTION><action>two</action> end tail end"
+        fun project(projection: RegexProjection): String {
+            val result = engine.apply(source, rules, RegexPlacement.AI_OUTPUT, projection,
+                context = context(), transaction = MacroTransaction())
+            assertTrue(result.diagnostics.isEmpty())
+            return result.text
+        }
+
+        assertEquals("[one][two] end tail end", project(RegexProjection.DISPLAY))
+        assertEquals("!tail end", project(RegexProjection.PROMPT))
+        assertEquals(source, project(RegexProjection.STORAGE))
+    }
+
+    @Test
     fun `javascript unicode flag does not widen ascii word classes`() {
         val result = engine.apply(
             "é",

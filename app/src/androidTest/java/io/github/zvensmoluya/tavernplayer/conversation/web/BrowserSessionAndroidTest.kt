@@ -29,22 +29,23 @@ class BrowserSessionAndroidTest {
         val graph = AppGraph(context)
         val root = File(context.cacheDir, "web-session-${UUID.randomUUID()}")
         val repository = ConversationRepository(root, graph.promptCompiler, prepareBrowser = graph.browserEnvironment::prepare)
-        val pages = """```html
+        val pages = """<div>Scene time</div>
+```html
 <body><p>Provider</p><script>
 initializeGlobal('Shared', {count:0, increment(){this.count++}});
 eventOn('shared-event', value => {Shared.increment(); value.provider=true});
 </script></body>
 ```
 
-```html
-<body><p>Consumer</p><script>
-(async()=>{await waitGlobalInitialized('Shared');
-const value={};eventEmitAndWait('shared-event',value);
-let isolated=false;try{parent.parent.document.title}catch(e){isolated=true}
-replaceVariables({count:Shared.count,provider:value.provider,same:Shared===parent.Shared,isolated});
-})().catch(error=>toastr.error(error.message));
-</script></body>
-```"""
+> ```html
+> <head><title>Consumer</title></head><script>
+> (async()=>{await waitGlobalInitialized('Shared');
+> const value={};eventEmitAndWait('shared-event',value);
+> let isolated=false;try{parent.parent.document.title}catch(e){isolated=true}
+> replaceVariables({count:Shared.count,provider:value.provider,same:Shared===parent.Shared,isolated});
+> })().catch(error=>toastr.error(error.message));
+> </script>
+> ```"""
         val saved = AtomicReference(runBlocking { repository.create(CharacterAsset("session-audit", name = "Actor", firstMessage = pages),
             Persona("p", "User"), BuiltInPresets.default) })
         val failures = java.util.concurrent.CopyOnWriteArrayList<String>()

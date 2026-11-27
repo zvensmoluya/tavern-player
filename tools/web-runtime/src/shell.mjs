@@ -144,7 +144,15 @@ const statusLabels = { STREAMING: '正在生成…', CANCELLED: '已停止', INT
 // 占位文案随状态分流，非 COMPLETE 的页面不再无限等待“回复完成后显示交互界面”。
 const waitingLabels = { CANCELLED: '已停止生成，交互界面未装载', INTERRUPTED: '生成已中断，交互界面未装载', ERROR: '生成失败，交互界面未装载' };
 const WAITING = '回复完成后显示交互界面';
-const richText = text => /<(?:style|table|div|span|form|input|img|details|section|html|body)\b/i.test(text);
+function richText(html) {
+  if (/<(?:style|table|div|span|form|input|img|details|section|html|body)\b/i.test(html)) return true;
+  if (!/\sstyle\s*=/i.test(html)) return false;
+  // Paragraphs, headings and other ordinary tags can carry author CSS too.
+  // Inspect an inert fragment so escaped markup inside a code example stays plain.
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  return template.content.querySelector('[style]') !== null;
+}
 // HTML styles never share the trusted player's document or controls.
 const SANITIZE = { ADD_TAGS: ['style'], FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base', 'meta', 'link'],
   FORBID_ATTR: ['srcdoc'] };

@@ -38,7 +38,7 @@ async function open(browser, viewport, displays, options = {}) {
       const config = frames.get(url.pathname.split('/').at(-1));
       if (!config) { await route.fulfill({ status: 404, body: '' }); return; }
       await options.beforeFrame?.(config);
-      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', JSON.stringify(config).replaceAll('<', '\\u003c'));
+      body = (await readFile('build/app-assets/web/parent.html', 'utf8')).replace('__PLAYER_CONFIGURATION__', () => JSON.stringify(config).replaceAll('<', '\\u003c'));
       type = 'text/html';
     } else {
       const name = url.pathname.split('/').at(-1);
@@ -125,6 +125,30 @@ async function watch(page) {
 const drain = page => page.evaluate(() => { const trace = window.__trace; window.__trace = []; return trace; });
 const geometry = page => page.evaluate(() => ({ h: document.documentElement.scrollHeight, y: Math.round(window.scrollY) }));
 const lowest = (values, start) => values.reduce((low, value) => Math.min(low, value), start);
+
+test('a mixed display projection mounts both pages after completion and retires them on preset change', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const raw = '<scene>Morning</scene>\n<story>Walk</story>\n<action>Garden</action>';
+    const display = ['<div id="time">Morning</div>', '```', '<head><title>Story</title></head><p id="story">Walk</p>', '```',
+      '> ```html', '> <body><button id="option">Garden</button><script>window.literal="$&"</script></body>', '> ```',
+      '', 'After the options.'].join('\n');
+    const update = (display, status) => message(raw, 0, { display, status });
+    const { page, created, set } = await open(browser, { width: 420, height: 700 }, [update(display, 'STREAMING')]);
+    await page.waitForFunction(() => document.querySelectorAll('article .runtime-loading').length === 2);
+    assert.equal(pages(created), 0);
+    await set([update(display, 'COMPLETE')]);
+    assert.equal(await (await authorFrame(page, '#time')).locator('#time').innerText(), 'Morning');
+    assert.equal(await (await authorFrame(page, '#story')).locator('#story').innerText(), 'Walk');
+    assert.equal(await (await authorFrame(page, '#option')).evaluate(() => window.literal), '$&');
+    assert.equal(pages(created), 2);
+    assert.match(await page.locator('article').innerText(), /After the options/);
+    await set([update('Walk to the garden.', 'COMPLETE')]);
+    await page.waitForFunction(() => document.querySelectorAll('article iframe').length === 1);
+    const remaining = await authorFrame(page, 'p');
+    await remaining.waitForFunction(() => document.body.textContent.includes('Walk to the garden.'));
+  } finally { await browser.close(); }
+});
 
 test('streaming rich updates keep the document height and a bottom reader in place', async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -311,6 +335,22 @@ test('a static frame keeps the shell prose baseline while author styles still wi
     // page 帧是作者自己的页面：只拿作者样式，不拿主壳的正文排版基线。
     const pageFrame = await authorFrame(page, '#author-page');
     assert.equal(await pageFrame.locator('link[href$="message.css"]').count(), 0);
+  } finally { await browser.close(); }
+});
+
+test('inline CSS on ordinary tags renders in the static frame while literal examples stay in the shell', async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  try {
+    const styled = '<p style="color:rgb(12,34,56)">Story</p>\n\n<h2 STYLE="font-size:27px">Choices</h2>';
+    const literal = 'Example: `<p style="color:red">Text</p>`';
+    const { page, created } = await open(browser, { width: 420, height: 700 }, [message(styled, 0), message(literal, 1)]);
+    const frame = await authorFrame(page, 'h2');
+    assert.deepEqual(await frame.evaluate(() => [
+      getComputedStyle(document.querySelector('p')).color, getComputedStyle(document.querySelector('h2')).fontSize,
+      typeof getVariables,
+    ]), ['rgb(12, 34, 56)', '27px', 'undefined']);
+    assert.equal(created.filter(item => item.kind === 'static').length, 1);
+    assert.equal(await page.locator('article').nth(1).locator('code').textContent(), '<p style="color:red">Text</p>');
   } finally { await browser.close(); }
 });
 

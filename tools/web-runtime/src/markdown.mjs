@@ -1,18 +1,12 @@
-import { Marked, Tokenizer } from 'marked';
-import { isHTMLTag, isMathMLTag, isSVGTag } from '@vue/shared';
+import showdown from 'showdown';
+import { parseFragment, serializeOuter } from 'parse5';
 
-// An author marker on its own line can immediately precede a fenced message page.
-// End just that HTML token so Marked can lex the fence normally, including its closing delimiter.
-const markerBeforeFence = /^ {0,3}<([a-z][\w-]*)\b[^<>\n]*>[ \t]*\n(?= {0,3}(?:`{3,}|~{3,}))/i;
-const marked = new Marked({ tokenizer: {
-  html(source) {
-    const marker = markerBeforeFence.exec(source);
-    if (!marker) return false;
-    const name = marker[1].toLowerCase();
-    if (isHTMLTag(name) || isSVGTag(marker[1]) || isMathMLTag(name) || ['plaintext', 'xmp'].includes(name)) return false;
-    return Tokenizer.prototype.html.call(this, marker[0]) ?? false;
-  },
-} });
+// Match the Markdown dialect used to format ST messages before Tavern Helper inspects them.
+const converter = new showdown.Converter({
+  emoji: true, literalMidWordUnderscores: true, parseImgDimensions: true, tables: true,
+  underline: true, simpleLineBreaks: true, strikethrough: true, disableForced4SpacesIndentedSublists: true,
+  omitExtraWLInCodeBlocks: true,
+});
 
 // Keep unfinished tags, quoted attributes and raw CSS/script bodies out of the preview.
 // Ordinary HTML text can still grow inside open elements. Markdown code stays literal.
@@ -53,39 +47,111 @@ export function completeHtmlPrefix(text) {
   return text;
 }
 
-function closedFence(token) {
-  const opening = /^ {0,3}(`{3,}|~{3,})[^\n]*\n/.exec(token.raw);
-  if (!opening) return false;
-  const fence = opening[1];
-  return new RegExp('(?:^|\\n) {0,3}' + fence[0] + '{' + fence.length + ',}[ \\t]*(?:\\n)?$').test(token.raw.slice(opening[0].length));
+// A streaming message can end part way through a fence. Showdown needs the closing
+// delimiter to produce a code block. Complete the preview copy or hold a possible page.
+function prepareMarkdown(text, incomplete) {
+  const lines = /^([ \t]*(?:>[ \t]*)*)(?:([-+*]|\d+[.)])[ \t]+)?(`{3,}|~{3,})([^\n]*)$/gm;
+  let open, match, lastClosed = 0;
+  while ((match = lines.exec(text))) {
+    const [, indent, item, fence, info] = match;
+    if (open) {
+      if (fence[0] === open.fence[0] && fence.length >= open.fence.length && !info.trim()) {
+        open = null;
+        lastClosed = lines.lastIndex;
+      }
+    } else if (!info.includes(fence[0]) && (indent.includes('>') || indent.length < 4 || item)) {
+      open = { index: match.index, fence, prefix: indent + (item ? ' '.repeat(item.length + 1) : ''),
+        language: info.trim().toLowerCase(), start: lines.lastIndex };
+    }
+  }
+  if (open) {
+    const { language, start, index, prefix, fence } = open;
+    const content = text.slice(start).replace(/^\s*(?:>\s*)*/, '');
+    const possible = (language && 'html'.startsWith(language)) ||
+      ((!language || 'text'.startsWith(language)) && (!content || content.startsWith('<')));
+    if (incomplete && possible) return { text: text.slice(0, index), pending: true };
+    return { text: text + '\n' + prefix + fence };
+  }
+  if (!incomplete) return { text };
+  const tail = text.slice(lastClosed).replace(/(?:^|\n)[ \t>]*(?:`{1,2}|~{1,2})$/, '');
+  return { text: text.slice(0, lastClosed) + completeHtmlPrefix(tail) };
+}
+
+// Walk an inert HTML tree. Only text in a displayed pre is a page candidate.
+// Literal examples and the contents of discarded or foreign elements stay inert.
+const opaque = new Set(['code', 'script', 'style', 'textarea', 'template', 'iframe', 'object', 'embed',
+  'noscript', 'noembed', 'noframes', 'plaintext', 'xmp', 'select', 'title', 'head', 'audio', 'video']);
+const htmlNamespace = 'http://www.w3.org/1999/xhtml';
+
+// Syntax highlighters may wrap individual tokens in spans inside the code block.
+function codeText(parent) {
+  let text = '';
+  for (const child of parent.childNodes) {
+    if (child.nodeName === '#text') text += child.value;
+    else if (child.nodeName !== '#comment') {
+      if (child.namespaceURI !== htmlNamespace || child.tagName === 'pre' ||
+          (child.tagName !== 'code' && opaque.has(child.tagName))) return null;
+      const nested = codeText(child);
+      if (nested === null) return null;
+      text += nested;
+    }
+  }
+  return text;
+}
+
+function pageSource(pre) {
+  const text = codeText(pre);
+  if (!text || !/(?:html>|<head>|<body\b)/i.test(text)) return null;
+  const code = pre.childNodes.find(child => child.tagName === 'code') ?? pre;
+  const classes = code.attrs.find(attr => attr.name === 'class')?.value ?? '';
+  if (/\blanguage-(md|markdown)\b/i.test(classes) && /^ {0,3}(?:`{3,}|~{3,})/m.test(text)) return null;
+  return text;
+}
+
+function splitPages(parent) {
+  const parts = [];
+  let normal = [];
+  function flush() {
+    if (normal.some(node => node.nodeName !== '#text' || node.value.trim())) parts.push({ nodes: normal });
+    normal = [];
+  }
+  for (const node of parent.childNodes) {
+    if (node.tagName === 'pre') {
+      const source = pageSource(node);
+      if (source !== null) {
+        flush();
+        parts.push({ kind: 'page', text: source });
+        continue;
+      }
+    } else if (node.childNodes?.length && node.namespaceURI === htmlNamespace && !opaque.has(node.tagName)) {
+      const nested = splitPages(node);
+      if (nested) {
+        for (const part of nested) {
+          if (part.nodes) normal.push({ ...node, childNodes: part.nodes });
+          else { flush(); parts.push(part); }
+        }
+        continue;
+      }
+    }
+    normal.push(node);
+  }
+  if (!parts.length) return null;
+  flush();
+  return parts;
 }
 
 export function segmentMarkdown(text, incomplete = false) {
-  const result = [], tokens = marked.lexer(text); let normal = [];
-  const flush = () => {
-    if (normal.length) { normal.links = tokens.links; result.push({ kind: 'normal', text: marked.parser(normal) }); normal = []; }
-  };
-  for (const token of tokens) {
-    if (token.type === 'code') {
-      const lang = token.lang?.toLowerCase() ?? '';
-      if (token.codeBlockStyle === 'indented' || (['markdown', 'md'].includes(lang) && /^ {0,3}(?:`{3,}|~{3,})/m.test(token.text))) {
-        normal.push(token); continue;
-      }
-      if (/<body(?:\s[^>]*)?>/i.test(token.text) && (/<\/body\s*>/i.test(token.text) || lang === 'html')) {
-        flush(); result.push({ kind: 'page', text: token.text }); continue;
-      }
-      const possiblePage = ['h', 'ht', 'htm', 'html'].includes(lang) || (!lang && /^\s*(?:<|$)/.test(token.text))
-        || ('text'.startsWith(lang) && !token.text.trim()) || (lang === 'text' && /^\s*</.test(token.text));
-      if (incomplete && possiblePage && !closedFence(token)) {
-        flush(); result.push({ kind: 'pending', text: '' }); continue;
-      }
-      normal.push(token); continue;
+  const prepared = prepareMarkdown(text.replace(/\r\n?/g, '\n'), incomplete);
+  const html = converter.makeHtml(prepared.text);
+  const parts = /<pre\b/i.test(html) ? splitPages(parseFragment(html)) : null;
+  const result = [];
+  if (parts) {
+    for (const part of parts) {
+      result.push(part.nodes ? { kind: 'normal', text: part.nodes.map(node => serializeOuter(node)).join('') } : part);
     }
-    let safe = incomplete ? completeHtmlPrefix(token.raw) : token.raw;
-    // A fence marker can itself span provider chunks. Do not flash one or two backticks.
-    if (incomplete) safe = safe.replace(/(?:^|\n) {0,3}(?:`{1,2}|~{1,2})$/, '');
-    normal.push(...(safe === token.raw ? [token] : marked.lexer(safe)));
-    if (safe !== token.raw) break;
+  } else if (html) {
+    result.push({ kind: 'normal', text: html });
   }
-  flush(); return result;
+  if (prepared.pending) result.push({ kind: 'pending', text: '' });
+  return result;
 }
