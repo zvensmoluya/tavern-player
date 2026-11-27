@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +17,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -30,11 +34,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,6 +64,8 @@ import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationSettings
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationTrigger
 import io.github.zvensmoluya.tavernplayer.content.PresetPromptDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexDefinition
+import io.github.zvensmoluya.tavernplayer.content.RegexPlacement
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -154,7 +167,7 @@ fun PresetScreen(
     if (draft == null) {
         PresetCenter(state, actions)
     } else {
-        PresetEditor(state, draft, actions)
+        key(draft.id) { PresetEditor(state, draft, actions) }
     }
 }
 
@@ -256,9 +269,14 @@ private fun PresetEditor(
     preset: PresetAsset,
     actions: PresetScreenActions,
 ) {
-    var page by remember(preset.id) { mutableStateOf(PresetEditorPage.MAIN) }
-    var promptDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
-    var regexDetailId by remember(preset.id) { mutableStateOf<String?>(null) }
+    val mainListState = rememberLazyListState()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(state.message) {
+        state.message?.let { snackbar.showSnackbar(it) }
+    }
+    var page by rememberSaveable { mutableStateOf(PresetEditorPage.MAIN) }
+    var promptDetailId by rememberSaveable { mutableStateOf<String?>(null) }
+    var regexDetailId by rememberSaveable { mutableStateOf<String?>(null) }
     var leaveConfirmation by remember(preset.id) { mutableStateOf(false) }
     var deleteConfirmation by remember(preset.id) { mutableStateOf(false) }
     var restoreConfirmation by remember(preset.id) { mutableStateOf(false) }
@@ -290,7 +308,7 @@ private fun PresetEditor(
         regexDetailId != null -> {
             val regex = preset.regexScripts.firstOrNull { it.id == regexDetailId }
             if (regex != null) {
-                RegexDetailPage(regex.name, regex.findRegex, regex.replaceString) { regexDetailId = null }
+                RegexDetailPage(regex) { regexDetailId = null }
             } else {
                 regexDetailId = null
             }
@@ -308,6 +326,8 @@ private fun PresetEditor(
             onBack = { page = PresetEditorPage.MAIN },
         )
         else -> PresetMainEditor(
+            listState = mainListState,
+            snackbar = snackbar,
             state = state,
             preset = preset,
             editable = editable,
@@ -412,6 +432,8 @@ private enum class PresetEditorPage {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PresetMainEditor(
+    listState: LazyListState,
+    snackbar: SnackbarHostState,
     state: PresetUiState,
     preset: PresetAsset,
     editable: Boolean,
@@ -433,6 +455,7 @@ private fun PresetMainEditor(
         preset.generationSettings::isEnabled,
     )
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
@@ -460,17 +483,17 @@ private fun PresetMainEditor(
         },
     ) { padding ->
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().padding(padding).testTag("presetEditor"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            state.message?.let { item("message") { StatusText(it) } }
             item("identity") {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("快速设置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
-                            "开关决定哪些普通 Prompt 和 Regex 参与生成。内容编辑收在每一项的详情里。",
+                            "点开关启用或停用，点名称查看详情。",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -485,8 +508,12 @@ private fun PresetMainEditor(
             }
             items(quickPrompts, key = { "quick-${it.identifier}" }) { prompt ->
                 val enabled = preset.promptOrder.firstOrNull { it.identifier == prompt.identifier }?.enabled == true
-                PromptQuickSetting(
-                    prompt = prompt,
+                QuickSetting(
+                    rowTag = "quick-prompt-${prompt.identifier}",
+                    switchTag = "prompt-enabled-${prompt.identifier}",
+                    detailsTag = "prompt-details-${prompt.identifier}",
+                    name = prompt.name,
+                    summary = remember(prompt.content) { prompt.content.quickSummary() },
                     enabled = enabled,
                     editable = editable,
                     onEnabledChange = { actions.setPromptEnabled(prompt.identifier, it) },
@@ -503,9 +530,12 @@ private fun PresetMainEditor(
             }
             if (preset.regexScripts.isEmpty()) item("regex-empty") { StatusText("没有 Preset Regex") }
             items(preset.regexScripts, key = { "regex-${it.id}" }) { regex ->
-                RegexQuickSetting(
+                QuickSetting(
+                    rowTag = "regex-${regex.id}",
+                    switchTag = "regex-enabled-${regex.id}",
+                    detailsTag = "regex-details-${regex.id}",
                     name = regex.name,
-                    id = regex.id,
+                    summary = regex.scopeDescription(),
                     enabled = !regex.disabled,
                     editable = editable,
                     onEnabledChange = { actions.updateRegexEnabled(regex.id, it) },
@@ -551,69 +581,58 @@ private fun PresetMainEditor(
 }
 
 @Composable
-private fun PromptQuickSetting(
-    prompt: PresetPromptDefinition,
+private fun QuickSetting(
+    rowTag: String,
+    switchTag: String,
+    detailsTag: String,
+    name: String,
+    summary: String,
     enabled: Boolean,
     editable: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     onOpenDetails: () -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth().testTag("quick-prompt-${prompt.identifier}")) {
+    Card(Modifier.fillMaxWidth().testTag(rowTag)) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Switch(
-                modifier = Modifier.testTag("prompt-enabled-${prompt.identifier}"),
+                modifier = Modifier.testTag(switchTag).semantics { contentDescription = name },
                 checked = enabled,
                 enabled = editable,
                 onCheckedChange = onEnabledChange,
             )
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(prompt.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    prompt.content.quickSummary(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Row(
+                modifier = Modifier.weight(1f).testTag(detailsTag)
+                    .clickable(onClickLabel = "查看详情", onClick = onOpenDetails)
+                    .heightIn(min = 48.dp).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(name, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text("详情", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
             }
-            TextButton(
-                modifier = Modifier.testTag("prompt-details-${prompt.identifier}"),
-                onClick = onOpenDetails,
-            ) { Text("详情") }
         }
     }
 }
 
-@Composable
-private fun RegexQuickSetting(
-    name: String,
-    id: String,
-    enabled: Boolean,
-    editable: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    onOpenDetails: () -> Unit,
-) {
-    Card(Modifier.fillMaxWidth().testTag("regex-$id")) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Switch(
-                modifier = Modifier.testTag("regex-enabled-$id"),
-                checked = enabled,
-                enabled = editable,
-                onCheckedChange = onEnabledChange,
-            )
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Preset Regex", style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = onOpenDetails) { Text("查看") }
-        }
-    }
+private fun RegexDefinition.scopeDescription(): String = when {
+    placements.isEmpty() -> "未指定处理位置"
+    findRegex.isBlank() -> "未设置匹配规则"
+    markdownOnly && promptOnly -> "聊天显示和发给模型时处理"
+    markdownOnly -> "聊天显示时处理"
+    promptOnly -> "发给模型时处理"
+    else -> "保存文本时处理"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -722,34 +741,84 @@ private fun PromptDetailPage(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RegexDetailPage(
-    name: String,
-    findRegex: String,
-    replaceString: String,
-    onBack: () -> Unit,
-) {
+private fun RegexDetailPage(regex: RegexDefinition, onBack: () -> Unit) {
+    var showMatch by rememberSaveable { mutableStateOf(false) }
+    var showReplacement by rememberSaveable { mutableStateOf(false) }
+    val matchBlocks = if (showMatch) remember(regex.findRegex) { regex.findRegex.sourceBlocks() } else emptyList()
+    val replacementBlocks = if (showReplacement) {
+        remember(regex.replaceString) { regex.replaceString.sourceBlocks() }
+    } else emptyList()
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text("文本处理详情") },
                 navigationIcon = { TextButton(onClick = onBack) { Text("返回") } },
             )
         },
     ) { padding ->
-        Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("regexDetail"),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            StatusText("Regex 内容只读；开关位于快速设置。")
-            Text("匹配", style = MaterialTheme.typography.labelLarge)
-            Text(findRegex, style = MaterialTheme.typography.bodySmall)
-            Text("替换", style = MaterialTheme.typography.labelLarge)
-            Text(replaceString, style = MaterialTheme.typography.bodySmall)
-            TextButton(modifier = Modifier.fillMaxWidth(), onClick = onBack) { Text("完成") }
-            Spacer(Modifier.height(12.dp))
+            item("overview") {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(regex.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(regex.scopeDescription())
+                    if (regex.placements.isNotEmpty()) {
+                        StatusText(regex.placements.sortedBy { it.wireValue }.joinToString("、") {
+                            when (it) {
+                                RegexPlacement.USER_INPUT -> "用户输入"
+                                RegexPlacement.AI_OUTPUT -> "模型回复"
+                                RegexPlacement.MARKDOWN_DISPLAY -> "Markdown 显示"
+                                RegexPlacement.SLASH_COMMAND -> "斜杠命令"
+                                RegexPlacement.WORLD_INFO -> "世界书"
+                                RegexPlacement.REASONING -> "推理文本"
+                            }
+                        })
+                    }
+                }
+            }
+            item("match") {
+                TextButton(onClick = { showMatch = !showMatch }) {
+                    Text(if (showMatch) "收起匹配规则" else "查看匹配规则")
+                }
+            }
+            items(matchBlocks.size, key = { "match-$it" }) { Text(matchBlocks[it], style = MaterialTheme.typography.bodySmall) }
+            item("replacement") {
+                if (regex.replaceString.isEmpty()) {
+                    StatusText("替换为空，移除匹配内容")
+                } else {
+                    TextButton(onClick = { showReplacement = !showReplacement }) {
+                        Text(if (showReplacement) "收起替换内容" else "查看替换内容")
+                    }
+                }
+            }
+            items(replacementBlocks.size, key = { "replacement-$it" }) {
+                Text(replacementBlocks[it], style = MaterialTheme.typography.bodySmall)
+            }
+            item("done") {
+                TextButton(modifier = Modifier.fillMaxWidth(), onClick = onBack) { Text("完成") }
+            }
         }
     }
+}
+
+// Bound each text layout for both minified HTML and sources with many short lines.
+private fun String.sourceBlocks(): List<String> = buildList {
+    var start = 0
+    var lines = 0
+    for (index in this@sourceBlocks.indices) {
+        val char = this@sourceBlocks[index]
+        if (char == '\n') lines++
+        val length = index - start + 1
+        if (lines >= 32 || (length >= 1024 && char == '\n') || (length >= 2048 && !char.isHighSurrogate())) {
+            add(substring(start, index + 1))
+            start = index + 1
+            lines = 0
+        }
+    }
+    if (start < this@sourceBlocks.length) add(substring(start))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -64,6 +65,7 @@ class PresetScreenTest {
                 activePresetId = "custom",
                 selectedPresetId = "custom",
                 draft = editablePreset(),
+                message = "已导入 Custom",
             ),
         )
         var saved: PresetAsset? = null
@@ -86,6 +88,7 @@ class PresetScreenTest {
                                     },
                                 ),
                                 dirty = true,
+                                message = null,
                             )
                         },
                         updateRegexEnabled = { id, enabled ->
@@ -118,14 +121,19 @@ class PresetScreenTest {
         }
 
         compose.onNodeWithTag("savePreset").assertIsNotEnabled()
+        compose.onNodeWithText("已导入 Custom").assertIsDisplayed()
+        val firstSwitchY = topOf("prompt-enabled-main")
         compose.onNodeWithTag("prompt-enabled-main").performClick()
+        assertEquals(firstSwitchY, topOf("prompt-enabled-main"), 0f)
         assertFalse(state.draft!!.promptOrder.single { it.identifier == "main" }.enabled)
 
         compose.onNodeWithTag("presetEditor").performScrollToNode(hasTestTag("openPresetAdvanced"))
+        val advancedY = topOf("openPresetAdvanced")
         compose.onNodeWithTag("openPresetAdvanced").performClick()
         compose.onNodeWithTag("presetName").performTextReplacement("Edited")
         compose.onNodeWithTag("presetAdvancedSheet").performScrollToNode(hasTestTag("closePresetAdvanced"))
         compose.onNodeWithTag("closePresetAdvanced").performClick()
+        assertEquals(advancedY, topOf("openPresetAdvanced"), 0f)
         compose.onNodeWithTag("savePreset").assertIsEnabled()
 
         compose.onNodeWithTag("presetEditor").performScrollToNode(hasTestTag("prompt-details-main"))
@@ -176,6 +184,7 @@ class PresetScreenTest {
         }
 
         compose.onNodeWithTag("presetEditor").performScrollToNode(hasTestTag("openRequestParameters"))
+        val entryY = topOf("openRequestParameters")
         compose.onNodeWithTag("openRequestParameters").performClick()
         compose.onNodeWithTag("requestParameterSheet")
             .performScrollToNode(hasTestTag("parameter-enabled-output_limit"))
@@ -183,7 +192,40 @@ class PresetScreenTest {
 
         assertFalse(state.draft!!.generationSettings.isEnabled(PresetGenerationParameter.OUTPUT_LIMIT))
         compose.onNodeWithText("已关闭 · 保留值 32768").assertIsDisplayed()
+        compose.onNodeWithText("返回").performClick()
+        assertEquals(entryY, topOf("openRequestParameters"), 0f)
     }
+
+    @Test
+    fun `long rule opens from its name and returns to the same list position`() {
+        val base = editablePreset()
+        val rule = base.regexScripts.single().copy(replaceString = "<p>output</p>".repeat(9000) + "TAIL")
+        val preset = base.copy(regexScripts = listOf(rule))
+        compose.setContent {
+            TavernPlayerTheme {
+                PresetScreen(
+                    PresetUiState(draft = preset),
+                    PresetScreenActions(updateRegexEnabled = { _, _ -> error("Opening details toggled the rule") }),
+                )
+            }
+        }
+
+        compose.onNodeWithTag("presetEditor").performScrollToKey("regex-display")
+        val entryY = topOf("regex-details-display")
+        compose.onNodeWithText("Display", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("聊天显示时处理").assertIsDisplayed()
+        compose.onNodeWithText("模型回复").assertIsDisplayed()
+        compose.onNodeWithText("TAIL", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("查看替换内容").performClick()
+        val detail = compose.onNodeWithTag("regexDetail")
+        detail.performScrollToKey("done")
+        compose.onNodeWithText("TAIL", substring = true).assertExists()
+        compose.onNodeWithText("完成").assertIsDisplayed().performClick()
+        assertEquals(entryY, topOf("regex-details-display"), 0f)
+    }
+
+    private fun topOf(tag: String): Float =
+        compose.onNodeWithTag(tag).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
 
     @Test
     fun `dirty editor confirms before returning`() {
