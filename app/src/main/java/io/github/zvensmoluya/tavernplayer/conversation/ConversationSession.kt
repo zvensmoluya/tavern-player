@@ -66,6 +66,8 @@ data class ChatMessageState(
     val displayContent: String = message.content,
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
     val edited: Boolean = false,
+    val hidden: Boolean = false,
+    val displayChanges: Map<String, String> = emptyMap(),
 )
 
 
@@ -1902,6 +1904,8 @@ private fun ConversationRecord.toUiState(
             variantIndex = turn.selectedVariantIndex,
             variantCount = turn.variants.size,
             edited = variant.edited,
+            hidden = variant.browserHidden,
+            displayChanges = variant.browserDisplayChanges,
         )
     },
     input = input,

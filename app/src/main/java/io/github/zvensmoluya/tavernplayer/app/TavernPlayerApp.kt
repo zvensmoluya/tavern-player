@@ -163,6 +163,7 @@ fun TavernPlayerApp(
                     }
                     AppSurface.CHAT -> OpenedConversation(
                         conversationId = requireNotNull(activeConversationId),
+                        summary = libraryState.conversations.firstOrNull { it.id == activeConversationId },
                         viewModel = chatViewModel(),
                         presetViewModel = presetViewModel,
                         showChatAvatars = libraryState.showChatAvatars,
@@ -233,6 +234,7 @@ internal fun selectAppSurface(
 @Composable
 private fun OpenedConversation(
     conversationId: String,
+    summary: io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary?,
     viewModel: ChatViewModel,
     presetViewModel: () -> PresetViewModel,
     showChatAvatars: Boolean,
@@ -250,6 +252,7 @@ private fun OpenedConversation(
     }
     if (state.conversationId == conversationId && !state.loadingConversation) {
         ChatRoute(viewModel, presetViewModel(),
+            conversationTitle = summary?.displayTitle(state.character.name) ?: state.character.name,
             onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets, onRename = onRename,
             onOpenGlobalWorldBooks = onOpenGlobalWorldBooks, showChatAvatars = showChatAvatars)
     } else {

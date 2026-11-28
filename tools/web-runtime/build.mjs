@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 
 const output = 'build/app-assets/web';
 await mkdir(output, { recursive: true });
+await build({ entryPoints: ['src/reading.mjs'], bundle: true, format: 'iife', globalName: 'Reading',
+  outfile: 'build/app-assets/reading.js', target: 'es2020', legalComments: 'eof' });
 for (const name of ['shell', 'parent', 'programs']) {
   await build({ entryPoints: [`src/${name}.mjs`], bundle: true, format: 'iife',
     globalName: name === 'programs' ? 'PlayerPrograms' : undefined,

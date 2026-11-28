@@ -45,6 +45,7 @@ The complicated parts can stay underneath. They don't all need to become setting
 | **Explore their worlds** | Read character definitions, creator notes, and world books. Prepare character images for offline viewing. Import, edit, enable, and export global world books independently. |
 | **Step in as yourself** | Set your name, description, and avatar. New conversations capture that identity; each character can have multiple independent conversations. |
 | **Find a conversation again** | Early player messages supply the conversation title. Tap the pencil in the list to pick another line you wrote or enter a name. |
+| **Read a conversation as a book** | Preview the whole conversation or a continuous excerpt, open it in an EPUB reader, save a local ebook, or copy the selected passage. |
 | **Choose how replies read** | Use the built-in default or import an ST OpenAI / Chat Completion Preset. Adjust, restore, save copies, and export without losing imported fields. Connect services using supported OpenAI, Anthropic, and Gemini protocols. |
 | **Experience authored interactions** | A native input bar accompanies a web message surface. Author HTML/JS runs within declared host capabilities, with compilation-free MVU/EJS preparation. |
 | **Keep the conversation going** | Choose greetings, regenerate replies, switch variants, and edit history. Character snapshots and runtime state persist across process restarts. |

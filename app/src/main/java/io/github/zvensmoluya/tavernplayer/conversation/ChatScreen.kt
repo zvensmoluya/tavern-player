@@ -78,11 +78,13 @@ fun ChatRoute(
     onOpenGlobalWorldBooks: () -> Unit = {},
     showChatAvatars: Boolean = false,
     onRename: () -> Unit = {},
+    conversationTitle: String? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val presetState by presetViewModel.uiState.collectAsState()
     ChatScreen(
         state = state,
+        conversationTitle = conversationTitle ?: state.character.name,
         presets = presetState.presets,
         showChatAvatars = showChatAvatars,
         browserEnvironment = viewModel.browserEnvironment,
@@ -154,12 +156,14 @@ fun ChatScreen(
     // 底部条自己让开系统栏与键盘，Scaffold 便以它的高度把消息区压到键盘之上；测试可注入固定值断言这一点。
     bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
     showChatAvatars: Boolean = false,
+    conversationTitle: String = state.character.name,
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     BackHandler { if (!state.busy) actions.back() }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember(state.conversationId) { mutableStateOf(false) }
     var moreMenu by remember(state.conversationId) { mutableStateOf(false) }
+    var readingPreview by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var preparingResources by remember(state.conversationId, browserEnvironment, state.readOnlyReason) { mutableStateOf(false) }
     var worldBookMenu by remember { mutableStateOf(false) }
     var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
@@ -215,6 +219,8 @@ fun ChatScreen(
                             if (state.conversationId != null) {
                                 DropdownMenuItem(text = { Text("更换对话名") },
                                     onClick = { moreMenu = false; actions.rename() })
+                                DropdownMenuItem(text = { Text("导出阅读稿") }, enabled = !state.loadingConversation && state.messages.isNotEmpty(),
+                                    onClick = { moreMenu = false; readingPreview = true })
                             }
                             if (state.lastTrace != null) {
                                 DropdownMenuItem(text = { Text("上下文") }, modifier = Modifier.testTag("openTrace"),
@@ -258,6 +264,10 @@ fun ChatScreen(
                 "next" -> actions.nextVariant()
                 "regenerate" -> actions.regenerate()
             } }, modifier = Modifier.fillMaxSize().padding(padding).testTag("webMessageArea"))
+    }
+    if (readingPreview) {
+        io.github.zvensmoluya.tavernplayer.conversation.reading.ReadingExportDialog(
+            conversationTitle, state.character.name, state.messages, onClose = { readingPreview = false })
     }
     if (editingMessageId != null && pendingMessageEdit == null) {
         state.messages.firstOrNull { it.message.id == editingMessageId }?.let { target ->

@@ -11,6 +11,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TavernPlayer"
         android:usesCleartextTraffic="true">
+        <provider android:name=".conversation.reading.ReadingFileProvider"
+            android:authorities="${applicationId}.reading" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/reading_paths" />
+        </provider>
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode_ui" />
