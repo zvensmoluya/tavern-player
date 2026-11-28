@@ -69,6 +69,22 @@ class RoomConversationRepositoryTest {
         }
     }
 
+    @Test fun `branch naming follows its floor when a card changes shared history`() = runBlocking {
+        ConversationRepository(folder.newFolder(), compiler).use { repo ->
+            val root = create(repo)
+            val parent = repo.save(root.copy(turns = root.turns + playerReply("choice", "我推开门")), root)
+            val copied = listOf(playerReply("intro", "很久以前"), playerReply("anchor", "我推开门"))
+            val child = repo.fork(parent, parent.copy(id = "child", turns = copied), 1, false, "我推开门")
+            val before = playerReply("inserted", "昨天的事情")
+            val expanded = repo.save(child.copy(turns = listOf(before) + copied), child)
+            assertNull(repo.store.dao.summary(child.id)!!.title)
+            assertTrue(repo.titleSuggestions(child.id).isEmpty())
+            val changed = repo.save(expanded.copy(turns = expanded.turns.dropLast(1) + playerReply("new", "我转身离开")), expanded)
+            assertEquals("我转身离开", repo.store.dao.summary(changed.id)!!.title)
+            assertEquals(listOf("我转身离开"), repo.titleSuggestions(changed.id))
+        }
+    }
+
     @Test fun `version one histories gain numbers and titles without rewriting messages`() = runBlocking {
         val root = folder.newFolder()
         val (old, empty) = ConversationRepository(root, compiler).use { repo ->
@@ -77,9 +93,11 @@ class RoomConversationRepositoryTest {
                 playerReply("choice", "别开门")), first)
             saved to create(repo)
         }
-        // Reproduce the v1 file by removing the only two columns introduced in v2.
+        // Reproduce the v1 summary schema before running both migrations.
         android.database.sqlite.SQLiteDatabase.openDatabase(File(root, "tavern/conversation.db").path, null,
             android.database.sqlite.SQLiteDatabase.OPEN_READWRITE).use { db ->
+            for (field in listOf("rootId", "parentId", "parentTurnId", "localTurnId", "temporaryTitle", "rewritten", "titleStart"))
+                db.execSQL("ALTER TABLE conversation_summary DROP COLUMN $field")
             db.execSQL("ALTER TABLE conversation_summary DROP COLUMN title")
             db.execSQL("ALTER TABLE conversation_summary DROP COLUMN number")
             db.version = 1

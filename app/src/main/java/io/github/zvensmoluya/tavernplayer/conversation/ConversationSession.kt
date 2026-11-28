@@ -45,7 +45,7 @@ enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTE
 
 enum class GenerationPhase { IDLE, ACTIVE, STOPPING, FINISHING }
 
-enum class MessageEditMode { TEXT_ONLY, RESTART }
+enum class MessageEditMode { TEXT_ONLY, BRANCH }
 
 data class AssistantGenerationMetadata(
     val presetId: String,
@@ -66,6 +66,7 @@ data class ChatMessageState(
     val displayContent: String = message.content,
     val displayReasoning: List<String> = message.reasoning.map(ReasoningBlock::text),
     val edited: Boolean = false,
+    val turnId: String = message.id,
     val hidden: Boolean = false,
     val displayChanges: Map<String, String> = emptyMap(),
 )
@@ -240,7 +241,7 @@ class ConversationSession(
                 displayCache.clear(); displayReasoningCache.clear()
                 storageFailure = null
                 _uiState.update { it.copy(storageFailed = false, readOnlyReason = opened.readOnlyReason) }
-                syncRecord(message = null, trace = null)
+                syncRecord(retryAvailable = record.turns.lastOrNull()?.role == MessageRole.USER, message = null, trace = null)
                 if (opened.readOnlyReason == null) refreshDisplayCache()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -475,9 +476,49 @@ class ConversationSession(
         }
     }
 
-    fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
+    fun branchFromMessage(messageId: String, onOpened: (String) -> Unit) {
+        if (waitForEra { branchFromMessage(messageId, onOpened) }) return
+        val index = record.turns.indexOfFirst { it.selected.message.id == messageId }
+        val selected = record.turns.getOrNull(index)?.selected ?: return
+        if (selected.status == PersistedMessageStatus.STREAMING || selected.message.role == MessageRole.SYSTEM) return
+        launchChatOperation(generates = false) {
+            openBranch(idGenerator(), index, null, onOpened)
+            refreshDisplayCache()
+        }
+    }
+
+    private suspend fun openBranch(childId: String, index: Int, replacement: MessageVariant?, onOpened: (String) -> Unit) =
+        withContext(NonCancellable) {
+            persistNow()
+            val parent = record
+            val turns = parent.turns.take(index + 1).mapIndexed { position, turn ->
+                val v = if (position == index) replacement ?: turn.selected else turn.selected
+                val copy = v.copy(id = idGenerator(), message = v.message.copy(id = idGenerator()),
+                    nativeOperations = v.nativeOperations.map { it.copy(id = idGenerator()) })
+                ConversationTurn(idGenerator(), turn.role, listOf(copy))
+            }
+            val head = replacement?.runtimeStateAfter ?: if (index == parent.turns.lastIndex) parent.runtimeState
+                else parent.turns[index].selected.nativeHead() ?: parent.turns[index + 1].selected.runtimeStateBefore
+                    ?: turns.asReversed().firstNotNullOfOrNull { it.selected.nativeHead() } ?: ConversationRuntimeState()
+            val timestamp = now()
+            val child = parent.copy(id = childId, turns = turns, runtimeState = head, draft = "", choiceDraft = null,
+                nativeDraftOrigin = null, draftSeq = 0, commitRevision = 0,
+                createdAtEpochMillis = timestamp, updatedAtEpochMillis = timestamp)
+            val excerpt = replacement?.message?.content ?: displayCache[parent.turns[index].selected.message.id]
+                ?: turns.last().selected.message.content
+            record = conversationRepository?.fork(parent, child, index, replacement != null, excerpt) ?: child
+            persistedRecord = record
+            epoch++
+            savedEraSelection.value = null
+            displayCache.clear()
+            displayReasoningCache.clear()
+            syncRecord(retryAvailable = turns.last().role == MessageRole.USER, message = null, trace = null)
+            onOpened(childId)
+        }
+
+    fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode, onOpened: (String) -> Unit = {}) {
         val state = _uiState.value
-        if (sourceText.isBlank() || waitForEra { editMessage(messageId, sourceText, mode) }) return
+        if (sourceText.isBlank() || waitForEra { editMessage(messageId, sourceText, mode, onOpened) }) return
         val turnIndex = record.turns.indexOfFirst { it.selected.message.id == messageId }
         if (turnIndex < 0) return
         val turn = record.turns[turnIndex]
@@ -485,8 +526,9 @@ class ConversationSession(
         if (selected.status == PersistedMessageStatus.STREAMING || turn.role == MessageRole.SYSTEM) return
         val capturedPreset = presetSource.captureActive()
         val connection = state.selectedConnection
-        val shouldGenerate = mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection != null
+        val shouldGenerate = mode == MessageEditMode.BRANCH && turn.role == MessageRole.USER && connection != null
         launchChatOperation(generates = shouldGenerate) {
+            val childId = if (mode == MessageEditMode.BRANCH) idGenerator() else null
             val generationId = idGenerator()
             val historyBefore = record.turns.take(turnIndex).map { it.selected.message }
             val runtimeBefore = selected.runtimeStateBefore
@@ -502,7 +544,7 @@ class ConversationSession(
                         preset = capturedPreset,
                         runtimeState = runtimeBefore,
                         history = historyBefore,
-                        conversationId = record.id,
+                        conversationId = childId ?: record.id,
                         generationId = generationId,
                         modelId = modelId,
                     ) as TextExpansionResult.Success
@@ -538,6 +580,8 @@ class ConversationSession(
                             runtimeStateAfter = projected.runtimeState,
                             nativeOperations = emptyList(),
                             browserHead = null,
+                            browserDisplayChanges = emptyMap(),
+                            browserExtra = JsonObject(emptyMap()),
                             browserVariables = JsonObject(emptyMap()),
                             browserOwnVariables = false,
                         )
@@ -555,13 +599,13 @@ class ConversationSession(
                         preset = capturedPreset,
                         runtimeState = projectionRuntime,
                         history = historyBefore,
-                        conversationId = record.id,
+                        conversationId = childId ?: record.id,
                         generationId = generationId,
                         modelId = modelId,
                     )
                     var projected = project(sourceText)
                     var projectedRuntime = projected.runtimeState
-                    if (mode == MessageEditMode.RESTART) {
+                    if (mode == MessageEditMode.BRANCH) {
                         applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)?.let { result ->
                             projected = project(result.processedText)
                             projectedRuntime = result.applyTo(projected.runtimeState)
@@ -604,6 +648,8 @@ class ConversationSession(
                             playerChoiceCommits = emptyList(),
                             nativeOperations = emptyList(),
                             browserHead = null,
+                            browserDisplayChanges = emptyMap(),
+                            browserExtra = JsonObject(emptyMap()),
                             browserVariables = JsonObject(emptyMap()),
                             browserOwnVariables = false,
                         )
@@ -611,48 +657,23 @@ class ConversationSession(
                 }
                 MessageRole.SYSTEM -> return@launchChatOperation
             }
-            val editedTurn = if (mode == MessageEditMode.TEXT_ONLY) {
-                turn.copy(
-                    variants = turn.variants.mapIndexed { index, variant ->
-                        if (index == turn.selectedVariantIndex) editedVariant else variant
-                    },
-                )
+            if (childId != null) {
+                openBranch(childId, turnIndex, editedVariant, onOpened)
+                if (turn.role == MessageRole.USER && connection == null)
+                    syncRecord(message = "分支已保存，请配置模型后重试这一轮")
             } else {
-                turn.copy(variants = listOf(editedVariant), selectedVariantIndex = 0)
+                val editedTurn = turn.copy(variants = turn.variants.mapIndexed { i, v ->
+                    if (i == turn.selectedVariantIndex) editedVariant else v
+                })
+                record = record.copy(turns = record.turns.mapIndexed { i, t -> if (i == turnIndex) editedTurn else t })
+                displayCache.remove(messageId)
+                displayReasoningCache.remove(messageId)
+                try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
+                    record = conversationRepository?.get(record.id) ?: record
+                    throw error
+                }
+                syncRecord(message = null)
             }
-            record = if (mode == MessageEditMode.TEXT_ONLY) {
-                record.copy(
-                    turns = record.turns.mapIndexed { index, item -> if (index == turnIndex) editedTurn else item },
-                )
-            } else {
-                record.copy(
-                    turns = record.turns.take(turnIndex) + editedTurn,
-                    runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore,
-                )
-            }
-            val retainedMessageIds = record.turns
-                .flatMap { item -> item.variants.map { it.message.id } }
-                .toSet()
-            displayCache.keys.retainAll(retainedMessageIds)
-            displayReasoningCache.keys.retainAll(retainedMessageIds)
-            displayCache.remove(editedVariant.message.id)
-            displayReasoningCache.remove(editedVariant.message.id)
-            val notice = if (mode == MessageEditMode.RESTART && turn.role == MessageRole.USER && connection == null) {
-                "修改已保存；请先配置可用模型"
-            } else null
-            try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
-                record = conversationRepository?.get(record.id) ?: record
-                throw error
-            }
-            syncRecord(
-                retryAvailable = if (mode == MessageEditMode.TEXT_ONLY) {
-                    state.retryAvailable
-                } else {
-                    turn.role == MessageRole.USER && !shouldGenerate
-                },
-                message = notice,
-                trace = if (mode == MessageEditMode.TEXT_ONLY) state.lastTrace else null,
-            )
             refreshDisplayCache(capturedPreset)
             if (shouldGenerate) {
                 generate(checkNotNull(connection), idGenerator(), appendAssistantTurn = true, preset = capturedPreset)
@@ -1904,6 +1925,7 @@ private fun ConversationRecord.toUiState(
             variantIndex = turn.selectedVariantIndex,
             variantCount = turn.variants.size,
             edited = variant.edited,
+            turnId = turn.id,
             hidden = variant.browserHidden,
             displayChanges = variant.browserDisplayChanges,
         )

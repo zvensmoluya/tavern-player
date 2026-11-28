@@ -66,6 +66,7 @@ internal fun ConversationLibraryScreen(
 ) {
     val characters = remember(state.characters) { state.characters.associateBy { it.id } }
     // Do not group by character: one row is one independently saved story.
+    val byId = remember(state.conversations) { state.conversations.associateBy { it.id } }
     val conversations = remember(state.conversations) {
         state.conversations.sortedWith(compareByDescending<io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary> { it.updatedAtEpochMillis }.thenBy { it.id })
     }
@@ -103,7 +104,8 @@ internal fun ConversationLibraryScreen(
                         Text(preview, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                         val count = "${conversation.turnCount} 条消息"
-                        Text(if (conversation.title == null) count else "$name · 第 ${conversation.number} 场 · $count",
+                        val root = conversation.branch?.rootId?.let(byId::get)
+                        Text(if (root != null) "$name · ${root.displayTitle(name)}" else if (conversation.title == null) count else "$name · 第 ${conversation.number} 场 · $count",
                             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }

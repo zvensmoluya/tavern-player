@@ -7,8 +7,11 @@ import androidx.core.view.allViews
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -191,6 +194,45 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         }
     }
 
+    @Test fun messagePencilOpensEditorAndSavesLongTextWithKeyboardVisible() {
+        val graph = AppGraph(InstrumentationRegistry.getInstrumentation().targetContext)
+        val message = ConversationMessage("reply", MessageRole.ASSISTANT, "门外有人。\n\n".repeat(60), "守灯人")
+        val record = ConversationRecord(id = "editor", character = CharacterAsset("card", name = "守灯人").snapshot(),
+            persona = Persona("p", "旅人"), turns = listOf(ConversationTurn("turn", message.role,
+                listOf(MessageVariant("variant", message)))), createdAtEpochMillis = 1, updatedAtEpochMillis = 1,
+            executionMode = ConversationExecutionMode.BROWSER)
+        val state = ChatUiState(conversationId = record.id, character = record.character,
+            messages = listOf(ChatMessageState(message)), browserSnapshot = BrowserConversation.snapshot(record))
+        val saved = AtomicReference<String>()
+        compose.setContent {
+            ChatScreen(state, ChatScreenActions(updateInput = {}, send = {}, cancel = {}, retry = {},
+                selectConnection = {}, reset = {}, openModels = {}, editMessage = { id, text, mode ->
+                    assertEquals(message.id, id)
+                    assertEquals(MessageEditMode.TEXT_ONLY, mode)
+                    saved.set(text)
+                }), browserEnvironment = graph.browserEnvironment)
+        }
+        val web = compose.runOnIdle { compose.activity.window.decorView.allViews.filterIsInstance<WebView>().single() }
+        val tapped = java.util.concurrent.atomic.AtomicBoolean(false)
+        compose.waitUntil(20_000) {
+            if (!tapped.get()) compose.runOnUiThread {
+                web.evaluateJavascript("(() => { const b=document.querySelector('button[aria-label=编辑消息]'); " +
+                    "if (!b) return false; b.click(); return true; })()") { if (it == "true") tapped.set(true) }
+            }
+            tapped.get()
+        }
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("webMessageEditor").fetchSemanticsNodes().isNotEmpty() }
+        val editor = compose.onNodeWithTag("webMessageEditor")
+        editor.assertIsDisplayed()
+        compose.onNodeWithText("保存文字").assertIsNotEnabled()
+        editor.performClick()
+        editor.performTextReplacement("门外的脚步停了。")
+        compose.onNodeWithText("另开分支").assertIsDisplayed()
+        compose.onNodeWithText("保存文字").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals("门外的脚步停了。", saved.get()) }
+        editor.assertDoesNotExist()
+    }
+
     @Test fun chatMenuStartsAndStopsResourcePreparation() {
         val graph = AppGraph(InstrumentationRegistry.getInstrumentation().targetContext)
         val record = ConversationRecord(id = "menu", character = CharacterAsset("card", name = "Actor").snapshot(),
@@ -287,6 +329,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
                 ConversationMessage("m-$n", MessageRole.ASSISTANT, "Message $n\n\n" + "Readable text. ".repeat(40), "Actor"))))
         }, createdAtEpochMillis = 1, updatedAtEpochMillis = 1, executionMode = ConversationExecutionMode.BROWSER)
         val errors = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val taps = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String?>>()
         lateinit var web: WebView
         lateinit var session: BrowserSession
         fun state(running: Boolean = false) = ChatUiState(conversationId = record.id, character = character,
@@ -303,7 +346,7 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         try {
             compose.runOnUiThread {
                 web = WebView(compose.activity); compose.activity.setContentView(web)
-                session = BrowserSession(web, graph.browserEnvironment, state(), { _, _, _, _ -> error("No script mutations") }, { _, _ -> }, errors::add)
+                session = BrowserSession(web, graph.browserEnvironment, state(), { _, _, _, _ -> error("No script mutations") }, { action, id -> taps.add(action to id) }, errors::add)
                 session.start()
             }
             compose.waitUntil(30_000) { evaluate("document.querySelectorAll('article').length") == "50" }
@@ -327,6 +370,27 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
             compose.waitUntil(15_000) { evaluate("document.documentElement.scrollHeight-window.scrollY-window.innerHeight < 100") == "true" }
             assertEquals("100", evaluate("document.querySelectorAll('article').length"))
             assertTrue(errors.toString(), errors.isEmpty())
+            val origin = io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationBranch(
+                "root", "parent", "other-turn", "turn-5", true, null, 5)
+            val summary = io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary(record.id,
+                character.assetId, 1, 2, 125, "", "BROWSER", 2, branch = origin)
+            val child = summary.copy(id = "child", branch = origin.copy(parentId = record.id, parentTurnId = "turn-5"))
+            compose.runOnUiThread { session.update(state(), branchLinks = BranchLinks(summary, "雨夜来客", listOf(child), "turn-5")) }
+            compose.waitUntil(15_000) { evaluate("document.querySelector('article .branch-link')?.textContent.includes('雨夜来客')") == "true" }
+            assertEquals("true", evaluate("(() => { const a=document.querySelector('article:has(.branch-link)'); " +
+                "return Math.abs(a.getBoundingClientRect().top)<3 && a.firstElementChild.textContent.includes('查看原处') " +
+                "&& a.lastElementChild.textContent.includes('另有 1 种走法') })()"))
+            assertTrue(evaluate("document.querySelectorAll('article').length").toInt() <= 50)
+            evaluate("document.querySelector('article .branch-link').click()")
+            compose.waitUntil(5_000) { ("origin" to "turn-5") in taps }
+            evaluate("document.querySelector('article:has(.branch-link) .message-edit').click()")
+            compose.waitUntil(5_000) { ("edit" to "m-5") in taps }
+            evaluate("document.querySelector('article:has(.branch-link) .branch-link:last-child').click()")
+            compose.waitUntil(5_000) { ("paths" to "turn-5") in taps }
+            evaluate("document.getElementById('later').click()")
+            compose.waitUntil(10_000) { evaluate("document.querySelectorAll('article').length").toInt() > 50 }
+            evaluate("document.getElementById('bottom').click()")
+            compose.waitUntil(10_000) { evaluate("document.querySelector('article:last-child').textContent.includes('Streaming 9')") == "true" }
             val metrics = File(context.filesDir, "web-scroll-audit.json")
             metrics.writeText(buildJsonObject { put("initialVisible", 50); put("loadedVisible", 100); put("firstPaintMillis", firstPaintMillis);
                 put("appPssKiB", android.os.Debug.getPss()); put("readingPositionRetained", true) }.toString())

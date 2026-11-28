@@ -41,6 +41,7 @@ import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -285,7 +286,8 @@ class ChatViewModelTest {
             val conversations = ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher, mvuRuntime = runtime,
                 prepareBrowser = { it.copy(mvu = io.github.zvensmoluya.tavernplayer.content.NativeMvuProgram(fixture.getValue("schemaScript").jsonPrimitive.content)) })
             val saved = conversations.create(character, DemoConversationContent.persona, DemoConversationContent.preset)
-            suspend fun days(): Int = conversations.get(saved.id)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
+            var activeId = saved.id
+            suspend fun days(): Int = conversations.get(activeId)!!.runtimeState.mvuState!!.data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt()
             fun text(delta: Int) = "Story. <UpdateVariable><JSONPatch>[{\"op\":\"delta\",\"path\":\"/days\",\"value\":$delta}]</JSONPatch></UpdateVariable>"
             fun assertProcessed(message: ConversationMessage, raw: String) {
                 assertEquals(raw, message.sourceText)
@@ -305,7 +307,7 @@ class ChatViewModelTest {
                 // Editing exposes the new view before persistNow finishes; await the repository acknowledgement.
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                     kotlinx.coroutines.withTimeout(60_000) {
-                        while (conversations.get(saved.id)?.runtimeState?.mvuState?.data
+                        while (conversations.get(activeId)?.runtimeState?.mvuState?.data
                             ?.get("stat_data")?.jsonObject?.get("days")?.jsonPrimitive?.content?.toIntOrNull() != expected) kotlinx.coroutines.delay(10)
                     }
                 }
@@ -346,25 +348,29 @@ class ChatViewModelTest {
             val other = ConversationRepository(directory, PromptCompiler()).use { repository ->
                 repository.create(original, DemoConversationContent.persona, DemoConversationContent.preset)
             }
-            vm.editMessage(target, text(10), MessageEditMode.RESTART)
+            vm.editMessage(target, text(10), MessageEditMode.BRANCH)
             vm.loadConversation(other.id) // An in-flight edit must not write into a different conversation.
             vm.resetConversation()
             awaitMvuIdle(vm)
-            assertEquals(saved.id, vm.uiState.value.conversationId)
+            activeId = requireNotNull(vm.uiState.value.conversationId)
+            assertNotEquals(saved.id, activeId)
+            assertEquals(activeId, vm.uiState.value.conversationId)
+            assertEquals(5, conversations.get(saved.id)!!.turns.size)
             assertNull(conversations.get(other.id)!!.runtimeState.mvuState)
             assertSavedDays(13)
             assertProcessed(vm.uiState.value.messages.last().message, text(10))
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(3, vm.uiState.value.messages.size)
-            assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(saved.id)!!.runtimeState.mvuState!!
+            assertEquals(13, ConversationRepository(directory, PromptCompiler()).get(activeId)!!.runtimeState.mvuState!!
                 .data.getValue("stat_data").jsonObject.getValue("days").jsonPrimitive.content.toInt())
-            val restored = ConversationRepository(directory, PromptCompiler()).get(saved.id)!!
+            val restored = ConversationRepository(directory, PromptCompiler()).get(activeId)!!
             assertProcessed(restored.turns.last().selected.message, text(10))
             val restoredPlan = ejs.compile(PromptCompiler(), NormalGenerationInput(restored.character, restored.persona,
                 restored.turns.map { it.selected.message }, DemoConversationContent.preset, runtimeState = restored.runtimeState), mutableMapOf()) as CompilationResult.Success
             assertTrue(restoredPlan.plan.messages.any { "EJS_DAY=13; EJS_USER=Go.;" in it.content })
-            vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.RESTART)
+            vm.editMessage(vm.uiState.value.messages.first().message.id, "<initvar>\ndays: 20\n</initvar>", MessageEditMode.BRANCH)
             awaitMvuIdle(vm)
+            activeId = requireNotNull(vm.uiState.value.conversationId)
             assertSavedDays(20)
             assertTrue(vm.uiState.value.conversationState.isEmpty())
             assertEquals(1, vm.uiState.value.messages.size)
@@ -720,12 +726,13 @@ class ChatViewModelTest {
             viewModel.setWorldBookEntryContent("book", "entry", "revised lore")
             assertEquals(WorldBookEntryMode.FORCED, conversations.get(seeded.id)?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode)
 
-            viewModel.editMessage("first-user", "changed first", MessageEditMode.RESTART)
+            viewModel.editMessage("first-user", "changed first", MessageEditMode.BRANCH)
 
             assertEquals(3, viewModel.uiState.value.messages.size)
             assertEquals(listOf("entry"), plans.single().activatedWorldBookEntries)
             assertTrue(plans.single().messages.any { it.required && "revised lore" in it.content })
-            val restarted = conversations.get(seeded.id)
+            assertEquals(seeded.turns, conversations.get(seeded.id)!!.turns)
+            val restarted = conversations.get(viewModel.uiState.value.conversationId!!)
             assertEquals("constant lore", restarted?.character?.worldBooks?.single()?.entries?.single()?.content)
             assertEquals(WorldBookEntryMode.FORCED, restarted?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.mode)
             assertEquals("revised lore", restarted?.worldBookState?.playerOverrides?.get("book")?.get("entry")?.content)
@@ -981,7 +988,57 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `editing a user message truncates the future restores runtime and regenerates`() = runTest {
+    fun `nested branches keep their own checkpoints names and immediate source`() = runTest {
+        val directory = Files.createTempDirectory("tavern-branches").toFile()
+        try {
+            ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher).use { repo ->
+                val original = repo.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+                val generator = FakeGenerator { _, _ -> flow {
+                    emit(GenerationEvent.TextDelta("门外有人")); emit(GenerationEvent.Finished("stop"))
+                } }
+                val vm = ChatViewModel(repository(), PromptCompiler(), generator, repo, FixedPresetSource(),
+                    projectionDispatcher = mainDispatcherRule.dispatcher)
+                vm.loadConversation(original.id)
+                vm.updateInput("我推开门"); vm.send()
+                val boundary = vm.uiState.value.messages.last()
+                vm.updateInput("{{setvar::key::owned}}我拿到了钥匙"); vm.send()
+                vm.updateInput("原来的草稿")
+                vm.branchFromMessage(boundary.message.id)
+                val child = requireNotNull(vm.uiState.value.conversationId)
+                assertNotEquals(original.id, child)
+                val fork = repo.get(child)!!
+                assertFalse(fork.runtimeState.localVariables.containsKey("key"))
+                assertEquals("", fork.draft)
+                assertEquals("原来的草稿", repo.get(original.id)!!.draft)
+                assertEquals(5, repo.get(original.id)!!.turns.size)
+                assertEquals("门外有人", repo.store.dao.summary(child)!!.displayTitle("角色"))
+                assertFalse("我推开门" in repo.titleSuggestions(child))
+                assertEquals(original.id, repo.store.dao.summary(child)!!.branch!!.rootId)
+                assertEquals(boundary.turnId, repo.store.dao.summary(child)!!.branch!!.parentTurnId)
+                assertEquals(fork.turns.last().id, repo.store.dao.summary(child)!!.branch!!.localTurnId)
+                assertFalse(repo.store.dao.summary(child)!!.branch!!.rewritten)
+                assertEquals(repo.get(original.id)!!.turns[2].selected.generationPlan, fork.turns.last().selected.generationPlan)
+                vm.updateInput("我隔着门问他是谁"); vm.send()
+                val source = vm.uiState.value.messages[3]
+                assertEquals("我隔着门问他是谁", repo.store.dao.summary(child)!!.title)
+                vm.editMessage(source.message.id, "我把信烧了", MessageEditMode.BRANCH)
+                val grandchild = requireNotNull(vm.uiState.value.conversationId)
+                val summary = repo.store.dao.summary(grandchild)!!
+                assertEquals(original.id, summary.branch!!.rootId)
+                assertEquals(child, summary.branch.parentId)
+                assertEquals(source.turnId, summary.branch.parentTurnId)
+                assertTrue(summary.branch.rewritten)
+                assertEquals("我把信烧了", summary.title)
+                assertEquals("我隔着门问他是谁", repo.get(child)!!.turns[3].selected.message.content)
+                repo.rename(grandchild, "灰烬")
+                vm.updateInput("我离开了"); vm.send()
+                assertEquals("灰烬", repo.store.dao.summary(grandchild)!!.title)
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun `branching with an edited user message restores runtime and regenerates`() = runTest {
         var response = 0
         val generator = FakeGenerator { _, _ ->
             flow {
@@ -1003,7 +1060,7 @@ class ChatViewModelTest {
         viewModel.updateInput("{{setvar::route::later}}second")
         viewModel.send()
 
-        viewModel.editMessage(firstUserId, "{{setvar::route::new}}changed", MessageEditMode.RESTART)
+        viewModel.editMessage(firstUserId, "{{setvar::route::new}}changed", MessageEditMode.BRANCH)
 
         val state = viewModel.uiState.value
         assertEquals(3, state.messages.size)
@@ -1074,7 +1131,7 @@ class ChatViewModelTest {
         viewModel.updateInput("second")
         viewModel.send()
 
-        viewModel.editMessage(firstAssistantId, "{{setvar::mood::manual}}修正", MessageEditMode.RESTART)
+        viewModel.editMessage(firstAssistantId, "{{setvar::mood::manual}}修正", MessageEditMode.BRANCH)
 
         val edited = viewModel.uiState.value
         assertEquals(3, edited.messages.size)

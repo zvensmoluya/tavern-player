@@ -1,5 +1,7 @@
 package io.github.zvensmoluya.tavernplayer.conversation.web
 
+import io.github.zvensmoluya.tavernplayer.ui.PlayerIcon
+import io.github.zvensmoluya.tavernplayer.ui.PlayerSymbol
 import android.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -49,6 +52,7 @@ fun WebMessageView(
     onAction: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
     showChatAvatars: Boolean = false,
+    links: BranchLinks = BranchLinks(),
     preparingResources: Boolean = false,
     onPreparationFinished: () -> Unit = {},
 ) {
@@ -65,7 +69,7 @@ fun WebMessageView(
         loaded
     }
     if (state.readOnlyReason != null || environment == null) {
-        SavedMessages(state, avatars, modifier)
+        SavedMessages(state, avatars, modifier, links, onAction)
         return
     }
 
@@ -116,7 +120,7 @@ fun WebMessageView(
                 TextButton(onClick = { restart++ }) { Text("重试加载网页") }
                 if (!showSavedText) TextButton(onClick = { showSavedText = true }) { Text("阅读已保存的文字") }
             }
-            if (showSavedText) SavedMessages(state, avatars, Modifier.fillMaxSize())
+            if (showSavedText) SavedMessages(state, avatars, Modifier.fillMaxSize(), links, onAction)
             else AndroidView(
                 modifier = Modifier.fillMaxSize().testTag("webChatContent"),
                 factory = { context ->
@@ -132,7 +136,7 @@ fun WebMessageView(
                         }
                     }
                 },
-                update = { session?.update(state, avatars.webSources) },
+                update = { session?.update(state, avatars.webSources, links) },
                 onRelease = { web -> session?.release(); session = null; view = null; web.destroy() },
             )
         }
@@ -140,10 +144,23 @@ fun WebMessageView(
 }
 
 @Composable
-private fun SavedMessages(state: ChatUiState, avatars: ChatAvatars, modifier: Modifier) {
-    LazyColumn(modifier, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+private fun SavedMessages(state: ChatUiState, avatars: ChatAvatars, modifier: Modifier, links: BranchLinks,
+    onAction: (String, String?) -> Unit) {
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(state.conversationId, links.anchor) {
+        val index = state.messages.indexOfFirst { it.turnId == links.anchor }
+        if (index >= 0) list.scrollToItem(index)
+    }
+    LazyColumn(modifier, state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)) {
         items(state.messages, key = { it.message.id }) { item ->
+            val origin = links.current?.branch?.takeIf { it.localTurnId == item.turnId }
+            @Composable fun Origin() {
+                TextButton(enabled = !state.busy, onClick = { onAction("origin", item.turnId) }) {
+                    Text("从《${links.parentTitle.orEmpty()}》分出 · 查看原处")
+                }
+            }
+            if (origin?.rewritten == true) Origin()
             val player = item.message.role == MessageRole.USER
             Box(Modifier.fillMaxWidth().padding(start = if (player) 24.dp else 0.dp),
                 contentAlignment = if (player) Alignment.TopEnd else Alignment.TopStart) {
@@ -157,9 +174,19 @@ private fun SavedMessages(state: ChatUiState, avatars: ChatAvatars, modifier: Mo
                         }
                         Text(item.message.authorName, style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (state.readOnlyReason == null && item.message.role != MessageRole.SYSTEM) {
+                            IconButton(enabled = !state.busy, onClick = { onAction("edit", item.message.id) }) {
+                                PlayerIcon(PlayerSymbol.EDIT, "编辑消息", Modifier.size(16.dp))
+                            }
+                        }
                     }
                     Text(item.message.content, style = MaterialTheme.typography.bodyLarge)
                 }
+            }
+            if (origin?.rewritten == false) Origin()
+            val paths = links.children.count { it.branch?.parentTurnId == item.turnId }
+            if (paths > 0) TextButton(enabled = !state.busy, onClick = { onAction("paths", item.turnId) }) {
+                Text("另有 $paths 种走法")
             }
         }
     }

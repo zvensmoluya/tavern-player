@@ -12,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 
+internal data class CreatedBranch(val parent: String, val turn: String, val child: String, val focusInput: Boolean)
+
 /** Lifecycle and UI adapter. ConversationSession is the sole owner of mutable conversation state. */
 class ChatViewModel(
     repository: ConnectionRepository,
@@ -33,6 +35,18 @@ class ChatViewModel(
         characterAsset, persona, idGenerator, now, projectionDispatcher, mvuRuntime, ejsRuntime,
         browserEnvironment, globalWorldBooks)
     val uiState = session.uiState
+    private val pendingBranch = kotlinx.coroutines.flow.MutableStateFlow<CreatedBranch?>(null)
+    internal val createdBranch: kotlinx.coroutines.flow.StateFlow<CreatedBranch?> = pendingBranch
+    internal fun consumeBranch(branch: CreatedBranch) { pendingBranch.compareAndSet(branch, null) }
+
+    private fun branchOpened(messageId: String, focusInput: Boolean): (String) -> Unit {
+        val source = uiState.value
+        val parent = source.conversationId
+        val turn = source.messages.find { it.message.id == messageId }?.turnId
+        return { child ->
+            if (parent != null && turn != null) pendingBranch.value = CreatedBranch(parent, turn, child, focusInput)
+        }
+    }
     fun loadConversation(conversationId: String) = session.loadConversation(conversationId)
     suspend fun readSavedPlan(variantId: String) = session.readSavedPlan(variantId)
     fun updateInput(value: String) = session.updateInput(value)
@@ -41,7 +55,11 @@ class ChatViewModel(
     fun send() = session.send()
     fun retry() = session.retry()
     fun regenerate() = session.regenerate()
-    fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) = session.editMessage(messageId, sourceText, mode)
+    fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
+        if (mode == MessageEditMode.TEXT_ONLY) session.editMessage(messageId, sourceText, mode)
+        else session.editMessage(messageId, sourceText, mode, branchOpened(messageId, false))
+    }
+    fun branchFromMessage(messageId: String) = session.branchFromMessage(messageId, branchOpened(messageId, true))
     fun previousVariant() = session.previousVariant()
     fun nextVariant() = session.nextVariant()
     fun cancel() = session.cancel()

@@ -284,9 +284,10 @@ fun CharacterDetailScreen(
                             Text(conversation.displayTitle(character.name), style = MaterialTheme.typography.titleMedium,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(conversation.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            val root = conversation.branch?.rootId?.let { id -> conversations.find { it.id == id } }
                             val activity = "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)}"
                             Text(
-                                if (conversation.title == null) activity else "第 ${conversation.number} 场 · $activity",
+                                if (root != null) "${character.name} · ${root.displayTitle(character.name)}" else if (conversation.title == null) activity else "第 ${conversation.number} 场 · $activity",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

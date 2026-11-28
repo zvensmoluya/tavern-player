@@ -48,7 +48,7 @@ The complicated parts can stay underneath. They don't all need to become setting
 | **Read a conversation as a book** | Preview the whole conversation or a continuous excerpt, open it in an EPUB reader, save a local ebook, or copy the selected passage. |
 | **Choose how replies read** | Use the built-in default or import an ST OpenAI / Chat Completion Preset. Adjust, restore, save copies, and export without losing imported fields. Connect services using supported OpenAI, Anthropic, and Gemini protocols. |
 | **Experience authored interactions** | A native input bar accompanies a web message surface. Author HTML/JS runs within declared host capabilities, with compilation-free MVU/EJS preparation. |
-| **Keep the conversation going** | Choose greetings, regenerate replies, switch variants, and edit history. Character snapshots and runtime state persist across process restarts. |
+| **Keep the conversation going** | Choose greetings, regenerate replies, switch variants, edit history, or fork from an original or edited message and revisit its source. Character snapshots and runtime state persist across process restarts. |
 
 The project is in development. The single-character conversation loop is available; see the [product scope](docs/product-direction.md) and [web runtime contract](docs/web-runtime.md) for compatibility boundaries.
 

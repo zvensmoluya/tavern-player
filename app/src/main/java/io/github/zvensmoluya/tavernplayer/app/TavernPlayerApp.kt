@@ -21,6 +21,8 @@ import io.github.zvensmoluya.tavernplayer.characters.CharacterLibraryViewModel
 import io.github.zvensmoluya.tavernplayer.characters.WorldBookReaderScreen
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsRoute
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
+import io.github.zvensmoluya.tavernplayer.conversation.BranchLinks
+import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
 import io.github.zvensmoluya.tavernplayer.conversation.ChatRoute
 import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ConversationTitleDialog
@@ -42,6 +44,16 @@ fun TavernPlayerApp(
     var surface by rememberSaveable { mutableStateOf(AppSurface.CONVERSATIONS) }
     var returnFromChat by rememberSaveable { mutableStateOf(AppSurface.CONVERSATIONS) }
     var activeConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var chatTrail by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var chatAnchor by rememberSaveable { mutableStateOf<String?>(null) }
+    var focusInput by rememberSaveable { mutableStateOf(false) }
+    fun visitChat(id: String, anchor: String?, returnTurn: String, focus: Boolean) {
+        val from = activeConversationId ?: return
+        chatTrail = ArrayList(chatTrail + listOf(from, returnTurn))
+        chatAnchor = anchor
+        focusInput = focus
+        activeConversationId = id
+    }
     var renameId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailCharacterId by rememberSaveable { mutableStateOf<String?>(null) }
     val screenState = rememberSaveableStateHolder()
@@ -70,6 +82,7 @@ fun TavernPlayerApp(
     LaunchedEffect(libraryState.openConversationId) {
         libraryState.openConversationId?.let { conversationId ->
             returnFromChat = if (surface == AppSurface.CHARACTER_DETAIL) AppSurface.CHARACTER_DETAIL else AppSurface.CONVERSATIONS
+            chatTrail = arrayListOf(); chatAnchor = null; focusInput = false
             activeConversationId = conversationId
             characterLibraryViewModel.consumeOpenConversation()
             surface = AppSurface.CHAT
@@ -163,12 +176,23 @@ fun TavernPlayerApp(
                     }
                     AppSurface.CHAT -> OpenedConversation(
                         conversationId = requireNotNull(activeConversationId),
-                        summary = libraryState.conversations.firstOrNull { it.id == activeConversationId },
+                        summaries = libraryState.conversations, anchor = chatAnchor,
+                        onVisit = { id, target, from -> visitChat(id, target, from, false) },
+                        onCreated = { id, from, focus -> visitChat(id, null, from, focus) },
+                        focusInput = focusInput, onFocused = { focusInput = false },
                         viewModel = chatViewModel(),
                         presetViewModel = presetViewModel,
                         showChatAvatars = libraryState.showChatAvatars,
                         onRename = { renameId = activeConversationId },
-                        onBack = { activeConversationId = null; surface = returnFromChat },
+                        onBack = {
+                            focusInput = false
+                            if (chatTrail.isEmpty()) { activeConversationId = null; surface = returnFromChat }
+                            else {
+                                activeConversationId = chatTrail[chatTrail.lastIndex - 1]
+                                chatAnchor = chatTrail.last()
+                                chatTrail = ArrayList(chatTrail.dropLast(2))
+                            }
+                        },
                         onOpenModels = ::openModels,
                         onOpenPresets = ::openPresets,
                         onOpenGlobalWorldBooks = ::openWorldBooks,
@@ -234,7 +258,12 @@ internal fun selectAppSurface(
 @Composable
 private fun OpenedConversation(
     conversationId: String,
-    summary: io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary?,
+    summaries: List<ConversationSummary>,
+    anchor: String?,
+    onVisit: (String, String, String) -> Unit,
+    onCreated: (String, String, Boolean) -> Unit,
+    focusInput: Boolean,
+    onFocused: () -> Unit,
     viewModel: ChatViewModel,
     presetViewModel: () -> PresetViewModel,
     showChatAvatars: Boolean,
@@ -246,20 +275,35 @@ private fun OpenedConversation(
 ) {
     val state by viewModel.uiState.collectAsState()
     var requested by remember(conversationId) { mutableStateOf(false) }
-    LaunchedEffect(conversationId) {
+    val created by viewModel.createdBranch.collectAsState()
+    LaunchedEffect(conversationId, created) {
+        val branch = viewModel.createdBranch.value
+        if (branch != null) {
+            viewModel.consumeBranch(branch)
+            if (branch.parent == conversationId) {
+                onCreated(branch.child, branch.turn, branch.focusInput)
+                return@LaunchedEffect
+            }
+        }
         if (viewModel.uiState.value.conversationId != conversationId) viewModel.loadConversation(conversationId)
         requested = true
     }
     if (state.conversationId == conversationId && !state.loadingConversation) {
-        ChatRoute(viewModel, presetViewModel(),
-            conversationTitle = summary?.displayTitle(state.character.name) ?: state.character.name,
+        val links = remember(summaries, conversationId, anchor, state.character.name) {
+            val current = summaries.find { it.id == conversationId }
+            val parent = current?.branch?.parentId?.let { id -> summaries.find { it.id == id } }
+            BranchLinks(current, parent?.displayTitle(state.character.name), summaries.filter { it.branch?.parentId == conversationId }, anchor)
+        }
+        ChatRoute(viewModel, presetViewModel(), links = links, onVisit = onVisit,
+            focusInput = focusInput, onFocused = onFocused,
+            conversationTitle = links.current?.displayTitle(state.character.name) ?: state.character.name,
             onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets, onRename = onRename,
             onOpenGlobalWorldBooks = onOpenGlobalWorldBooks, showChatAvatars = showChatAvatars)
     } else {
         BackHandler { if (!state.loadingConversation) onBack() }
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(24.dp),
             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            if (!requested || state.loadingConversation) {
+            if (!requested || state.loadingConversation || created?.parent == conversationId) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(16.dp))
                 Text("正在打开对话…")

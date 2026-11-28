@@ -201,6 +201,36 @@ class ConversationRepository(
         return OpenedConversation(if (ready === saved) saved else save(ready, saved, activity = false))
     }
 
+    internal suspend fun fork(parent: ConversationRecord, child: ConversationRecord, index: Int, rewritten: Boolean,
+        excerpt: String): ConversationRecord = withContext(ioDispatcher) {
+        mutex.withLock {
+            initializeLocked()
+            store.transaction {
+                check(store.dao.head(parent.id)?.revision == parent.commitRevision) { "来源对话已更新，请重新打开后重试" }
+                val parentSummary = requireNotNull(store.dao.summary(parent.id))
+                val origin = ConversationBranch(parentSummary.branch?.rootId ?: parent.id, parent.id,
+                    parent.turns[index].id, child.turns.last().id, rewritten, titleExcerpts(excerpt).firstOrNull(),
+                    if (rewritten) index else index + 1)
+                // Copy immutable plan rows and blob references locally. Long chats can have a full
+                // prompt for each reply; decoding them all here would grow quadratically.
+                val turns = child.turns.map { turn ->
+                    turn.copy(variants = listOf(turn.selected.copy(generationPlan = null)))
+                }
+                val saved = store.save(child.copy(turns = turns), null, origin = origin)
+                val linked = child.turns.mapIndexed { i, turn ->
+                    val variant = turn.selected
+                    val plan = variant.generationPlan ?: return@mapIndexed turn
+                    val source = parent.turns[i].selected.id
+                    store.dao.copyPlan(source, variant.id)
+                    store.dao.copyPlanParts(source, variant.id)
+                    if (plan.deferredPartsVariantId == null) turn else turn.copy(variants = listOf(
+                        variant.copy(generationPlan = plan.copy(deferredPartsVariantId = variant.id))))
+                }
+                saved.copy(turns = linked)
+            }
+        }
+    }
+
     suspend fun contains(conversationId: String): Boolean = withContext(ioDispatcher) {
         ensureInitialized(); store.dao.containsBrowserConversation(conversationId)
     }

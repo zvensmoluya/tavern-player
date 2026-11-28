@@ -38,6 +38,7 @@ class BrowserSession(
     private var updateJob: Job? = null
     private var lastSend = 0L
     private var avatars = JsonObject(emptyMap())
+    private var links = BranchLinks()
     private var sentAvatars: JsonObject? = null
     private var sentSnapshot: JsonObject? = null
     private var preparedPresetHash: String? = null
@@ -118,10 +119,11 @@ class BrowserSession(
         preparePreset()
     }
 
-    fun update(next: ChatUiState, chatAvatars: JsonObject = avatars) {
+    fun update(next: ChatUiState, chatAvatars: JsonObject = avatars, branchLinks: BranchLinks = links) {
         if (released || next.conversationId != conversationId) return
         state = next
         avatars = chatAvatars
+        links = branchLinks
         if (!next.running && !next.browserGenerating) preparePreset()
         updateJob?.cancel()
         val elapsed = android.os.SystemClock.uptimeMillis() - lastSend
@@ -189,6 +191,15 @@ class BrowserSession(
             putJsonObject("flags") {
                 put("busy", state.busy); put("running", state.running); put("browserGenerating", state.browserGenerating)
                 put("canRequestTurn", state.canRequestTurn)
+                put("anchor", links.anchor)
+                links.current?.branch?.let { origin ->
+                    put("originTurn", origin.localTurnId)
+                    put("originBefore", origin.rewritten)
+                    put("parentTitle", links.parentTitle)
+                }
+                putJsonObject("paths") {
+                    links.children.groupingBy { requireNotNull(it.branch).parentTurnId }.eachCount().forEach { (id, count) -> put(id, count) }
+                }
                 put("retryAvailable", state.retryAvailable); put("regenerateAvailable", state.regenerateAvailable)
                 put("variantNavigationAvailable", state.variantNavigationAvailable); put("notice", state.message)
             }
@@ -218,11 +229,11 @@ class BrowserSession(
                 method.startsWith("ui.") -> {
                     require(request["actorToken"] == null) { "作者页面不能调用播放器 UI 接口" }
                     val action = method.removePrefix("ui.")
-                    require(action in setOf("edit", "retry", "previous", "next", "regenerate")) { "未支持的界面操作" }
-                    val sameEraTail = action != "edit" && state.eraScriptId != null && args["variant"] is JsonPrimitive &&
+                    require(action in setOf("edit", "origin", "paths", "retry", "previous", "next", "regenerate")) { "未支持的界面操作" }
+                    val sameEraTail = action in setOf("retry", "previous", "next", "regenerate") && state.eraScriptId != null && args["variant"] is JsonPrimitive &&
                         args["variant"] == state.browserSnapshot["messages"]?.jsonArray?.lastOrNull()?.jsonObject?.get("variantId")
                     require(sameEraTail || request["revision"] == state.browserSnapshot["revision"]) { "消息已更新，请重试" }
-                    require(if (action == "edit") !state.busy else state.canRequestTurn) { "会话正在处理操作" }
+                    require(if (action in setOf("edit", "origin", "paths")) !state.busy else state.canRequestTurn) { "会话正在处理操作" }
                     uiAction(action, args["id"]?.jsonPrimitive?.contentOrNull)
                     buildJsonObject { put("accepted", true) }
                 }

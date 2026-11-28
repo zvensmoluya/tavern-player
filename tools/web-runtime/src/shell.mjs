@@ -72,6 +72,9 @@ function button(text, action, disabled = false) {
   return node;
 }
 const ui = (action, id) => rpc('ui.' + action, id ? { id } : { variant: snapshot.messages.at(-1)?.variantId });
+// An origin can be thousands of messages from the tail. Open a bounded window around it.
+let historyEnd = null;
+function endOfWindow() { return Math.min(historyEnd ?? snapshot.messages.length, snapshot.messages.length); }
 function bottom() {
   window.scrollTo({ top: document.documentElement.scrollHeight });
   observedScrollY = window.scrollY;
@@ -85,7 +88,7 @@ const focusInFrame = () => document.activeElement?.tagName === 'IFRAME';
 window.addEventListener('resize', () => {
   // 键盘弹出会改变视口而不产生滚动，读者原本是否在底部要用变化前的偏移判断。
   const wasFollowing = following && window.scrollY >= previousBottom - 80;
-  following = wasFollowing || document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  following = historyEnd === null && (wasFollowing || document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80);
   measuredViewportHeight = window.innerHeight;
   recordBottom();
   document.getElementById('bottom').hidden = following;
@@ -101,13 +104,26 @@ window.addEventListener('scroll', () => {
   // In particular, it must not cancel the bottom adjustment queued by a keyboard resize.
   // Even a small upward movement leaves follow mode before the next streaming update.
   if (window.scrollY < observedScrollY) following = false;
-  else if (window.scrollY > observedScrollY) following = atBottom;
+  else if (window.scrollY > observedScrollY) following = historyEnd === null && atBottom;
   observedScrollY = window.scrollY;
   document.getElementById('bottom').hidden = following;
 }, { passive: true });
-document.getElementById('bottom').onclick = () => { following = true; bottom(); };
+document.getElementById('bottom').onclick = () => {
+  following = true;
+  if (historyEnd === null) bottom();
+  else {
+    historyEnd = null; shown = 50;
+    renderQueue = renderQueue.then(() => render()).then(bottom);
+  }
+};
+document.getElementById('later').onclick = () => {
+  const end = endOfWindow(), next = Math.min(end + 50, snapshot.messages.length);
+  shown += next - end;
+  historyEnd = next === snapshot.messages.length ? null : next;
+  renderQueue = renderQueue.then(() => render());
+};
 document.getElementById('earlier').onclick = () => {
-  const top = rows.get(snapshot.messages[snapshot.messages.length - shown]?.turnId)?.element;
+  const top = rows.get(snapshot.messages[Math.max(0, endOfWindow() - shown)]?.turnId)?.element;
   const offset = top?.getBoundingClientRect().top;
   shown += 50;
   renderQueue = renderQueue.then(() => render()).then(() => {
@@ -244,7 +260,7 @@ function revealSegment(row, segment) {
 }
 // 未变的段由调用方直接复用，新节点只接在段列表尾部，顺序不会被这段整理打乱。
 function placeRow(row) {
-  const order = [row.header, row.reasoning, ...row.segments.map(segment => segment.node), row.status].filter(Boolean);
+  const order = [row.before, row.header, row.reasoning, ...row.segments.map(segment => segment.node), row.status, row.after, row.paths].filter(Boolean);
   let position = 0;
   for (const node of order) {
     if (row.element.children[position] !== node) row.element.insertBefore(node, row.element.children[position] ?? null);
@@ -358,9 +374,35 @@ async function renderRow(row, message) {
     lifecycle(message.role === 'user' ? tavernEvents.USER_MESSAGE_RENDERED : tavernEvents.CHARACTER_MESSAGE_RENDERED, [message.message_id]);
   }
 }
+// These controls belong to the trusted chat shell and are never sent to card frames.
+function renderLinks(row, message) {
+  const origin = flags.originTurn === message.turnId ? flags.parentTitle : null;
+  const count = flags.paths?.[message.turnId] ?? 0;
+  const key = JSON.stringify([origin, flags.originBefore, count]);
+  if (row.linksKey !== key) {
+    row.linksKey = key;
+    const source = origin ? button('从《' + origin + '》分出 · 查看原处', () => ui('origin', message.turnId)) : null;
+    row.before = flags.originBefore ? source : null;
+    row.after = flags.originBefore ? null : source;
+    row.paths = count ? button('另有 ' + count + ' 种走法', () => ui('paths', message.turnId)) : null;
+    placeRow(row);
+  }
+  for (const control of [row.before, row.after, row.paths]) if (control) {
+    control.className = 'branch-link'; control.disabled = flags.busy;
+  }
+}
+let lastAnchor = null;
 async function render() {
   if (!snapshot) return;
-  const visible = snapshot.messages.slice(-shown), ids = new Set(visible.map(m => m.turnId));
+  const anchor = flags.anchor && flags.anchor !== lastAnchor ? flags.anchor : null;
+  const target = anchor ? snapshot.messages.findIndex(message => message.turnId === anchor) : -1;
+  if (target >= 0) {
+    const end = Math.min(snapshot.messages.length, target + 40);
+    historyEnd = end < snapshot.messages.length ? end : null;
+    shown = 50; following = false;
+  }
+  const end = endOfWindow();
+  const visible = snapshot.messages.slice(Math.max(0, end - shown), end), ids = new Set(visible.map(m => m.turnId));
   for (const [id, row] of rows) if (!ids.has(id)) { row.frames.forEach(dispose); row.element.remove(); rows.delete(id); }
   for (const [position, message] of visible.entries()) {
     let row = rows.get(message.turnId);
@@ -370,10 +412,13 @@ async function render() {
     if (row.lastRenderedMessage !== message || row.forced) {
       await renderRow(row, message); row.lastRenderedMessage = message;
     } else if (row.avatarSrc !== chatAvatars[message.role]) renderByline(row, message);
-    row.element.querySelector('header button').disabled = flags.busy;
+    renderLinks(row, message);
+    row.element.querySelector('header button').disabled = flags.busy || message.role === 'system';
     if (messagesNode.children[position] !== row.element) messagesNode.insertBefore(row.element, messagesNode.children[position] ?? null);
   }
-  document.getElementById('earlier').hidden = shown >= snapshot.messages.length;
+  document.getElementById('earlier').hidden = shown >= end;
+  document.getElementById('later').hidden = end >= snapshot.messages.length;
+  actionsNode.hidden = end < snapshot.messages.length;
   actionsNode.replaceChildren();
   const turnBusy = flags.canRequestTurn === undefined ? flags.busy : !flags.canRequestTurn;
   if (flags.retryAvailable) actionsNode.append(button('重试这一轮', () => ui('retry'), turnBusy));
@@ -384,6 +429,12 @@ async function render() {
     actionsNode.append(button('下一条', () => ui('next'), turnBusy || last.swipe_id === last.swipes.length - 1));
   }
   if (flags.regenerateAvailable) actionsNode.append(button('重新生成', () => ui('regenerate'), turnBusy));
+  if (anchor) {
+    if (target >= 0) rows.get(anchor)?.element.scrollIntoView({ block: 'start' });
+    else notice('原消息已移除');
+    document.getElementById('bottom').hidden = following;
+    lastAnchor = anchor;
+  }
   if (following && !focusInFrame()) followBottom();
   recordBottom();
   await updateScripts();
@@ -503,7 +554,7 @@ window.addEventListener('message', async event => {
 async function apply(packet) {
   const previous = snapshot, oldFlags = flags;
   if (packet.epoch !== epoch) {
-    epoch = packet.epoch; shown = 50; programKey = '';
+    epoch = packet.epoch; shown = 50; historyEnd = null; lastAnchor = null; programKey = '';
     // 换 epoch 后旧行不再属于当前会话，整行移除，不能只留下悬挂的帧与节点。
     for (const row of rows.values()) { row.frames.forEach(dispose); row.element.remove(); }
     rows.clear();
@@ -518,7 +569,7 @@ async function apply(packet) {
     }
     snapshot = { ...snapshot, ...packet.changes, messages: ordered };
   } else snapshot = packet.snapshot;
-  if (previous && snapshot.messages.length > previous.messages.length)
+  if (historyEnd === null && previous && snapshot.messages.length > previous.messages.length)
     shown += snapshot.messages.length - previous.messages.length;
   const avatarsChanged = packet.avatars !== undefined;
   if (avatarsChanged || packet.type === 'snapshot') chatAvatars = packet.avatars ?? {};

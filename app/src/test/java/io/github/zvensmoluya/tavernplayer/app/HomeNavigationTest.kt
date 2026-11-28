@@ -69,6 +69,36 @@ class HomeNavigationTest {
         compose.onNodeWithText("灯塔旧事").assertIsDisplayed()
     }
 
+    @Test fun `forks open as chats and source links and back return to the right route`() {
+        val fixture = fixture()
+        runBlocking { requireNotNull(repository).rename(fixture.conversationId, "雨夜来客") }
+        compose.setContent { TavernPlayerTheme { fixture.Content() } }
+        compose.onNodeWithTag("recent-${fixture.conversationId}").performClick()
+        fun tap(label: String) {
+            compose.waitUntil(8_000) { compose.onAllNodesWithText(label).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText(label).performClick()
+        }
+        compose.onNodeWithContentDescription("编辑消息").performClick()
+        compose.onNodeWithTag("webMessageEditor").assertIsDisplayed()
+        compose.onNodeWithText("保存文字").assertIsNotEnabled()
+        tap("另开分支")
+        val rootLink = "从《雨夜来客》分出 · 查看原处"
+        tap(rootLink)
+        tap("另有 1 种走法")
+        val child = fixture.library.uiState.value.conversations.single { it.branch != null }
+        tap(child.displayTitle("角色样本"))
+        compose.onNodeWithContentDescription("编辑消息").performClick()
+        compose.onNodeWithTag("webMessageEditor").performTextReplacement("门外的脚步停了")
+        tap("另开分支")
+        val parentLink = "从《${child.displayTitle("角色样本")}》分出 · 查看原处"
+        tap(parentLink)
+        compose.onNodeWithText(rootLink).assertIsDisplayed()
+        compose.onNodeWithTag("backToCharacter").performClick()
+        compose.onNodeWithText(parentLink).assertIsDisplayed()
+        compose.onNodeWithText("门外的脚步停了").assertIsDisplayed()
+        assertEquals(3, fixture.library.uiState.value.conversations.size)
+    }
+
     @Test fun `global chat opens without a selected character and returns to history after restoration`() {
         val fixture = fixture()
         val restoration = StateRestorationTester(compose)

@@ -14,7 +14,7 @@ import java.util.concurrent.Callable
 class RoomConversationStore(context: Context, filesDir: File, databaseOverride: ConversationDatabase? = null) : AutoCloseable {
     val file = File(filesDir, "tavern/conversation.db").also { it.parentFile!!.mkdirs() }
     val database = databaseOverride ?: Room.databaseBuilder(context.applicationContext, ConversationDatabase::class.java, file.absolutePath)
-        .addMigrations(conversationTitleMigration)
+        .addMigrations(conversationTitleMigration, conversationBranchMigration)
         .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING).build()
     val dao = database.conversations()
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
@@ -127,7 +127,7 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
     }
 
     fun save(record: ConversationRecord, previous: ConversationRecord?, activity: Boolean = true,
-        finishStream: String? = null): ConversationRecord = transaction {
+        finishStream: String? = null, origin: ConversationBranch? = null): ConversationRecord = transaction {
         val oldHead = dao.head(record.id)
         check(oldHead?.revision == previous?.commitRevision) { "对话已被其他写入修改，请重新打开" }
         require(record.turns.map { it.id }.distinct().size == record.turns.size) { "Duplicate turn identity" }
@@ -177,10 +177,26 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
             val preview = saved.turns.asReversed().firstNotNullOfOrNull { it.selected.message.content.trim().takeIf(String::isNotBlank)?.take(160) } ?: "空白对话"
             val prior = dao.summary(saved.id)
             val number = prior?.number ?: dao.nextNumber(saved.character.assetId)
-            val title = prior?.title ?: saved.turns.asSequence().filter { it.role == MessageRole.USER }.take(TITLE_WINDOW)
+            val branch = (prior?.branch ?: origin)?.let { link ->
+                if (previous == null || previous.turns === saved.turns) link else {
+                    // Card scripts can insert, rotate or remove floors on either side of the fork.
+                    val anchor = saved.turns.indexOfFirst { it.id == link.localTurnId }
+                    val start = when {
+                        anchor < 0 -> {
+                            val inherited = previous.turns.take(link.titleStart).mapTo(hashSetOf()) { it.id }
+                            saved.turns.indexOfLast { it.id in inherited } + 1
+                        }
+                        link.rewritten -> anchor
+                        else -> anchor + 1
+                    }
+                    link.copy(titleStart = start)
+                }
+            }
+            val local = saved.turns.asSequence().drop(branch?.titleStart ?: 0).filter { it.role == MessageRole.USER }
+            val title = prior?.title ?: (if (branch == null) local.take(TITLE_WINDOW) else local)
                 .firstNotNullOfOrNull { titleExcerpts(it.selected.message.sourceText).firstOrNull() }
             dao.put(ConversationSummary(saved.id, saved.character.assetId, saved.createdAtEpochMillis, saved.updatedAtEpochMillis,
-                saved.turns.size, preview, saved.executionMode.name, number, title))
+                saved.turns.size, preview, saved.executionMode.name, number, title, branch))
         }
         finishStream?.let { id ->
             val stream = requireNotNull(dao.stream(id)) { "生成进度不存在" }

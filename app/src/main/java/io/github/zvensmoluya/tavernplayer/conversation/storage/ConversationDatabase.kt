@@ -12,17 +12,25 @@ import kotlinx.coroutines.flow.Flow
 data class HeadRow(@PrimaryKey val id: String, val revision: Long, val metadata: String,
     val character: String, val persona: String, val runtime: String, val worldBook: String)
 
+data class ConversationBranch(
+    val rootId: String, val parentId: String, val parentTurnId: String, val localTurnId: String,
+    val rewritten: Boolean, val temporaryTitle: String?, val titleStart: Int,
+)
+
 @Entity(tableName = "conversation_summary", indices = [Index(value = ["assetId", "updatedAtEpochMillis", "id"])],
     foreignKeys = [ForeignKey(entity = HeadRow::class, parentColumns = ["id"], childColumns = ["id"], onDelete = ForeignKey.CASCADE)])
 data class ConversationSummary(@PrimaryKey val id: String, val assetId: String, val createdAtEpochMillis: Long,
     val updatedAtEpochMillis: Long, val turnCount: Int, val preview: String, val executionMode: String,
-    @ColumnInfo(defaultValue = "0") val number: Int, val title: String? = null) {
-    fun displayTitle(characterName: String) = title ?: "$characterName · 第 $number 场"
+    @ColumnInfo(defaultValue = "0") val number: Int, val title: String? = null,
+    @Embedded val branch: ConversationBranch? = null) {
+    fun displayTitle(characterName: String) = title ?: branch?.temporaryTitle ?: "$characterName · 第 $number 场"
 }
 
 private const val TITLE_SOURCES = "SELECT substr(CAST(b.bytes AS TEXT), 1, $TITLE_SOURCE_LENGTH) " +
     "FROM conversation_turn t JOIN variant v ON v.id = t.selectedVariantId " +
     "JOIN content_blob b ON b.id = v.source WHERE t.role = 'USER' AND t.conversationId = "
+private const val LOCAL_TITLE_SOURCES = TITLE_SOURCES + ":id AND t.position >= COALESCE(" +
+    "(SELECT titleStart FROM conversation_summary WHERE id = :id), 0)"
 private const val OPENING_ORDER = " ORDER BY t.position, t.id LIMIT $TITLE_WINDOW"
 private const val RECENT_ORDER = " ORDER BY t.position DESC, t.id DESC LIMIT $TITLE_WINDOW"
 
@@ -47,6 +55,15 @@ internal val conversationTitleMigration = object : Migration(1, 2) {
                 db.execSQL("UPDATE conversation_summary SET number = ?, title = ? WHERE id = ?", arrayOf<Any?>(number, title, id))
             }
         }
+    }
+}
+
+internal val conversationBranchMigration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        for (field in listOf("rootId", "parentId", "parentTurnId", "localTurnId", "temporaryTitle"))
+            db.execSQL("ALTER TABLE conversation_summary ADD COLUMN $field TEXT")
+        for (field in listOf("rewritten", "titleStart"))
+            db.execSQL("ALTER TABLE conversation_summary ADD COLUMN $field INTEGER")
     }
 }
 
@@ -98,8 +115,8 @@ interface ConversationDao {
     @Query("SELECT * FROM conversation_summary WHERE id = :id") fun summary(id: String): ConversationSummary?
     @Query("SELECT COALESCE(MAX(number), 0) + 1 FROM conversation_summary WHERE assetId = :assetId AND executionMode = 'BROWSER'")
     fun nextNumber(assetId: String): Int
-    @Query(TITLE_SOURCES + ":id" + OPENING_ORDER) fun openingTitleSources(id: String): List<String>
-    @Query(TITLE_SOURCES + ":id" + RECENT_ORDER) fun recentTitleSources(id: String): List<String>
+    @Query(LOCAL_TITLE_SOURCES + OPENING_ORDER) fun openingTitleSources(id: String): List<String>
+    @Query(LOCAL_TITLE_SOURCES + RECENT_ORDER) fun recentTitleSources(id: String): List<String>
     @Query("UPDATE conversation_summary SET title = :title WHERE id = :id AND executionMode = 'BROWSER'")
     fun rename(id: String, title: String): Int
     @Query("SELECT EXISTS(SELECT 1 FROM conversation_summary WHERE id = :id AND executionMode = 'BROWSER')")
@@ -122,6 +139,11 @@ interface ConversationDao {
         FROM content_blob WHERE id = :id
     """)
     fun blobSlice(id: String, offset: Int, limit: Int): BlobSlice?
+    @Query("INSERT INTO generation (id, metadata, runtime) SELECT :target, metadata, runtime FROM generation WHERE id = :source")
+    fun copyPlan(source: String, target: String)
+    @Query("INSERT INTO generation_part (generationId, kind, position, metadata, content) " +
+        "SELECT :target, kind, position, metadata, content FROM generation_part WHERE generationId = :source")
+    fun copyPlanParts(source: String, target: String)
     @Query("SELECT * FROM generation WHERE id = :id") fun plan(id: String): PlanRow?
     @Query("SELECT * FROM generation_part WHERE generationId = :id ORDER BY kind, position") fun planParts(id: String): List<PlanPartRow>
     @Query("SELECT * FROM runtime_operation WHERE variantId = :id ORDER BY position, id") fun operations(id: String): List<OperationRow>
@@ -152,5 +174,5 @@ interface ConversationDao {
 
 @Database(entities = [HeadRow::class, ConversationSummary::class, DraftRow::class, TurnRow::class, VariantRow::class,
     BlobRow::class, PlanRow::class, PlanPartRow::class, OperationRow::class, StreamRow::class, ChunkRow::class, ImportRow::class],
-    version = 2, exportSchema = true)
+    version = 3, exportSchema = true)
 abstract class ConversationDatabase : RoomDatabase() { abstract fun conversations(): ConversationDao }

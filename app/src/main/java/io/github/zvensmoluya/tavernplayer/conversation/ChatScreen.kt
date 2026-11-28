@@ -26,7 +26,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,6 +57,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationSummary
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -68,6 +74,13 @@ import io.github.zvensmoluya.tavernplayer.content.PresetAsset
 import io.github.zvensmoluya.tavernplayer.content.PresetGenerationParameter
 import io.github.zvensmoluya.tavernplayer.presets.PresetViewModel
 
+data class BranchLinks(
+    val current: ConversationSummary? = null,
+    val parentTitle: String? = null,
+    val children: List<ConversationSummary> = emptyList(),
+    val anchor: String? = null,
+)
+
 @Composable
 fun ChatRoute(
     viewModel: ChatViewModel,
@@ -79,12 +92,17 @@ fun ChatRoute(
     showChatAvatars: Boolean = false,
     onRename: () -> Unit = {},
     conversationTitle: String? = null,
+    links: BranchLinks = BranchLinks(),
+    onVisit: (String, String, String) -> Unit = { _, _, _ -> },
+    focusInput: Boolean = false,
+    onFocused: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
     val presetState by presetViewModel.uiState.collectAsState()
     ChatScreen(
         state = state,
         conversationTitle = conversationTitle ?: state.character.name,
+        links = links, focusInput = focusInput, onFocused = onFocused,
         presets = presetState.presets,
         showChatAvatars = showChatAvatars,
         browserEnvironment = viewModel.browserEnvironment,
@@ -97,6 +115,8 @@ fun ChatRoute(
             retrySave = viewModel::retrySave,
             regenerate = viewModel::regenerate,
             editMessage = viewModel::editMessage,
+            branch = viewModel::branchFromMessage,
+            visit = onVisit,
             previousVariant = viewModel::previousVariant,
             nextVariant = viewModel::nextVariant,
             selectConnection = viewModel::selectConnection,
@@ -134,15 +154,9 @@ data class ChatScreenActions(
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
     val onWorldBookEntryMode: (String, String, WorldBookEntryMode?) -> Unit = { _, _, _ -> },
     val onWorldBookEntryContent: (String, String, String, () -> Unit) -> Unit = { _, _, _, _ -> },
+    val branch: (String) -> Unit = {},
+    val visit: (String, String, String) -> Unit = { _, _, _ -> },
     val readSavedPlan: suspend (String) -> GenerationPlan? = { null },
-)
-
-private data class PendingMessageEdit(
-    val messageId: String,
-    val sourceText: String,
-    val regenerate: Boolean,
-    val removedMessageCount: Int,
-    val discardedVariantCount: Int,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,6 +171,9 @@ fun ChatScreen(
     bottomBarInsets: WindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
     showChatAvatars: Boolean = false,
     conversationTitle: String = state.character.name,
+    links: BranchLinks = BranchLinks(),
+    focusInput: Boolean = false,
+    onFocused: () -> Unit = {},
 ) {
     var modelPickerVisible by remember { mutableStateOf(false) }
     BackHandler { if (!state.busy) actions.back() }
@@ -168,8 +185,7 @@ fun ChatScreen(
     var worldBookMenu by remember { mutableStateOf(false) }
     var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
-    var editingText by remember(state.conversationId) { mutableStateOf("") }
-    var pendingMessageEdit by remember(state.conversationId) { mutableStateOf<PendingMessageEdit?>(null) }
+    var pathsTurn by remember(state.conversationId) { mutableStateOf<String?>(null) }
     val modelFeedback = remember { SnackbarHostState() }
     var requestedConnection by remember(state.conversationId) { mutableStateOf<String?>(null) }
     LaunchedEffect(requestedConnection, state.selectedConnectionId) {
@@ -222,6 +238,13 @@ fun ChatScreen(
                                 DropdownMenuItem(text = { Text("导出阅读稿") }, enabled = !state.loadingConversation && state.messages.isNotEmpty(),
                                     onClick = { moreMenu = false; readingPreview = true })
                             }
+                            val origin = links.current?.branch
+                            if (origin != null && state.messages.none { it.turnId == origin.localTurnId }) {
+                                DropdownMenuItem(text = { Text("查看分支来源") }, enabled = !state.busy, onClick = {
+                                    moreMenu = false
+                                    actions.visit(origin.parentId, origin.parentTurnId, state.messages.lastOrNull()?.turnId.orEmpty())
+                                })
+                            }
                             if (state.lastTrace != null) {
                                 DropdownMenuItem(text = { Text("上下文") }, modifier = Modifier.testTag("openTrace"),
                                     enabled = !state.busy, onClick = { moreMenu = false; traceVisible = true })
@@ -246,19 +269,20 @@ fun ChatScreen(
                         OutlinedButton(onClick = actions.retrySave, modifier = Modifier.testTag("retrySave")) { Text("重试保存") }
                     }
                 }
-                if (state.readOnlyReason == null) ChatComposer(state, actions)
+                if (state.readOnlyReason == null) ChatComposer(state, actions, focusInput, onFocused)
                 else Text("仅可阅读历史 · ${state.readOnlyReason}", modifier = Modifier.padding(12.dp))
             }
         },
     ) { padding ->
         io.github.zvensmoluya.tavernplayer.conversation.web.WebMessageView(state, browserEnvironment, browserInvoke,
             showChatAvatars = showChatAvatars,
+            links = links,
             preparingResources = preparingResources,
             onPreparationFinished = { preparingResources = false },
             onAction = { action, id -> when (action) {
-                "edit" -> state.messages.find { it.message.id == id }?.let { message ->
-                    editingMessageId = message.message.id; editingText = message.message.sourceText
-                }
+                "edit" -> editingMessageId = id
+                "paths" -> pathsTurn = id
+                "origin" -> links.current?.branch?.let { actions.visit(it.parentId, it.parentTurnId, it.localTurnId) }
                 "retry" -> actions.retry()
                 "previous" -> actions.previousVariant()
                 "next" -> actions.nextVariant()
@@ -269,22 +293,28 @@ fun ChatScreen(
         io.github.zvensmoluya.tavernplayer.conversation.reading.ReadingExportDialog(
             conversationTitle, state.character.name, state.messages, onClose = { readingPreview = false })
     }
-    if (editingMessageId != null && pendingMessageEdit == null) {
-        state.messages.firstOrNull { it.message.id == editingMessageId }?.let { target ->
-            AlertDialog(onDismissRequest = { editingMessageId = null }, title = { Text("编辑消息") },
-                text = { OutlinedTextField(value = editingText, onValueChange = { editingText = it },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 420.dp).testTag("webMessageEditor")) },
-                confirmButton = { Column {
-                    TextButton(enabled = !state.busy && editingText.isNotBlank(), onClick = {
-                        actions.editMessage(target.message.id, editingText, MessageEditMode.TEXT_ONLY); editingMessageId = null
-                    }) { Text("保存文字") }
-                    TextButton(enabled = !state.busy && editingText.isNotBlank(), onClick = {
-                        val edit = PendingMessageEdit(target.message.id, editingText, target.message.role == MessageRole.USER,
-                            state.messages.lastIndex - state.messages.indexOf(target), target.variantCount - 1)
-                        if (edit.removedMessageCount > 0 || edit.discardedVariantCount > 0) pendingMessageEdit = edit
-                        else { actions.editMessage(edit.messageId, edit.sourceText, MessageEditMode.RESTART); editingMessageId = null }
-                    }) { Text("从这里重新生成 / 继续") }
-                } }, dismissButton = { TextButton(onClick = { editingMessageId = null }) { Text("取消") } })
+    pathsTurn?.let { anchor ->
+        ScrollableBottomSheet(onDismissRequest = { pathsTurn = null }) {
+            Text("从这里分出的对话", style = MaterialTheme.typography.titleMedium)
+            links.children.filter { it.branch?.parentTurnId == anchor }.forEach { child ->
+                TextButton(enabled = !state.busy, onClick = {
+                    pathsTurn = null; actions.visit(child.id, requireNotNull(child.branch).localTurnId, anchor)
+                }) { Text(child.displayTitle(state.character.name)) }
+            }
+        }
+    }
+    editingMessageId?.let { id ->
+        state.messages.firstOrNull { it.message.id == id }?.let { target ->
+            MessageEditor(target.message, enabled = !state.busy, onDismiss = { editingMessageId = null },
+                onSave = { text ->
+                    actions.editMessage(id, text, MessageEditMode.TEXT_ONLY)
+                    editingMessageId = null
+                },
+                onBranch = { text ->
+                    if (text == target.message.sourceText) actions.branch(id)
+                    else actions.editMessage(id, text, MessageEditMode.BRANCH)
+                    editingMessageId = null
+                })
         }
     }
     if (modelPickerVisible) {
@@ -338,31 +368,54 @@ fun ChatScreen(
             )
         }
     }
-    pendingMessageEdit?.let { edit ->
-        val consequences = buildList {
-            if (edit.removedMessageCount > 0) add("移除后续 ${edit.removedMessageCount} 条消息")
-            if (edit.discardedVariantCount > 0) add("丢弃当前消息的 ${edit.discardedVariantCount} 个其他候选")
-        }.joinToString("，")
-        AlertDialog(
-            modifier = Modifier.testTag("confirmMessageEdit"),
-            onDismissRequest = { pendingMessageEdit = null },
-            title = { Text("从这里重新开始？") },
-            text = { Text("保存修改将$consequences，且无法在当前对话中恢复。") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        actions.editMessage(edit.messageId, edit.sourceText, MessageEditMode.RESTART)
-                        pendingMessageEdit = null
-                        editingMessageId = null
-                        editingText = ""
-                    },
-                    modifier = Modifier.testTag("confirmMessageEditAction"),
-                ) { Text(if (edit.regenerate) "确认并重新生成" else "确认修改") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingMessageEdit = null }) { Text("继续编辑") }
-            },
-        )
+
+}
+
+@Composable
+private fun MessageEditor(
+    message: ConversationMessage,
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit,
+    onBranch: (String) -> Unit,
+) {
+    var text by remember(message.id) { mutableStateOf(message.sourceText) }
+    val changed = text != message.sourceText
+    val colors = MaterialTheme.colorScheme
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 540.dp).fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = colors.surfaceContainerLow,
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("编辑消息", style = MaterialTheme.typography.titleLarge)
+                        Text(message.authorName, style = MaterialTheme.typography.labelMedium,
+                            color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton(onClick = onDismiss) { PlayerIcon(PlayerSymbol.CLOSE, "取消编辑") }
+                }
+                TextField(
+                    value = text, onValueChange = { text = it }, readOnly = !enabled,
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false).testTag("webMessageEditor"),
+                    minLines = 4, maxLines = 12, textStyle = MaterialTheme.typography.bodyLarge,
+                    shape = MaterialTheme.shapes.medium,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = colors.surfaceContainerHighest,
+                        unfocusedContainerColor = colors.surfaceContainerHighest,
+                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                    ),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { onBranch(text) }, modifier = Modifier.weight(1f),
+                        enabled = enabled && (!changed || text.isNotBlank())) { Text("另开分支") }
+                    Button(onClick = { onSave(text) }, modifier = Modifier.weight(1f),
+                        enabled = enabled && changed && text.isNotBlank()) { Text("保存文字") }
+                }
+            }
+        }
     }
 }
 
@@ -376,7 +429,11 @@ private fun ChatMenuLabel(label: String, value: String) {
 }
 
 @Composable
-private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
+private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions, focusInput: Boolean, onFocused: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(focusInput, state.busy) {
+        if (focusInput && !state.busy) { focus.requestFocus(); onFocused() }
+    }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -397,7 +454,7 @@ private fun ChatComposer(state: ChatUiState, actions: ChatScreenActions) {
             OutlinedTextField(
                 value = state.input,
                 onValueChange = actions.updateInput,
-                modifier = Modifier.weight(1f).testTag("chatInput"),
+                modifier = Modifier.weight(1f).focusRequester(focus).testTag("chatInput"),
                 enabled = !state.busy,
                 label = { Text("说点什么") },
                 minLines = 1,
