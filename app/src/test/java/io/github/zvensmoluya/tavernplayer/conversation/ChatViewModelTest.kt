@@ -988,6 +988,50 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `restart rewinds only the current chat and regenerates only for a player turn`() = runTest {
+        val directory = Files.createTempDirectory("tavern-restart").toFile()
+        try {
+            ConversationRepository(directory, PromptCompiler(), ioDispatcher = mainDispatcherRule.dispatcher).use { repo ->
+                val original = repo.create(DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
+                val generator = FakeGenerator { _, _ -> flow {
+                    emit(GenerationEvent.TextDelta("{{getvar::route}}/{{getvar::key}}"))
+                    emit(GenerationEvent.Finished("stop"))
+                } }
+                val vm = ChatViewModel(repository(), PromptCompiler(), generator, repo, FixedPresetSource(),
+                    projectionDispatcher = mainDispatcherRule.dispatcher)
+                vm.loadConversation(original.id)
+                vm.updateInput("{{setvar::route::old}}first"); vm.send()
+                val user = vm.uiState.value.messages[1].message.id
+                vm.updateInput("{{setvar::key::held}}second"); vm.send()
+                vm.branchFromMessage(vm.uiState.value.messages.last().message.id)
+                val child = requireNotNull(vm.uiState.value.conversationId)
+                val retainedChild = repo.get(child)
+                vm.loadConversation(original.id)
+                vm.editMessage(user, "{{setvar::route::new}}changed", MessageEditMode.RESTART)
+                val restarted = requireNotNull(repo.get(original.id))
+                assertEquals(original.id, vm.uiState.value.conversationId)
+                assertEquals(3, restarted.turns.size)
+                assertEquals("new/", restarted.turns.last().selected.message.content)
+                assertEquals(3, generator.calls)
+
+                vm.regenerate()
+                val assistant = vm.uiState.value.messages.last()
+                assertEquals(2, assistant.variantCount)
+                vm.updateInput("another turn"); vm.send()
+                val calls = generator.calls
+                vm.editMessage(assistant.message.id, "edited reply", MessageEditMode.RESTART)
+                val saved = requireNotNull(repo.get(original.id))
+                assertEquals(3, saved.turns.size)
+                assertEquals(1, saved.turns.last().variants.size)
+                assertEquals("edited reply", saved.turns.last().selected.message.content)
+                assertEquals(calls, generator.calls)
+                assertEquals(retainedChild, repo.get(child))
+                assertEquals(2, repo.forCharacter(original.character.assetId).size)
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
     fun `nested branches keep their own checkpoints names and immediate source`() = runTest {
         val directory = Files.createTempDirectory("tavern-branches").toFile()
         try {

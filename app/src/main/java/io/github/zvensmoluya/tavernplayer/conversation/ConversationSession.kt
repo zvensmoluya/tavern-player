@@ -45,7 +45,7 @@ enum class ChatMessageStatus { COMPLETE, STREAMING, CANCELLED, ERROR, INTERRUPTE
 
 enum class GenerationPhase { IDLE, ACTIVE, STOPPING, FINISHING }
 
-enum class MessageEditMode { TEXT_ONLY, BRANCH }
+enum class MessageEditMode { TEXT_ONLY, BRANCH, RESTART }
 
 data class AssistantGenerationMetadata(
     val presetId: String,
@@ -526,7 +526,7 @@ class ConversationSession(
         if (selected.status == PersistedMessageStatus.STREAMING || turn.role == MessageRole.SYSTEM) return
         val capturedPreset = presetSource.captureActive()
         val connection = state.selectedConnection
-        val shouldGenerate = mode == MessageEditMode.BRANCH && turn.role == MessageRole.USER && connection != null
+        val shouldGenerate = mode != MessageEditMode.TEXT_ONLY && turn.role == MessageRole.USER && connection != null
         launchChatOperation(generates = shouldGenerate) {
             val childId = if (mode == MessageEditMode.BRANCH) idGenerator() else null
             val generationId = idGenerator()
@@ -605,7 +605,7 @@ class ConversationSession(
                     )
                     var projected = project(sourceText)
                     var projectedRuntime = projected.runtimeState
-                    if (mode == MessageEditMode.BRANCH) {
+                    if (mode != MessageEditMode.TEXT_ONLY) {
                         applyMvuUpdate(sourceText, projectedRuntime, selected.openingSourceIndex != null)?.let { result ->
                             projected = project(result.processedText)
                             projectedRuntime = result.applyTo(projected.runtimeState)
@@ -662,17 +662,34 @@ class ConversationSession(
                 if (turn.role == MessageRole.USER && connection == null)
                     syncRecord(message = "分支已保存，请配置模型后重试这一轮")
             } else {
-                val editedTurn = turn.copy(variants = turn.variants.mapIndexed { i, v ->
-                    if (i == turn.selectedVariantIndex) editedVariant else v
-                })
-                record = record.copy(turns = record.turns.mapIndexed { i, t -> if (i == turnIndex) editedTurn else t })
+                val rewind = mode == MessageEditMode.RESTART
+                record = if (rewind) {
+                    val editedTurn = turn.copy(variants = listOf(editedVariant), selectedVariantIndex = 0)
+                    record.copy(turns = record.turns.take(turnIndex) + editedTurn,
+                        runtimeState = editedVariant.runtimeStateAfter ?: runtimeBefore).reconcileChoiceDraft()
+                } else {
+                    val editedTurn = turn.copy(variants = turn.variants.mapIndexed { index, variant ->
+                        if (index == turn.selectedVariantIndex) editedVariant else variant
+                    })
+                    record.copy(turns = record.turns.mapIndexed { index, original ->
+                        if (index == turnIndex) editedTurn else original
+                    })
+                }
+                if (rewind) {
+                    val retained = record.turns.flatMap { it.variants }.mapTo(hashSetOf()) { it.message.id }
+                    displayCache.keys.retainAll(retained)
+                    displayReasoningCache.keys.retainAll(retained)
+                }
                 displayCache.remove(messageId)
                 displayReasoningCache.remove(messageId)
                 try { withContext(NonCancellable) { persistNow() } } catch (error: Exception) {
                     record = conversationRepository?.get(record.id) ?: record
                     throw error
                 }
-                syncRecord(message = null)
+                val needsModel = rewind && turn.role == MessageRole.USER && connection == null
+                syncRecord(retryAvailable = if (rewind) needsModel else state.retryAvailable,
+                    message = if (needsModel) "已回到这条消息，配置模型后可重试这一轮" else null,
+                    trace = if (rewind) null else state.lastTrace)
             }
             refreshDisplayCache(capturedPreset)
             if (shouldGenerate) {

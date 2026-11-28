@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -43,6 +44,24 @@ import org.robolectric.annotation.Config
 class ChatScreenTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test fun `restart confirms discarded history and keeps the edit on cancellation`() {
+        val screen = state(messages = listOf(ChatMessageState(message(), variantCount = 2),
+            ChatMessageState(message(id = "next", role = MessageRole.USER))))
+        val edits = mutableListOf<Pair<MessageEditMode, String>>()
+        compose.setContent { TavernPlayerTheme { ChatScreen(screen, actions().copy(
+            editMessage = { _, text, mode -> edits.add(mode to text) })) } }
+        compose.onAllNodesWithContentDescription("编辑消息")[0].performClick()
+        compose.onNodeWithTag("webMessageEditor").performTextReplacement("换一句")
+        compose.onNodeWithText("原地重来").performClick()
+        compose.onNodeWithText("后续 1 条消息和这条消息的 1 个其他候选", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("返回编辑").performClick()
+        assertTrue(edits.isEmpty())
+        compose.onNodeWithTag("webMessageEditor").assertTextEquals("换一句")
+        compose.onNodeWithText("原地重来").performClick()
+        compose.onNodeWithText("确认重来").performClick()
+        assertEquals(listOf(MessageEditMode.RESTART to "换一句"), edits)
+    }
 
     @Test fun `composer shows stop throughout generation and reports finalization`() {
         var screen by mutableStateOf(state().copy(browserOperationRunning = true))

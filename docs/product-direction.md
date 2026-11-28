@@ -89,7 +89,7 @@
 ## 3. Conversation 与剧情状态
 
 - 一个 Character 可以创建多个独立 Conversation。
-- Conversation 当前实现 opening swipe、assistant regenerate / swipe、进程恢复，以及用户 / assistant 历史消息的内联编辑。“保存文字”保留后续事实与既有运行状态，只让未来请求读取修正后的 canonical history；玩家可从某条消息另开对话，或在编辑时「另开分支」，从该处的运行检查点继续。原对话独立保存。列表平级显示路线名与根故事名，分叉处可查看直接来源和其他走法。分支从第一句有内容的新玩家发言取名，之前用分叉消息短摘，手动命名优先。delete、continue 留在后续 Conversation 工作；impersonate、quiet 和自动操作不作为 V1 核心要求。
+- Conversation 当前实现 opening swipe、assistant regenerate / swipe、进程恢复，以及用户 / assistant 历史消息的内联编辑。“保存文字”保留后续事实与既有运行状态，只让未来请求读取修正后的 canonical history；玩家可从某条消息另开对话，或在编辑时「另开分支」，从该处的运行检查点继续。原对话独立保存。「原地重来」在当前对话恢复编辑处的剧情状态，使用改后的消息继续。若将丢弃后文或当前楼层的其他候选，先显示数量供确认。列表平级显示路线名与根故事名，分叉处可查看直接来源和其他走法。分支从第一句有内容的新玩家发言取名，之前用分叉消息短摘，手动命名优先。delete、continue 留在后续 Conversation 工作；impersonate、quiet 和自动操作不作为 V1 核心要求。
 - 创建 Conversation 时，从当前 Character Asset 实例化 Character Snapshot：`Character Asset -> Character Snapshot -> Conversation`。
 - Character Asset 的后续修改不会隐式改变旧 Conversation。旧 Conversation 升级角色版本必须显式进行。
 - Conversation 不维护 ST 式的 scenario、system prompt、examples 等 Character override patch。未来若允许会话内修改角色设定，修改的是该 Conversation 自己的 Character Snapshot。

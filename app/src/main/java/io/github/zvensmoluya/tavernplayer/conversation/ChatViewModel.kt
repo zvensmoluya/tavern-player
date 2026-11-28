@@ -56,8 +56,8 @@ class ChatViewModel(
     fun retry() = session.retry()
     fun regenerate() = session.regenerate()
     fun editMessage(messageId: String, sourceText: String, mode: MessageEditMode) {
-        if (mode == MessageEditMode.TEXT_ONLY) session.editMessage(messageId, sourceText, mode)
-        else session.editMessage(messageId, sourceText, mode, branchOpened(messageId, false))
+        if (mode == MessageEditMode.BRANCH) session.editMessage(messageId, sourceText, mode, branchOpened(messageId, false))
+        else session.editMessage(messageId, sourceText, mode)
     }
     fun branchFromMessage(messageId: String) = session.branchFromMessage(messageId, branchOpened(messageId, true))
     fun previousVariant() = session.previousVariant()

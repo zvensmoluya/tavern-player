@@ -30,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -306,6 +307,12 @@ fun ChatScreen(
     editingMessageId?.let { id ->
         state.messages.firstOrNull { it.message.id == id }?.let { target ->
             MessageEditor(target.message, enabled = !state.busy, onDismiss = { editingMessageId = null },
+                laterCount = state.messages.lastIndex - state.messages.indexOf(target),
+                otherVariants = target.variantCount - 1,
+                onRestart = { text ->
+                    actions.editMessage(id, text, MessageEditMode.RESTART)
+                    editingMessageId = null
+                },
                 onSave = { text ->
                     actions.editMessage(id, text, MessageEditMode.TEXT_ONLY)
                     editingMessageId = null
@@ -376,10 +383,26 @@ private fun MessageEditor(
     message: ConversationMessage,
     enabled: Boolean,
     onDismiss: () -> Unit,
+    laterCount: Int,
+    otherVariants: Int,
+    onRestart: (String) -> Unit,
     onSave: (String) -> Unit,
     onBranch: (String) -> Unit,
 ) {
     var text by remember(message.id) { mutableStateOf(message.sourceText) }
+    var confirmingRestart by remember(message.id) { mutableStateOf(false) }
+    if (confirmingRestart) {
+        val removed = listOfNotNull(
+            "后续 ${laterCount} 条消息".takeIf { laterCount > 0 },
+            "这条消息的 ${otherVariants} 个其他候选".takeIf { otherVariants > 0 },
+        ).joinToString("和")
+        AlertDialog(onDismissRequest = { confirmingRestart = false },
+            title = { Text("在当前对话重来？") },
+            text = { Text("将移除$removed，并从编辑框中的这句话继续。") },
+            confirmButton = { TextButton(enabled = enabled, onClick = { onRestart(text) }) { Text("确认重来") } },
+            dismissButton = { TextButton(onClick = { confirmingRestart = false }) { Text("返回编辑") } })
+        return
+    }
     val changed = text != message.sourceText
     val colors = MaterialTheme.colorScheme
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -408,10 +431,15 @@ private fun MessageEditor(
                         focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
                     ),
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = { onBranch(text) }, modifier = Modifier.weight(1f),
+                val actionPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = {
+                        if (laterCount > 0 || otherVariants > 0) confirmingRestart = true else onRestart(text)
+                    }, modifier = Modifier.weight(1f), contentPadding = actionPadding,
+                        enabled = enabled && text.isNotBlank()) { Text("原地重来") }
+                    OutlinedButton(contentPadding = actionPadding, onClick = { onBranch(text) }, modifier = Modifier.weight(1f),
                         enabled = enabled && (!changed || text.isNotBlank())) { Text("另开分支") }
-                    Button(onClick = { onSave(text) }, modifier = Modifier.weight(1f),
+                    Button(contentPadding = actionPadding, onClick = { onSave(text) }, modifier = Modifier.weight(1f),
                         enabled = enabled && changed && text.isNotBlank()) { Text("保存文字") }
                 }
             }
