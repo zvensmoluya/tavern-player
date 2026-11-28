@@ -14,6 +14,7 @@ import java.util.concurrent.Callable
 class RoomConversationStore(context: Context, filesDir: File, databaseOverride: ConversationDatabase? = null) : AutoCloseable {
     val file = File(filesDir, "tavern/conversation.db").also { it.parentFile!!.mkdirs() }
     val database = databaseOverride ?: Room.databaseBuilder(context.applicationContext, ConversationDatabase::class.java, file.absolutePath)
+        .addMigrations(conversationTitleMigration)
         .setJournalMode(androidx.room.RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING).build()
     val dao = database.conversations()
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
@@ -174,8 +175,12 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
         }
         if (activity || previous == null || saved.turns !== previous.turns) {
             val preview = saved.turns.asReversed().firstNotNullOfOrNull { it.selected.message.content.trim().takeIf(String::isNotBlank)?.take(160) } ?: "空白对话"
+            val prior = dao.summary(saved.id)
+            val number = prior?.number ?: dao.nextNumber(saved.character.assetId)
+            val title = prior?.title ?: saved.turns.asSequence().filter { it.role == MessageRole.USER }.take(TITLE_WINDOW)
+                .firstNotNullOfOrNull { titleExcerpts(it.selected.message.sourceText).firstOrNull() }
             dao.put(ConversationSummary(saved.id, saved.character.assetId, saved.createdAtEpochMillis, saved.updatedAtEpochMillis,
-                saved.turns.size, preview, saved.executionMode.name))
+                saved.turns.size, preview, saved.executionMode.name, number, title))
         }
         finishStream?.let { id ->
             val stream = requireNotNull(dao.stream(id)) { "生成进度不存在" }

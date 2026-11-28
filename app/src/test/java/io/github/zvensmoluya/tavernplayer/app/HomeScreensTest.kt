@@ -67,9 +67,9 @@ class HomeScreensTest {
 
     @Test fun `global history preserves separate stories including missing character assets`() {
         val summaries = listOf(
-            ConversationSummary("old", "a", 0, 10, 2, "较早的一场故事", "BROWSER"),
-            ConversationSummary("new", "a", 0, 30, 5, "<b>最新的故事</b>", "BROWSER"),
-            ConversationSummary("missing", "removed", 0, 20, 1, "保留的聊天", "BROWSER"),
+            ConversationSummary("old", "a", 0, 10, 2, "较早的一场故事", "BROWSER", 1, "收起那封信"),
+            ConversationSummary("new", "a", 0, 30, 5, "<b>最新的故事</b>", "BROWSER", 2),
+            ConversationSummary("missing", "removed", 0, 20, 1, "保留的聊天", "BROWSER", 1),
         )
         var selected: String? = null
         compose.setContent { TavernPlayerTheme {
@@ -79,7 +79,8 @@ class HomeScreensTest {
                     { null }, { selected = it }, {})
             }
         } }
-        compose.onAllNodesWithText("角色样本 A").assertCountEquals(2)
+        compose.onNodeWithText("收起那封信").assertIsDisplayed()
+        compose.onNodeWithText("角色样本 A · 第 2 场").assertIsDisplayed()
         compose.onNodeWithText("最新的故事").assertIsDisplayed()
         assertTrue(compose.onNodeWithTag("recent-new").fetchSemanticsNode().boundsInRoot.top <
             compose.onNodeWithTag("recent-old").fetchSemanticsNode().boundsInRoot.top)

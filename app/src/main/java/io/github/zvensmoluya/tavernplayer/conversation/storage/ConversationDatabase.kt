@@ -1,6 +1,11 @@
 package io.github.zvensmoluya.tavernplayer.conversation.storage
 
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import io.github.zvensmoluya.tavernplayer.conversation.TITLE_SOURCE_LENGTH
+import io.github.zvensmoluya.tavernplayer.conversation.TITLE_WINDOW
+import io.github.zvensmoluya.tavernplayer.conversation.titleExcerpts
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "conversation_head")
@@ -10,7 +15,40 @@ data class HeadRow(@PrimaryKey val id: String, val revision: Long, val metadata:
 @Entity(tableName = "conversation_summary", indices = [Index(value = ["assetId", "updatedAtEpochMillis", "id"])],
     foreignKeys = [ForeignKey(entity = HeadRow::class, parentColumns = ["id"], childColumns = ["id"], onDelete = ForeignKey.CASCADE)])
 data class ConversationSummary(@PrimaryKey val id: String, val assetId: String, val createdAtEpochMillis: Long,
-    val updatedAtEpochMillis: Long, val turnCount: Int, val preview: String, val executionMode: String)
+    val updatedAtEpochMillis: Long, val turnCount: Int, val preview: String, val executionMode: String,
+    @ColumnInfo(defaultValue = "0") val number: Int, val title: String? = null) {
+    fun displayTitle(characterName: String) = title ?: "$characterName · 第 $number 场"
+}
+
+private const val TITLE_SOURCES = "SELECT substr(CAST(b.bytes AS TEXT), 1, $TITLE_SOURCE_LENGTH) " +
+    "FROM conversation_turn t JOIN variant v ON v.id = t.selectedVariantId " +
+    "JOIN content_blob b ON b.id = v.source WHERE t.role = 'USER' AND t.conversationId = "
+private const val OPENING_ORDER = " ORDER BY t.position, t.id LIMIT $TITLE_WINDOW"
+private const val RECENT_ORDER = " ORDER BY t.position DESC, t.id DESC LIMIT $TITLE_WINDOW"
+
+internal val conversationTitleMigration = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE conversation_summary ADD COLUMN number INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE conversation_summary ADD COLUMN title TEXT")
+        db.query("SELECT id, assetId FROM conversation_summary WHERE executionMode = 'BROWSER' " +
+            "ORDER BY assetId, createdAtEpochMillis, id").use { rows ->
+            var lastCharacter: String? = null
+            var number = 0
+            while (rows.moveToNext()) {
+                val id = rows.getString(0)
+                val asset = rows.getString(1)
+                if (asset != lastCharacter) { number = 0; lastCharacter = asset }
+                val title = db.query(TITLE_SOURCES + "?" + OPENING_ORDER, arrayOf(id)).use { messages ->
+                    var found: String? = null
+                    while (found == null && messages.moveToNext()) found = titleExcerpts(messages.getString(0)).firstOrNull()
+                    found
+                }
+                number++
+                db.execSQL("UPDATE conversation_summary SET number = ?, title = ? WHERE id = ?", arrayOf<Any?>(number, title, id))
+            }
+        }
+    }
+}
 
 @Entity(tableName = "conversation_draft", foreignKeys = [ForeignKey(entity = HeadRow::class,
     parentColumns = ["id"], childColumns = ["id"], onDelete = ForeignKey.CASCADE)])
@@ -57,6 +95,13 @@ data class ImportRow(@PrimaryKey val id: String, val sha256: String)
 
 @Dao
 interface ConversationDao {
+    @Query("SELECT * FROM conversation_summary WHERE id = :id") fun summary(id: String): ConversationSummary?
+    @Query("SELECT COALESCE(MAX(number), 0) + 1 FROM conversation_summary WHERE assetId = :assetId AND executionMode = 'BROWSER'")
+    fun nextNumber(assetId: String): Int
+    @Query(TITLE_SOURCES + ":id" + OPENING_ORDER) fun openingTitleSources(id: String): List<String>
+    @Query(TITLE_SOURCES + ":id" + RECENT_ORDER) fun recentTitleSources(id: String): List<String>
+    @Query("UPDATE conversation_summary SET title = :title WHERE id = :id AND executionMode = 'BROWSER'")
+    fun rename(id: String, title: String): Int
     @Query("SELECT EXISTS(SELECT 1 FROM conversation_summary WHERE id = :id AND executionMode = 'BROWSER')")
     fun containsBrowserConversation(id: String): Boolean
 
@@ -107,5 +152,5 @@ interface ConversationDao {
 
 @Database(entities = [HeadRow::class, ConversationSummary::class, DraftRow::class, TurnRow::class, VariantRow::class,
     BlobRow::class, PlanRow::class, PlanPartRow::class, OperationRow::class, StreamRow::class, ChunkRow::class, ImportRow::class],
-    version = 1, exportSchema = true)
+    version = 2, exportSchema = true)
 abstract class ConversationDatabase : RoomDatabase() { abstract fun conversations(): ConversationDao }

@@ -44,6 +44,7 @@ The complicated parts can stay underneath. They don't all need to become setting
 | **Bring your characters** | Import V1 / V2 / V3 JSON or PNG / APNG character cards. Scan Tavern Shelf to receive cards, world books, or supported presets over the same local network. |
 | **Explore their worlds** | Read character definitions, creator notes, and world books. Prepare character images for offline viewing. Import, edit, enable, and export global world books independently. |
 | **Step in as yourself** | Set your name, description, and avatar. New conversations capture that identity; each character can have multiple independent conversations. |
+| **Find a conversation again** | Early player messages supply the conversation title. Tap the pencil in the list to pick another line you wrote or enter a name. |
 | **Choose how replies read** | Use the built-in default or import an ST OpenAI / Chat Completion Preset. Adjust, restore, save copies, and export without losing imported fields. Connect services using supported OpenAI, Anthropic, and Gemini protocols. |
 | **Experience authored interactions** | A native input bar accompanies a web message surface. Author HTML/JS runs within declared host capabilities, with compilation-free MVU/EJS preparation. |
 | **Keep the conversation going** | Choose greetings, regenerate replies, switch variants, and edit history. Character snapshots and runtime state persist across process restarts. |

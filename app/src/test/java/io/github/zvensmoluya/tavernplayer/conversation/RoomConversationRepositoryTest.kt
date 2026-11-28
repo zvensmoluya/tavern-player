@@ -29,6 +29,73 @@ class RoomConversationRepositoryTest {
     private suspend fun create(repository: ConversationRepository) = repository.create(
         DemoConversationContent.character, DemoConversationContent.persona, DemoConversationContent.preset)
 
+    private fun playerReply(id: String, text: String): ConversationTurn {
+        val message = ConversationMessage(id, MessageRole.USER, text, "Reader")
+        return ConversationTurn(id, MessageRole.USER, listOf(MessageVariant(id, message)))
+    }
+
+    @Test fun `titles use sent player excerpts and survive subsequent saves and reopen`() = runBlocking {
+        val root = folder.newFolder()
+        val id = ConversationRepository(root, compiler).use { repo ->
+            val first = create(repo)
+            val second = create(repo)
+            assertEquals(1, repo.forCharacter(first.character.assetId).single { it.id == first.id }.number)
+            assertEquals(2, repo.forCharacter(first.character.assetId).single { it.id == second.id }.number)
+            val greeting = repo.save(first.copy(draft = "不要取草稿", turns = first.turns + playerReply("hi", "你好，继续！")), first)
+            assertNull(repo.store.dao.summary(first.id)!!.title)
+            val sent = repo.save(greeting.copy(turns = greeting.turns + playerReply("act", "我把信收进口袋，决定暂时不告诉她。")), greeting)
+            assertEquals("决定暂时不告诉她", repo.store.dao.summary(first.id)!!.title)
+            val later = (1..8).map { playerReply("next$it", "第${it}天，我去钟楼。") } + playerReply("last", "别开门！")
+            val active = repo.save(sent.copy(turns = sent.turns + later), sent)
+            assertEquals("决定暂时不告诉她", repo.store.dao.summary(first.id)!!.title)
+            val options = repo.titleSuggestions(first.id)
+            assertTrue("别开门！" in options)
+            assertTrue("我把信收进口袋" in options)
+            assertFalse(options.any { "你好" in it })
+            assertEquals(options.distinct(), options)
+            val before = repo.store.dao.summary(first.id)!!
+            repo.rename(first.id, "  灯塔旧事  ")
+            assertEquals(before.copy(title = "灯塔旧事"), repo.store.dao.summary(first.id))
+            repo.save(active.copy(turns = active.turns.dropLast(1)), active)
+            repo.rename(second.id, "手填的开场")
+            repo.save(second.copy(turns = second.turns + playerReply("second-act", "我认罪")), second)
+            assertEquals("手填的开场", repo.store.dao.summary(second.id)!!.title)
+            first.id
+        }
+        ConversationRepository(root, compiler).use { repo ->
+            val summary = repo.conversations.first().single { it.id == id }
+            assertEquals("灯塔旧事", summary.title)
+            assertEquals(1, summary.number)
+        }
+    }
+
+    @Test fun `version one histories gain numbers and titles without rewriting messages`() = runBlocking {
+        val root = folder.newFolder()
+        val (old, empty) = ConversationRepository(root, compiler).use { repo ->
+            val first = create(repo)
+            val saved = repo.save(first.copy(turns = first.turns + playerReply("continue", "继续") +
+                playerReply("choice", "别开门")), first)
+            saved to create(repo)
+        }
+        // Reproduce the v1 file by removing the only two columns introduced in v2.
+        android.database.sqlite.SQLiteDatabase.openDatabase(File(root, "tavern/conversation.db").path, null,
+            android.database.sqlite.SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.execSQL("ALTER TABLE conversation_summary DROP COLUMN title")
+            db.execSQL("ALTER TABLE conversation_summary DROP COLUMN number")
+            db.version = 1
+        }
+        ConversationRepository(root, compiler, context = ApplicationProvider.getApplicationContext()).use { repo ->
+            val summaries = repo.conversations.first()
+            assertEquals(setOf(1, 2), summaries.map { it.number }.toSet())
+            assertEquals("别开门", summaries.single { it.id == old.id }.title)
+            assertNull(summaries.single { it.id == empty.id }.title)
+            assertEquals(old, repo.get(old.id))
+            assertEquals(empty, repo.get(empty.id))
+            val third = create(repo)
+            assertEquals(3, repo.forCharacter(third.character.assetId).single { it.id == third.id }.number)
+        }
+    }
+
     @Test fun `only web conversations are imported listed and opened`() = runBlocking {
         val root = folder.newFolder()
         val legacyJson = File(root, "tavern/conversations/native.json")

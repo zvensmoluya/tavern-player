@@ -62,6 +62,7 @@ internal fun ConversationLibraryScreen(
     avatarPath: (String) -> String?,
     onOpenConversation: (String) -> Unit,
     onOpenCharacters: () -> Unit,
+    onRename: (String) -> Unit = {},
 ) {
     val characters = remember(state.characters) { state.characters.associateBy { it.id } }
     // Do not group by character: one row is one independently saved story.
@@ -97,17 +98,21 @@ internal fun ConversationLibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     CharacterPortrait(avatarPath(conversation.assetId), name, Modifier.size(58.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(conversationTime(conversation.updatedAtEpochMillis), style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text(conversation.displayTitle(name), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(preview, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${conversation.turnCount} 条消息 · 开始于 ${conversationDate(conversation.createdAtEpochMillis)}",
+                        val count = "${conversation.turnCount} 条消息"
+                        Text(if (conversation.title == null) count else "$name · 第 ${conversation.number} 场 · $count",
                             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(conversationTime(conversation.updatedAtEpochMillis), style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        IconButton(onClick = { onRename(conversation.id) }, modifier = Modifier.testTag("rename-${conversation.id}")) {
+                            PlayerIcon(PlayerSymbol.EDIT, "更换对话名", Modifier.size(18.dp))
+                        }
                     }
                 }
                 HorizontalDivider(Modifier.padding(start = 92.dp, end = 20.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
@@ -182,6 +187,3 @@ private fun conversationTime(time: Long): String {
         else -> date.format(DateTimeFormatter.ofPattern(if (date.year == today.year) "MM-dd" else "yyyy-MM-dd"))
     }
 }
-
-private fun conversationDate(time: Long): String = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
-    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))

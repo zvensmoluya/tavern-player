@@ -77,6 +77,7 @@ fun ChatRoute(
     onOpenPresets: () -> Unit,
     onOpenGlobalWorldBooks: () -> Unit = {},
     showChatAvatars: Boolean = false,
+    onRename: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsState()
     val presetState by presetViewModel.uiState.collectAsState()
@@ -99,6 +100,7 @@ fun ChatRoute(
             selectConnection = viewModel::selectConnection,
             reset = viewModel::resetConversation,
             back = onBack,
+            rename = onRename,
             openModels = onOpenModels,
             selectPreset = presetViewModel::activate,
             openPresets = onOpenPresets,
@@ -123,6 +125,7 @@ data class ChatScreenActions(
     val previousVariant: () -> Unit = {},
     val nextVariant: () -> Unit = {},
     val back: () -> Unit = {},
+    val rename: () -> Unit = {},
     val selectPreset: (String) -> Unit = {},
     val openPresets: () -> Unit = {},
     val openGlobalWorldBooks: () -> Unit = {},
@@ -209,6 +212,10 @@ fun ChatScreen(
                                 modifier = Modifier.testTag("choosePreset"), enabled = !state.busy,
                                 onClick = { moreMenu = false; presetPickerVisible = true },
                             )
+                            if (state.conversationId != null) {
+                                DropdownMenuItem(text = { Text("更换对话名") },
+                                    onClick = { moreMenu = false; actions.rename() })
+                            }
                             if (state.lastTrace != null) {
                                 DropdownMenuItem(text = { Text("上下文") }, modifier = Modifier.testTag("openTrace"),
                                     enabled = !state.busy, onClick = { moreMenu = false; traceVisible = true })

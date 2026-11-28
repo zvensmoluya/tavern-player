@@ -39,6 +39,36 @@ class HomeNavigationTest {
 
     @After fun close() { models.clear(); repository?.close() }
 
+    @Test fun `pick a recent player line from history and rename it manually from chat`() {
+        val fixture = fixture()
+        val id = fixture.conversationId
+        val repo = requireNotNull(repository)
+        runBlocking {
+            val saved = requireNotNull(repo.get(id))
+            val turns = listOf("别开门", "把灯熄了").mapIndexed { index, text ->
+                val message = ConversationMessage("reply-$index", MessageRole.USER, text, "玩家")
+                ConversationTurn(message.id, MessageRole.USER, listOf(MessageVariant(message.id, message)))
+            }
+            repo.save(saved.copy(turns = saved.turns + turns), saved)
+        }
+        compose.setContent { TavernPlayerTheme { fixture.Content() } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText("别开门").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("rename-$id").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodes(hasText("把灯熄了") and hasAnyAncestor(isDialog())).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(hasText("把灯熄了") and hasAnyAncestor(isDialog())).performClick()
+        compose.waitUntil(5_000) { fixture.library.uiState.value.conversations.single().title == "把灯熄了" }
+        compose.onNodeWithTag("recent-$id").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("chatMore").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("chatMore").performClick()
+        compose.onNodeWithText("更换对话名").performClick()
+        compose.onNodeWithText("自己填写").performClick()
+        compose.onNode(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextInput("灯塔旧事")
+        compose.onNodeWithText("保存").performClick()
+        compose.waitUntil(5_000) { fixture.library.uiState.value.conversations.single().title == "灯塔旧事" }
+        compose.onNodeWithTag("backToCharacter").performClick()
+        compose.onNodeWithText("灯塔旧事").assertIsDisplayed()
+    }
+
     @Test fun `global chat opens without a selected character and returns to history after restoration`() {
         val fixture = fixture()
         val restoration = StateRestorationTester(compose)

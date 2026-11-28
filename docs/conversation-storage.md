@@ -8,12 +8,12 @@
 
 ViewModel 仅暴露 UI 状态、转发输入与处理销毁。Session 持有唯一可写 record、已提交基线、草稿、生成缓冲、待提交结果和业务版本；原生与网页操作共用提交锁。数据库只保存和读取数据，不执行模型、规则或作者代码。
 
-Room 2.8.4 使用 KSP 生成 DAO，开启 WAL；schema 1 保存在 `app/schemas`，没有 destructive migration。选型来源：[Room 发布说明](https://developer.android.com/jetpack/androidx/releases/room)、[KSP 发布记录](https://github.com/google/ksp/releases/tag/2.3.6)。
+Room 2.8.4 使用 KSP 生成 DAO，开启 WAL。schema 1、2 保存在 `app/schemas`。1 → 2 在原库的会话摘要上新增标题与编号，按角色、创建时间、ID 为已有网页会话编号，从开局已选中的玩家发言回填标题。消息、候选与活动时间保留。选型来源：[Room 发布说明](https://developer.android.com/jetpack/androidx/releases/room)、[KSP 发布记录](https://github.com/google/ksp/releases/tag/2.3.6)。
 
 | 数据 | 表及行为 |
 | --- | --- |
 | 会话头 | `conversation_head`：版本、角色/Persona/运行状态/世界书的内容引用 |
-| 列表 | `conversation_summary`：角色 ID、活动时间、消息数、预览、执行模式；列表 Flow 仅观察该表 |
+| 列表 | `conversation_summary`：角色 ID、角色内编号、稳定标题、活动时间、消息数、预览、执行模式；列表 Flow 仅观察该表 |
 | 草稿 | `conversation_draft`：正文、来源、单调递增 draftSeq；普通打字不改历史或活动时间 |
 | 消息与候选 | `conversation_turn`、`variant`：稳定身份、顺序、选中候选、正文/推理/检查点引用 |
 | 生成诊断 | `generation`、`generation_part`：计划元数据、逐条请求消息、trace、diagnostic；正文按内容复用 |
@@ -23,6 +23,8 @@ Room 2.8.4 使用 KSP 生成 DAO，开启 WAL；schema 1 保存在 `app/schemas`
 | 旧数据 | `legacy_import`：来源哈希、逐份完成标记、全体激活标记 |
 
 活动会话的读取共享相同正文与运行检查点实例，避免把完整 turn 列表重新编码成 JSON 后再解码。保存以已提交对象为基线，只编码变化的候选和计划部分。业务事务校验 revision、消息所属会话、候选所属消息、选中候选与重复身份。
+
+新会话在创建事务中按同一角色的最大编号加一。标题为空时才从前六条玩家发言中取名，写入后随存档保留。点选或手填只更新摘要的标题列；并发保存从数据库读取现有标题。打开更名对话框才读取前六条和最近六条玩家发言的 source 摘录，不装载生成明细和完整存档。
 
 `content_blob` 沿用 schema 1 和原有指纹。读取时每次查询最多返回 256 KiB，小内容一次取完。大内容按 SQLite BLOB 的字节偏移分段查询，拼齐后再解码 UTF-8，保留跨段的多字节字符。已有会话可以直接使用这条读取路径。当流式上下文大于设备的 `CursorWindow` 时，重新打开会话也能读取已保存的预设和事件。
 

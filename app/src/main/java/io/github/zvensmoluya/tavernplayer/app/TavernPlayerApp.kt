@@ -23,6 +23,7 @@ import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsRoute
 import io.github.zvensmoluya.tavernplayer.connections.ModelConnectionsViewModel
 import io.github.zvensmoluya.tavernplayer.conversation.ChatRoute
 import io.github.zvensmoluya.tavernplayer.conversation.ChatViewModel
+import io.github.zvensmoluya.tavernplayer.conversation.ConversationTitleDialog
 import io.github.zvensmoluya.tavernplayer.personas.PersonaRoute
 import io.github.zvensmoluya.tavernplayer.personas.PersonaViewModel
 import io.github.zvensmoluya.tavernplayer.presets.PresetRoute
@@ -41,6 +42,7 @@ fun TavernPlayerApp(
     var surface by rememberSaveable { mutableStateOf(AppSurface.CONVERSATIONS) }
     var returnFromChat by rememberSaveable { mutableStateOf(AppSurface.CONVERSATIONS) }
     var activeConversationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var renameId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailCharacterId by rememberSaveable { mutableStateOf<String?>(null) }
     val screenState = rememberSaveableStateHolder()
     var returnFromModels by rememberSaveable { mutableStateOf(AppSurface.CHARACTER_LIBRARY) }
@@ -110,6 +112,7 @@ fun TavernPlayerApp(
                     AppSurface.CONVERSATIONS -> ConversationLibraryScreen(
                         libraryState, characterLibraryViewModel::avatarPath, characterLibraryViewModel::openConversation,
                         onOpenCharacters = { navigateHome(AppSurface.CHARACTER_LIBRARY) },
+                        onRename = { renameId = it },
                     )
                     AppSurface.MY -> MyScreen(libraryState.persona, ::openPersona, ::openPresets, ::openWorldBooks,
                         libraryState.showChatAvatars, characterLibraryViewModel::setShowChatAvatars)
@@ -163,6 +166,7 @@ fun TavernPlayerApp(
                         viewModel = chatViewModel(),
                         presetViewModel = presetViewModel,
                         showChatAvatars = libraryState.showChatAvatars,
+                        onRename = { renameId = activeConversationId },
                         onBack = { activeConversationId = null; surface = returnFromChat },
                         onOpenModels = ::openModels,
                         onOpenPresets = ::openPresets,
@@ -192,6 +196,11 @@ fun TavernPlayerApp(
                 }
             }
         }
+    }
+    libraryState.conversations.firstOrNull { it.id == renameId }?.let { summary ->
+        val name = libraryState.characters.firstOrNull { it.id == summary.assetId }?.name ?: "已保存的角色"
+        ConversationTitleDialog(summary.id, summary.displayTitle(name), characterLibraryViewModel::titleSuggestions,
+            characterLibraryViewModel::renameConversation, onDismiss = { renameId = null })
     }
 }
 
@@ -227,6 +236,7 @@ private fun OpenedConversation(
     viewModel: ChatViewModel,
     presetViewModel: () -> PresetViewModel,
     showChatAvatars: Boolean,
+    onRename: () -> Unit,
     onBack: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenPresets: () -> Unit,
@@ -240,7 +250,7 @@ private fun OpenedConversation(
     }
     if (state.conversationId == conversationId && !state.loadingConversation) {
         ChatRoute(viewModel, presetViewModel(),
-            onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets,
+            onBack = onBack, onOpenModels = onOpenModels, onOpenPresets = onOpenPresets, onRename = onRename,
             onOpenGlobalWorldBooks = onOpenGlobalWorldBooks, showChatAvatars = showChatAvatars)
     } else {
         BackHandler { if (!state.loadingConversation) onBack() }

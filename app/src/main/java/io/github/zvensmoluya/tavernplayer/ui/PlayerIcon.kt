@@ -16,7 +16,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
-enum class PlayerSymbol { CHAT, CHARACTERS, MODEL, PERSON, SEARCH, ADD, GRID, LIST, CHEVRON, BOOK, PRESET, CLOSE, MORE, CHECK }
+enum class PlayerSymbol { CHAT, CHARACTERS, MODEL, PERSON, SEARCH, ADD, GRID, LIST, CHEVRON, BOOK, PRESET, CLOSE, MORE, CHECK, EDIT }
 
 /** Small shared line icons; no bitmap assets or font dependency. */
 @Composable
@@ -56,6 +56,13 @@ fun PlayerIcon(symbol: PlayerSymbol, description: String? = null, modifier: Modi
                 PlayerSymbol.ADD -> { line(12f, 4f, 12f, 20f); line(4f, 12f, 20f, 12f) }
                 PlayerSymbol.CHECK -> { line(4f, 12f, 9f, 17f); line(9f, 17f, 20f, 6f) }
                 PlayerSymbol.MORE -> for (x in listOf(5f, 12f, 19f)) drawCircle(color, 1.6f, Offset(x, 12f))
+                PlayerSymbol.EDIT -> {
+                    drawPath(Path().apply {
+                        moveTo(4f, 16f); lineTo(3f, 21f); lineTo(8f, 20f); lineTo(21f, 7f)
+                        lineTo(17f, 3f); close()
+                    }, color, style = stroke)
+                    line(14f, 6f, 18f, 10f)
+                }
                 PlayerSymbol.CLOSE -> { line(5f, 5f, 19f, 19f); line(19f, 5f, 5f, 19f) }
                 PlayerSymbol.GRID -> for (x in listOf(3f, 14f)) for (y in listOf(3f, 14f)) box(x, y, 7f, 7f, 1f)
                 PlayerSymbol.LIST -> for (y in listOf(4f, 11f, 18f)) {

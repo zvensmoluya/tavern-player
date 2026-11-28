@@ -141,6 +141,9 @@ class CharacterLibraryViewModel(
         }
     }
 
+    suspend fun titleSuggestions(id: String) = conversationRepository().titleSuggestions(id)
+    suspend fun renameConversation(id: String, title: String) = conversationRepository().rename(id, title)
+
     fun setLayout(layout: CharacterLibraryLayout) {
         _uiState.update { it.copy(layout = layout) }
         viewModelScope.launch {

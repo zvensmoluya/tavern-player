@@ -281,9 +281,12 @@ fun CharacterDetailScreen(
                         onClick = { onOpenConversation(conversation.id) },
                     ) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(conversation.displayTitle(character.name), style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(conversation.preview, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            val activity = "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)}"
                             Text(
-                                "${conversation.turnCount} 条消息 · ${formatTimestamp(conversation.updatedAtEpochMillis)}",
+                                if (conversation.title == null) activity else "第 ${conversation.number} 场 · $activity",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

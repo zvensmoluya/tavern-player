@@ -207,6 +207,21 @@ class ConversationRepository(
 
     internal suspend fun readPlan(variantId: String) = withContext(ioDispatcher) { store.readPlan(variantId) }
 
+    suspend fun titleSuggestions(id: String): List<String> = withContext(ioDispatcher) {
+        ensureInitialized()
+        store.database.runInTransaction(java.util.concurrent.Callable {
+            suggestedTitles(store.dao.openingTitleSources(id), store.dao.recentTitleSources(id))
+        })
+    }
+
+    suspend fun rename(id: String, value: String) = withContext(ioDispatcher) {
+        val title = cleanConversationTitle(value)
+        require(title.isNotEmpty()) { "请输入对话名" }
+        require(title.codePointCount(0, title.length) <= MAX_TITLE_LENGTH) { "对话名最多 $MAX_TITLE_LENGTH 个字" }
+        ensureInitialized()
+        check(store.dao.rename(id, title) == 1) { "找不到这场对话" }
+    }
+
     suspend fun forCharacter(characterId: String): List<ConversationSummary> = withContext(ioDispatcher) {
         ensureInitialized(); store.dao.summaries().filter { it.assetId == characterId }
     }
