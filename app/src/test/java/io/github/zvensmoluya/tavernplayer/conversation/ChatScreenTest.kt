@@ -160,6 +160,27 @@ class ChatScreenTest {
     }
 
     @Test
+    fun `saved context details load when the player opens the sheet`() {
+        val warning = CompilationDiagnostic(DiagnosticSeverity.WARNING, "SAVED", "历史警告")
+        val plan = GenerationPlan(emptyList(), 512, null, "", "demo", "Demo",
+            diagnostics = listOf(warning), trace = emptyList())
+        val trace = GenerationTraceState(plan = plan.copy(diagnostics = emptyList(), deferredPartsVariantId = "selected"))
+        val reads = mutableListOf<String>()
+        compose.setContent {
+            TavernPlayerTheme {
+                ChatScreen(state = state(lastTrace = trace), actions = actions().copy(readSavedPlan = { id ->
+                    reads.add(id)
+                    plan
+                }))
+            }
+        }
+        compose.runOnIdle { assertTrue(reads.isEmpty()) }
+        compose.onNodeWithTag("openTrace").performClick()
+        compose.onNodeWithText("WARNING: SAVED").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(listOf("selected"), reads) }
+    }
+
+    @Test
     fun `trace sheet shows compilation provider usage and finish data`() {
         val warning = CompilationDiagnostic(
             severity = DiagnosticSeverity.WARNING,

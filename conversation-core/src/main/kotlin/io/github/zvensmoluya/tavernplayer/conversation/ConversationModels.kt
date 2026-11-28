@@ -291,6 +291,8 @@ data class GenerationPlan(
     /** 基于最终请求正文核对的内容；null 表示旧记录没有这项证据。 */
     val worldBookInjections: Map<String, Map<String, WorldBookInjectionStatus>>? = null,
     @Transient val nativeAdaptation: NativeAdaptation? = null,
+    /** Room retained the three detail lists for this variant. The in-memory lists are unloaded. */
+    @Transient val deferredPartsVariantId: String? = null,
 )
 
 @Serializable

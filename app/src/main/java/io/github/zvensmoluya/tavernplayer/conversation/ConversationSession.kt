@@ -238,14 +238,17 @@ class ConversationSession(
                 displayCache.clear(); displayReasoningCache.clear()
                 storageFailure = null
                 _uiState.update { it.copy(storageFailed = false, readOnlyReason = opened.readOnlyReason) }
-                syncRecord(message = null)
+                syncRecord(message = null, trace = null)
                 if (opened.readOnlyReason == null) refreshDisplayCache()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                _uiState.update { it.copy(message = "对话未打开：${error.userMessage()}") }
+                android.util.Log.e("ConversationSession", "Failed to open saved conversation (${error.javaClass.simpleName})")
+                _uiState.update { it.copy(message = "读取或恢复本地对话时出错，请重试") }
             } finally { _uiState.update { it.copy(loadingConversation = false) } }
         }
     }
+
+    suspend fun readSavedPlan(variantId: String): GenerationPlan? = conversationRepository?.readPlan(variantId)
 
     fun updateInput(value: String) {
         if (_uiState.value.readOnlyReason != null) return

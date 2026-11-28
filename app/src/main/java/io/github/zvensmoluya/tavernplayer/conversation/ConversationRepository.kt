@@ -145,11 +145,13 @@ class ConversationRepository(
         if (store.dao.containsBrowserConversation(conversationId)) store.read(conversationId) else null
     }
 
-    suspend fun open(conversationId: String): ConversationRecord? = withContext(ioDispatcher) {
+    suspend fun open(conversationId: String): ConversationRecord? = open(conversationId, RoomConversationStore.PlanRead.FULL)
+
+    private suspend fun open(conversationId: String, plans: RoomConversationStore.PlanRead): ConversationRecord? = withContext(ioDispatcher) {
         mutex.withLock {
             initializeLocked()
             if (!store.dao.containsBrowserConversation(conversationId)) return@withLock null
-            val loaded = store.read(conversationId) ?: return@withLock null
+            val loaded = store.read(conversationId, plans) ?: return@withLock null
             val streams = store.streamData(conversationId)
             var recovered = recoverConversation(loaded, streams, compiler)
             if (recovered != loaded || streams.isNotEmpty()) {
@@ -170,7 +172,7 @@ class ConversationRepository(
      * loader after its saved state can be continued or a pristine opening initialized. */
     internal suspend fun openForPlay(id: String, preset: PresetAsset,
         webFingerprint: String?): OpenedConversation? {
-        val saved = open(id) ?: return null
+        val saved = open(id, RoomConversationStore.PlanRead.HEADER) ?: return null
         var ready = saved
         try {
             val program = saved.character.browserProgram
@@ -202,6 +204,8 @@ class ConversationRepository(
     suspend fun contains(conversationId: String): Boolean = withContext(ioDispatcher) {
         ensureInitialized(); store.dao.containsBrowserConversation(conversationId)
     }
+
+    internal suspend fun readPlan(variantId: String) = withContext(ioDispatcher) { store.readPlan(variantId) }
 
     suspend fun forCharacter(characterId: String): List<ConversationSummary> = withContext(ioDispatcher) {
         ensureInitialized(); store.dao.summaries().filter { it.assetId == characterId }

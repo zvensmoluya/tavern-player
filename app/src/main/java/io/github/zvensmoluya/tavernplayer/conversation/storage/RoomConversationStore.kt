@@ -35,7 +35,23 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
         inline fun <reified T : Any> value(value: T): String = encoded[value]
             ?: text(json.encodeToString(value)).also { encoded[value] = it }
     }
-    private fun text(id: String): String = requireNotNull(dao.blob(id)) { "对话内容引用缺失" }.bytes.toString(Charsets.UTF_8)
+    private fun text(id: String): String {
+        // Bound each cursor row and decode UTF-8 only after joining complete byte sequences.
+        fun slice(offset: Int) = requireNotNull(dao.blobSlice(id, offset, BLOB_READ_BYTES)) { "对话内容引用缺失" }
+        val first = slice(0)
+        if (first.bytes.size == first.byteCount) return first.bytes.decodeToString()
+
+        val bytes = ByteArray(first.byteCount)
+        first.bytes.copyInto(bytes)
+        var offset = first.bytes.size
+        while (offset < bytes.size) {
+            val part = slice(offset).bytes
+            check(part.size == minOf(BLOB_READ_BYTES, bytes.size - offset)) { "对话内容分段不完整" }
+            part.copyInto(bytes, destinationOffset = offset)
+            offset += part.size
+        }
+        return bytes.decodeToString()
+    }
     private inline fun <reified T> value(id: String): T = json.decodeFromString(text(id))
     private fun obj(value: String): JsonObject = json.parseToJsonElement(value).jsonObject
 
@@ -47,14 +63,16 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
         fun runtime(id: String): ConversationRuntimeState = runtimes.getOrPut(id) { value(id) }
     }
 
-    fun read(id: String, diagnostics: Boolean = true): ConversationRecord? = database.runInTransaction(Callable {
+    enum class PlanRead { FULL, HEADER, NONE }
+
+    fun read(id: String, plans: PlanRead = PlanRead.FULL): ConversationRecord? = database.runInTransaction(Callable {
         val head = dao.head(id) ?: return@Callable null
         val draft = requireNotNull(dao.draft(id)) { "对话草稿记录缺失" }
         val metadata = obj(head.metadata)
         val reader = Reader()
         ConversationRecord(schemaVersion = metadata.getValue("schemaVersion").jsonPrimitive.int, id = head.id,
             character = reader.value(head.character), persona = reader.value(head.persona),
-            turns = dao.turns(id).map { readTurn(it, diagnostics, reader) }, runtimeState = reader.runtime(head.runtime),
+            turns = dao.turns(id).map { readTurn(it, plans, reader) }, runtimeState = reader.runtime(head.runtime),
             createdAtEpochMillis = metadata.getValue("createdAtEpochMillis").jsonPrimitive.long,
             updatedAtEpochMillis = metadata.getValue("updatedAtEpochMillis").jsonPrimitive.long,
             draft = draft.text, draftSeq = draft.seq, commitRevision = head.revision,
@@ -67,17 +85,17 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
     fun page(id: String, before: Int = Int.MAX_VALUE, limit: Int = 50): List<ConversationTurn> = database.runInTransaction(Callable {
         require(limit in 1..200)
         val reader = Reader()
-        dao.page(id, before, limit).asReversed().map { readTurn(it, false, reader) }
+        dao.page(id, before, limit).asReversed().map { readTurn(it, PlanRead.NONE, reader) }
     })
 
-    private fun readTurn(row: TurnRow, diagnostics: Boolean, reader: Reader): ConversationTurn {
-        val variants = dao.variants(row.id).map { readVariant(it, diagnostics, reader) }
+    private fun readTurn(row: TurnRow, plans: PlanRead, reader: Reader): ConversationTurn {
+        val variants = dao.variants(row.id).map { readVariant(it, plans, reader) }
         val selected = variants.indexOfFirst { it.id == row.selectedVariantId }
         check(selected >= 0) { "消息的选中候选引用无效" }
         return ConversationTurn(row.id, MessageRole.valueOf(row.role), variants, selected)
     }
 
-    private fun readVariant(row: VariantRow, diagnostics: Boolean, reader: Reader): MessageVariant {
+    private fun readVariant(row: VariantRow, plans: PlanRead, reader: Reader): MessageVariant {
         val message = JsonObject(obj(row.message) + mapOf("content" to JsonPrimitive(reader.text(row.canonical)),
             "sourceText" to JsonPrimitive(reader.text(row.source))))
         return json.decodeFromJsonElement<MessageVariant>(JsonObject(obj(row.metadata) + ("message" to message))).let { variant ->
@@ -88,17 +106,19 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
                 runtimeStateAfter = row.after?.let(reader::runtime),
                 browserHead = row.browserHead?.let { reader.value(it) },
                 nativeOperations = dao.operations(row.id).map { reader.value(it.content) },
-                generationPlan = if (diagnostics) readPlan(row.id, reader) else null)
+                generationPlan = if (plans == PlanRead.NONE) null else readPlan(row.id, reader, plans))
         }
     }
 
     fun readPlan(id: String): GenerationPlan? = database.runInTransaction(Callable { readPlan(id, Reader()) })
-    private fun readPlan(id: String, reader: Reader): GenerationPlan? {
+    private fun readPlan(id: String, reader: Reader, plans: PlanRead = PlanRead.FULL): GenerationPlan? {
         val row = dao.plan(id) ?: return null
-        val parts = dao.planParts(id)
-        return json.decodeFromJsonElement<GenerationPlan>(JsonObject(obj(row.metadata) + mapOf(
+        val header = json.decodeFromJsonElement<GenerationPlan>(JsonObject(obj(row.metadata) + mapOf(
             "messages" to JsonArray(emptyList()), "trace" to JsonArray(emptyList()), "diagnostics" to JsonArray(emptyList())
-        ))).copy(runtimeState = reader.runtime(row.runtime),
+        ))).copy(runtimeState = reader.runtime(row.runtime))
+        if (plans == PlanRead.HEADER) return header.copy(deferredPartsVariantId = id)
+        val parts = dao.planParts(id)
+        return header.copy(
             messages = parts.filter { it.kind == "message" }.map { json.decodeFromJsonElement<PreparedMessage>(
                 JsonObject(obj(it.metadata) + ("content" to JsonPrimitive(reader.text(it.content))))) },
             trace = parts.filter { it.kind == "trace" }.map { reader.value(it.content) },
@@ -188,29 +208,37 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
             v.runtimeStateAfter?.let { codec.value(it) }, v.browserHead?.let { codec.value(it) }))
         if (v.generationPlan !== old?.generationPlan) {
             val plan = v.generationPlan
-            if (plan == null) dao.deletePlan(v.id) else {
-                val meta = json.encodeToJsonElement(plan.copy(messages = emptyList(), trace = emptyList(), diagnostics = emptyList(), runtimeState = ConversationRuntimeState()))
-                    .jsonObject.filterKeys { it !in setOf("messages", "trace", "diagnostics", "runtimeState") }
-                dao.put(PlanRow(v.id, JsonObject(meta).toString(), codec.value(plan.runtimeState)))
-                if (plan.messages !== old?.generationPlan?.messages) {
-                    dao.deletePlanParts(v.id, "message")
-                    plan.messages.forEachIndexed { index, m -> dao.put(PlanPartRow(v.id, "message", index,
-                        JsonObject(json.encodeToJsonElement(m.copy(content = "")).jsonObject - "content").toString(), codec.text(m.content))) }
-                }
-                if (plan.trace !== old?.generationPlan?.trace) {
-                    dao.deletePlanParts(v.id, "trace")
-                    plan.trace.forEachIndexed { index, item -> dao.put(PlanPartRow(v.id, "trace", index, "{}", codec.value(item))) }
-                }
-                if (plan.diagnostics !== old?.generationPlan?.diagnostics) {
-                    dao.deletePlanParts(v.id, "diagnostic")
-                    plan.diagnostics.forEachIndexed { index, item -> dao.put(PlanPartRow(v.id, "diagnostic", index, "{}", codec.value(item))) }
-                }
-            }
+            if (plan == null) dao.deletePlan(v.id) else putPlan(codec, v.id, plan, old?.generationPlan)
         }
         val operations = old?.nativeOperations?.associateBy { it.id }.orEmpty()
         val ids = v.nativeOperations.map { it.id }.toSet()
         operations.keys.filterNot(ids::contains).forEach(dao::deleteOperation)
         v.nativeOperations.forEachIndexed { index, op -> if (operations[op.id] !== op) dao.put(OperationRow(op.id, v.id, index, codec.value(op))) }
+    }
+
+    private fun putPlan(codec: Codec, id: String, plan: GenerationPlan, previous: GenerationPlan?) {
+        val meta = json.encodeToJsonElement(plan.copy(messages = emptyList(), trace = emptyList(), diagnostics = emptyList(), runtimeState = ConversationRuntimeState()))
+            .jsonObject.filterKeys { it !in setOf("messages", "trace", "diagnostics", "runtimeState") }
+        dao.put(PlanRow(id, JsonObject(meta).toString(), codec.value(plan.runtimeState)))
+        if (plan.deferredPartsVariantId != null) {
+            check(plan.deferredPartsVariantId == id && previous != null) { "生成明细引用无效" }
+            check(plan.messages.isEmpty() && plan.trace.isEmpty() && plan.diagnostics.isEmpty()) { "修改生成明细前需要完整读取" }
+            return
+        }
+        val old = previous?.takeIf { it.deferredPartsVariantId == null }
+        if (plan.messages !== old?.messages) {
+            dao.deletePlanParts(id, "message")
+            plan.messages.forEachIndexed { index, m -> dao.put(PlanPartRow(id, "message", index,
+                JsonObject(json.encodeToJsonElement(m.copy(content = "")).jsonObject - "content").toString(), codec.text(m.content))) }
+        }
+        if (plan.trace !== old?.trace) {
+            dao.deletePlanParts(id, "trace")
+            plan.trace.forEachIndexed { index, item -> dao.put(PlanPartRow(id, "trace", index, "{}", codec.value(item))) }
+        }
+        if (plan.diagnostics !== old?.diagnostics) {
+            dao.deletePlanParts(id, "diagnostic")
+            plan.diagnostics.forEachIndexed { index, item -> dao.put(PlanPartRow(id, "diagnostic", index, "{}", codec.value(item))) }
+        }
     }
 
     fun startStream(id: String, conversationId: String, variantId: String, context: String) = transaction {
@@ -236,6 +264,7 @@ class RoomConversationStore(context: Context, filesDir: File, databaseOverride: 
         text(row.context), dao.chunks(row.id).map { StreamChunk(it.seq, it.kind, text(it.content)) }, row.preview?.let { value<MessageVariant>(it) }) }
     override fun close() = database.close()
     companion object {
+        private const val BLOB_READ_BYTES = 256 * 1024
         fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     }
 }

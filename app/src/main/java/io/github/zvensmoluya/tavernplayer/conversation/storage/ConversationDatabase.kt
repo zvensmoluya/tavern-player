@@ -29,6 +29,8 @@ data class VariantRow(@PrimaryKey val id: String, val turnId: String, val positi
 @Entity(tableName = "content_blob")
 data class BlobRow(@PrimaryKey val id: String, val bytes: ByteArray)
 
+data class BlobSlice(val byteCount: Int, val bytes: ByteArray)
+
 @Entity(tableName = "generation", foreignKeys = [ForeignKey(entity = VariantRow::class,
     parentColumns = ["id"], childColumns = ["id"], onDelete = ForeignKey.CASCADE)])
 data class PlanRow(@PrimaryKey val id: String, val metadata: String, val runtime: String)
@@ -68,7 +70,13 @@ interface ConversationDao {
     fun page(id: String, before: Int, limit: Int): List<TurnRow>
     @Query("SELECT * FROM variant WHERE turnId = :id ORDER BY position, id") fun variants(id: String): List<VariantRow>
     @Query("SELECT * FROM variant WHERE id = :id") fun variant(id: String): VariantRow?
-    @Query("SELECT * FROM content_blob WHERE id = :id") fun blob(id: String): BlobRow?
+    @Query("""
+        SELECT length(bytes) AS byteCount,
+               CASE WHEN :offset = 0 AND length(bytes) <= :limit THEN bytes
+                    ELSE substr(bytes, :offset + 1, :limit) END AS bytes
+        FROM content_blob WHERE id = :id
+    """)
+    fun blobSlice(id: String, offset: Int, limit: Int): BlobSlice?
     @Query("SELECT * FROM generation WHERE id = :id") fun plan(id: String): PlanRow?
     @Query("SELECT * FROM generation_part WHERE generationId = :id ORDER BY kind, position") fun planParts(id: String): List<PlanPartRow>
     @Query("SELECT * FROM runtime_operation WHERE variantId = :id ORDER BY position, id") fun operations(id: String): List<OperationRow>

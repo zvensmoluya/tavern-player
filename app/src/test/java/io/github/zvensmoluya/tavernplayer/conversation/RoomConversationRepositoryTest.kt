@@ -7,12 +7,18 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ApplicationProvider
+import androidx.room.Room
+import androidx.room.RoomDatabase
+import io.github.zvensmoluya.tavernplayer.conversation.storage.ConversationDatabase
 import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
@@ -42,6 +48,56 @@ class RoomConversationRepositoryTest {
             assertNotNull(repository.store.dao.head(old.id))
             assertTrue(legacyJson.isFile)
             assertEquals(web, repository.open(web.id))
+        }
+    }
+
+    @Test fun `opening for play skips plan parts and editing preserves or explicitly clears them`() = runBlocking {
+        val root = folder.newFolder()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val file = File(root, "tavern/conversation.db").also { it.parentFile!!.mkdirs() }
+        val detailReads = mutableListOf<List<Any?>>()
+        val database = Room.databaseBuilder(context, ConversationDatabase::class.java, file.absolutePath)
+            .allowMainThreadQueries().setQueryCallback(object : RoomDatabase.QueryCallback {
+                override fun onQuery(sqlQuery: String, bindArgs: List<Any?>) {
+                    if (sqlQuery.startsWith("SELECT * FROM generation_part")) detailReads.add(bindArgs.toList())
+                }
+            }, java.util.concurrent.Executor { it.run() }).build()
+        ConversationRepository(root, compiler, context = context, databaseOverride = database).use { repository ->
+            val initial = create(repository)
+            val turn = initial.turns.last()
+            val plan = GenerationPlan(
+                messages = listOf(PreparedMessage(MessageRole.SYSTEM, "prompt", PromptOrigin("test", emptyList()))),
+                maxOutputTokens = 42, declaredContextTokens = null, assistantPrefill = "", presetId = "p", presetName = "Sample",
+                diagnostics = listOf(CompilationDiagnostic(DiagnosticSeverity.WARNING, "TEST", "sample warning")),
+                trace = listOf(CompilationTraceEntry("test", emptyList(), "included")),
+            )
+            val first = turn.selected.copy(generationPlan = plan)
+            val last = first.copy(id = "tail-variant", message = first.message.copy(id = "tail-message"))
+            repository.save(initial.copy(turns = listOf(turn.copy(variants = listOf(first), selectedVariantIndex = 0),
+                turn.copy(id = "tail-turn", variants = listOf(last), selectedVariantIndex = 0))), initial)
+            detailReads.clear()
+            val opened = repository.openForPlay(initial.id, DemoConversationContent.preset, null)!!.record
+            val header = opened.turns.last().selected.generationPlan!!
+            assertEquals(plan.copy(messages = emptyList(), trace = emptyList(), diagnostics = emptyList(),
+                deferredPartsVariantId = last.id), header)
+            assertTrue(detailReads.isEmpty())
+            assertEquals(plan, repository.readPlan(last.id))
+            assertEquals(listOf(listOf(last.id)), detailReads)
+
+            val edited = opened.turns.first().selected.let {
+                it.copy(message = it.message.copy(content = "Edited"))
+            }
+            val tail = opened.turns.last()
+            val renamed = tail.selected.copy(generationPlan = header.copy(presetName = "Renamed"))
+            val changed = listOf(opened.turns.first().copy(variants = listOf(edited)), tail.copy(variants = listOf(renamed)))
+            val saved = repository.save(opened.copy(turns = changed), opened)
+            assertEquals(plan, repository.readPlan(first.id))
+            val expectedLast = plan.copy(presetName = "Renamed")
+            assertEquals(expectedLast, repository.readPlan(last.id))
+            repository.save(saved.copy(turns = listOf(saved.turns.first().copy(
+                variants = listOf(edited.copy(generationPlan = null))), saved.turns.last())), saved)
+            assertNull(repository.readPlan(first.id))
+            assertEquals(expectedLast, repository.get(saved.id)!!.turns.last().selected.generationPlan)
         }
     }
 
@@ -216,6 +272,32 @@ class RoomConversationRepositoryTest {
             assertEquals(12L, recovered.inputTokens)
             assertEquals(3L, recovered.outputTokens)
             assertNull(repository.store.dao.stream("g"))
+        }
+    }
+
+    @Test fun `reopen recovers a stream with a multibyte preset larger than the cursor window`() = runBlocking {
+        val root = folder.newFolder()
+        val context = context("g").let { it.copy(preset = it.preset.copy(
+            source = buildJsonObject { put("sample", "界".repeat(800_000)) }
+        )) }
+        val id = ConversationRepository(root, compiler).use { repository ->
+            val initial = create(repository)
+            val turn = initial.turns.last()
+            val variant = turn.selected.copy(status = PersistedMessageStatus.STREAMING)
+            val streaming = repository.save(initial.copy(turns = initial.turns.dropLast(1) +
+                turn.copy(variants = listOf(variant), selectedVariantIndex = 0)))
+            repository.startStream("g", streaming, variant.id, context)
+            repository.appendStream("g", listOf(StreamChunk(1, "text", "尚未结束的回复")), 0, null)
+            streaming.id
+        }
+        ConversationRepository(root, compiler).use { repository ->
+            val stored = repository.store.streamData(id).single()
+            assertEquals(context, Json.decodeFromString<StreamContext>(stored.context))
+            val recovered = repository.open(id)!!
+            assertEquals(PersistedMessageStatus.INTERRUPTED, recovered.turns.last().selected.status)
+            assertEquals("尚未结束的回复", recovered.turns.last().selected.message.sourceText)
+            assertNull(repository.store.dao.stream("g"))
+            assertEquals(recovered, repository.open(id))
         }
     }
 

@@ -34,6 +34,7 @@ class ChatViewModel(
         browserEnvironment, globalWorldBooks)
     val uiState = session.uiState
     fun loadConversation(conversationId: String) = session.loadConversation(conversationId)
+    suspend fun readSavedPlan(variantId: String) = session.readSavedPlan(variantId)
     fun updateInput(value: String) = session.updateInput(value)
     fun setWorldBookEntryMode(bookId: String, entryId: String, mode: WorldBookEntryMode?) = session.setWorldBookEntryMode(bookId, entryId, mode)
     fun setWorldBookEntryContent(bookId: String, entryId: String, content: String, onSaved: () -> Unit = {}) = session.setWorldBookEntryContent(bookId, entryId, content, onSaved)

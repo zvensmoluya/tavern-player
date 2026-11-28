@@ -102,6 +102,7 @@ fun ChatRoute(
             openGlobalWorldBooks = onOpenGlobalWorldBooks,
             onWorldBookEntryMode = viewModel::setWorldBookEntryMode,
             onWorldBookEntryContent = viewModel::setWorldBookEntryContent,
+            readSavedPlan = viewModel::readSavedPlan,
         ),
     )
 }
@@ -125,6 +126,7 @@ data class ChatScreenActions(
     val editMessage: (messageId: String, sourceText: String, mode: MessageEditMode) -> Unit = { _, _, _ -> },
     val onWorldBookEntryMode: (String, String, WorldBookEntryMode?) -> Unit = { _, _, _ -> },
     val onWorldBookEntryContent: (String, String, String, () -> Unit) -> Unit = { _, _, _, _ -> },
+    val readSavedPlan: suspend (String) -> GenerationPlan? = { null },
 )
 
 private data class PendingMessageEdit(
@@ -150,7 +152,7 @@ fun ChatScreen(
     var modelPickerVisible by remember { mutableStateOf(false) }
     BackHandler { if (!state.busy) actions.back() }
     var presetPickerVisible by remember { mutableStateOf(false) }
-    var traceVisible by remember { mutableStateOf(false) }
+    var traceVisible by remember(state.conversationId) { mutableStateOf(false) }
     var worldBookMenu by remember { mutableStateOf(false) }
     var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
@@ -297,7 +299,7 @@ fun ChatScreen(
     }
     if (traceVisible) {
         state.lastTrace?.let { trace ->
-            TraceSheet(trace = trace, onDismiss = { traceVisible = false })
+            TraceSheet(trace, actions.readSavedPlan, onDismiss = { traceVisible = false })
         }
     }
     if (worldBookVisible) {
@@ -496,7 +498,23 @@ internal fun PresetPicker(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
+private fun TraceSheet(summary: GenerationTraceState, readSavedPlan: suspend (String) -> GenerationPlan?, onDismiss: () -> Unit) {
+    val variantId = summary.plan?.deferredPartsVariantId
+    var details by remember(variantId) { mutableStateOf<GenerationPlan?>(null) }
+    var failed by remember(variantId) { mutableStateOf(false) }
+    LaunchedEffect(variantId) {
+        if (variantId != null) {
+            try {
+                details = readSavedPlan(variantId)
+                failed = details == null
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                failed = true
+            }
+        }
+    }
+    val trace = details?.let { summary.copy(plan = it, compileTrace = it.trace, compileDiagnostics = it.diagnostics) } ?: summary
     ScrollableBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth().testTag("traceSheet"),
@@ -504,6 +522,9 @@ private fun TraceSheet(trace: GenerationTraceState, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { Text("最近一轮上下文", style = MaterialTheme.typography.titleLarge) }
+            if (variantId != null && details == null) {
+                item { Text(if (failed) "无法读取生成明细，请重新打开上下文" else "正在读取生成明细…") }
+            }
             trace.compileDiagnostics.forEachIndexed { index, diagnostic ->
                 item("diagnostic-$index") {
                     TraceBlock(
