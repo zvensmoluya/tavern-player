@@ -1,12 +1,51 @@
-:root{background:#faf8f5;--panel:#fff}
+:root{background:#faf8f5;--panel:#fff;--player-bubble:#eee9e1}
 .message-segment{position:relative;display:flow-root}.frame-pending{position:absolute;top:0;left:0;visibility:hidden;pointer-events:none}
-@media(prefers-color-scheme:dark){:root{background:#171512;--panel:#211e19}}
-body{margin:0;padding:12px 16px 24px;overflow-wrap:anywhere}main{max-width:900px;margin:auto}article{margin:0 0 16px;padding:14px 16px;background:var(--panel);border-radius:14px;border:1px solid var(--line)}article[data-role=user]{margin-left:24px}header{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:.8rem;gap:12px}header button{padding:4px 10px;font-size:.8rem}iframe{display:block;border:0;width:100%;min-height:1px;background:transparent}#actions,#scripts{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px auto;max-width:900px}#notice{color:var(--muted);font-size:.88rem}#bottom{position:fixed;bottom:12px;right:16px;background:var(--panel);box-shadow:0 2px 12px #0002}#earlier{display:block;margin:0 auto 16px}#earlier[hidden],#bottom[hidden]{display:none}.runtime-error{color:#b74b40;white-space:pre-wrap;font-size:.85rem}.status{font-size:.8rem;color:var(--muted)}.runtime-loading{color:var(--muted);padding:8px}
+@media(prefers-color-scheme:dark){:root{background:#171512;--panel:#211e19;--player-bubble:#302b24}}
+body { margin: 0; padding: 12px 16px 24px; overflow-wrap: anywhere; }
+main { max-width: 900px; margin: auto; }
+#messages > article { margin: 0 0 20px; }
+#messages > article[data-role="user"] {
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin-left: auto;
+  padding: 2px 12px 9px;
+  border-radius: 14px;
+  background: var(--player-bubble);
+}
+/* Embedded documents need an allocated viewport regardless of their intrinsic width. */
+#messages > article[data-role="user"]:has(iframe) { width: 100%; }
+#messages > article > header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: .85rem;
+}
+.message-edit {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+}
+.message-edit::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linejoin='round'%3E%3Cpath d='m4 16-1 5 5-1L21 7l-4-4L4 16Zm10-10 4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+#messages > article > .message-segment > div > p:first-child { margin-top: 0; }
+#messages > article > .message-segment > div > p:last-child { margin-bottom: 0; }
+iframe{display:block;border:0;width:100%;min-height:1px;background:transparent}#actions,#scripts{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:12px auto;max-width:900px}#notice{color:var(--muted);font-size:.88rem}#bottom{position:fixed;bottom:12px;right:16px;background:var(--panel);box-shadow:0 2px 12px #0002}#earlier{display:block;margin:0 auto 16px}#earlier[hidden],#bottom[hidden]{display:none}.runtime-error{color:#b74b40;white-space:pre-wrap;font-size:.85rem}.status{font-size:.8rem;color:var(--muted)}.runtime-loading{color:var(--muted);padding:8px}
 
 /* Keep each script's compatibility parent at WebView size. Only its visible controls receive taps. */
 iframe.script-surface{position:fixed;inset:0;width:100%;height:100%;z-index:2;pointer-events:none}
 #scripts>span:empty,#toast:empty{display:none}
 #toast{position:fixed;bottom:56px;left:50%;transform:translateX(-50%);z-index:3;max-width:90%;width:max-content;padding:6px 12px;border-radius:8px;background:var(--panel);box-shadow:0 2px 12px #0002;font-size:.88rem;pointer-events:none}
 
-.message-byline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.message-byline { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; }
 .message-byline img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex: none; }

@@ -1,11 +1,16 @@
 package io.github.zvensmoluya.tavernplayer.conversation.web
 
 import android.graphics.Color
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
@@ -20,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -31,9 +37,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.github.zvensmoluya.tavernplayer.conversation.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 @Composable
 fun WebMessageView(
@@ -43,6 +49,8 @@ fun WebMessageView(
     onAction: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
     showChatAvatars: Boolean = false,
+    preparingResources: Boolean = false,
+    onPreparationFinished: () -> Unit = {},
 ) {
     val resolver = LocalContext.current.contentResolver
     val avatars = key(showChatAvatars, state.conversationId, state.character.assetId, state.persona.avatar, environment) {
@@ -67,9 +75,6 @@ fun WebMessageView(
         var view by remember { mutableStateOf<WebView?>(null) }
         var showSavedText by remember { mutableStateOf(false) }
         var failure by remember { mutableStateOf<String?>(null) }
-        var preparing by remember { mutableStateOf(false) }
-        var preparationJob by remember { mutableStateOf<Job?>(null) }
-        val scope = rememberCoroutineScope()
         val currentInvoke by rememberUpdatedState(invoke)
         val currentAction by rememberUpdatedState(onAction)
         val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -83,21 +88,30 @@ fun WebMessageView(
             onDispose { lifecycle.removeObserver(observer) }
         }
         Column(modifier) {
-            TextButton(enabled = !state.busy && !preparing, onClick = {
-                preparing = true
-                session?.release()
-                preparationJob = scope.launch {
+            if (preparingResources) {
+                LaunchedEffect(Unit) {
+                    failure = null
+                    session?.release()
                     try {
                         currentInvoke(BrowserActor("native-resource-preparation"), state.browserSnapshot.getValue("revision").jsonPrimitive.content,
                             "resources.reprepare", JsonObject(emptyMap()))
                         restart++
-                    } catch (_: CancellationException) { failure = "准备已停止，原版本已保留" }
-                    catch (error: Exception) { failure = error.message ?: "资源准备失败，原版本已保留" }
-                    finally { preparing = false }
+                    } catch (_: CancellationException) {
+                        currentCoroutineContext().ensureActive()
+                        failure = "准备已停止，原版本已保留"
+                    } catch (error: Exception) {
+                        failure = error.message ?: "资源准备失败，原版本已保留"
+                    }
+                    onPreparationFinished()
                 }
-            }) { Text(if (preparing) "正在重新准备网页资源…" else "重新准备网页资源") }
-            if (preparing) TextButton(onClick = { preparationJob?.cancel() }) { Text("停止准备") }
-            failure?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("正在重新准备网页资源…")
+                    TextButton(onClick = {
+                        failure = "准备已停止，原版本已保留"
+                        onPreparationFinished()
+                    }) { Text("停止准备") }
+                }
+            } else failure?.let {
                 Text(it, modifier = Modifier.testTag("webRuntimeNotice"))
                 TextButton(onClick = { restart++ }) { Text("重试加载网页") }
                 if (!showSavedText) TextButton(onClick = { showSavedText = true }) { Text("阅读已保存的文字") }
@@ -127,16 +141,25 @@ fun WebMessageView(
 
 @Composable
 private fun SavedMessages(state: ChatUiState, avatars: ChatAvatars, modifier: Modifier) {
-    LazyColumn(modifier) {
+    LazyColumn(modifier, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)) {
         items(state.messages, key = { it.message.id }) { item ->
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    avatars.images[item.message.role]?.let {
-                        Image(it.asImageBitmap(), contentDescription = null, Modifier.size(24.dp).clip(CircleShape))
+            val player = item.message.role == MessageRole.USER
+            Box(Modifier.fillMaxWidth().padding(start = if (player) 24.dp else 0.dp),
+                contentAlignment = if (player) Alignment.TopEnd else Alignment.TopStart) {
+                val bubble = if (player) Modifier
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp) else Modifier
+                Column(bubble, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        avatars.images[item.message.role]?.let {
+                            Image(it.asImageBitmap(), contentDescription = null, Modifier.size(24.dp).clip(CircleShape))
+                        }
+                        Text(item.message.authorName, style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text(item.message.authorName)
+                    Text(item.message.content, style = MaterialTheme.typography.bodyLarge)
                 }
-                Text(item.message.content)
             }
         }
     }

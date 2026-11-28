@@ -175,6 +175,7 @@ class ChatScreenTest {
             }
         }
         compose.runOnIdle { assertTrue(reads.isEmpty()) }
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("openTrace").performClick()
         compose.onNodeWithText("WARNING: SAVED").assertIsDisplayed()
         compose.runOnIdle { assertEquals(listOf("selected"), reads) }
@@ -223,6 +224,7 @@ class ChatScreenTest {
             }
         }
 
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("openTrace").performClick()
 
         compose.onNodeWithTag("traceSheet").assertIsDisplayed()
@@ -254,10 +256,12 @@ class ChatScreenTest {
             }
         }
 
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("chooseModel").performClick()
         compose.onNodeWithTag("connection-second").performClick()
         assertEquals("second", selected)
 
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("chooseModel").performClick()
         compose.onNodeWithText("管理模型连接").performClick()
         assertTrue(manageCalled)
@@ -282,10 +286,12 @@ class ChatScreenTest {
             }
         }
 
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("choosePreset").performClick()
         compose.onNodeWithTag("quick-preset-second-preset").performClick()
         assertEquals("second-preset", selected)
 
+        compose.onNodeWithTag("chatMore").performClick()
         compose.onNodeWithTag("choosePreset").performClick()
         compose.onNodeWithText("管理预设").performClick()
         assertTrue(manageCalled)

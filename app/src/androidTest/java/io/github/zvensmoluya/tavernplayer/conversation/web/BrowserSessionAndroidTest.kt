@@ -6,6 +6,10 @@ import android.webkit.WebView
 import androidx.core.view.allViews
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zvensmoluya.tavernplayer.app.AppGraph
@@ -187,6 +191,35 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         }
     }
 
+    @Test fun chatMenuStartsAndStopsResourcePreparation() {
+        val graph = AppGraph(InstrumentationRegistry.getInstrumentation().targetContext)
+        val record = ConversationRecord(id = "menu", character = CharacterAsset("card", name = "Actor").snapshot(),
+            persona = Persona("p", "Reader"), turns = emptyList(), createdAtEpochMillis = 1, updatedAtEpochMillis = 1,
+            executionMode = ConversationExecutionMode.BROWSER)
+        val state = ChatUiState(conversationId = record.id, character = record.character,
+            browserSnapshot = BrowserConversation.snapshot(record))
+        val cancelled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        compose.setContent {
+            ChatScreen(state, ChatScreenActions(updateInput = {}, send = {}, cancel = {}, retry = {},
+                selectConnection = {}, reset = {}, openModels = {}),
+                browserEnvironment = graph.browserEnvironment,
+                browserInvoke = { _, _, method, _ ->
+                    check(method == "resources.reprepare")
+                    try { kotlinx.coroutines.awaitCancellation() } finally { cancelled.complete(Unit) }
+                })
+        }
+        compose.onNodeWithText("重新准备网页资源").assertDoesNotExist()
+        compose.onNodeWithTag("chatMore").performClick()
+        compose.onNodeWithText("重新准备网页资源").performClick()
+        compose.onNodeWithText("正在重新准备网页资源…").assertIsDisplayed()
+        compose.onNodeWithText("停止准备").performClick()
+        compose.waitUntil(5_000) { cancelled.isCompleted }
+        compose.onNodeWithText("准备已停止，原版本已保留").assertIsDisplayed()
+        compose.onNodeWithText("重试加载网页").performClick()
+        compose.onNodeWithText("准备已停止，原版本已保留").assertDoesNotExist()
+        compose.onNodeWithText("重新准备网页资源").assertDoesNotExist()
+    }
+
     @Test fun savedConversationDisplaysOptionalAvatarsByRole() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val graph = AppGraph(context)
@@ -206,8 +239,9 @@ const previous=getVariables();replaceVariables({...previous,boots:(previous.boot
         val record = ConversationRecord(id = "history", character = CharacterAsset("card", name = "Actor").snapshot(),
             persona = Persona("p", "Reader", avatar = userImage.toURI().toString()),
             turns = MessageRole.entries.map { role ->
-                val text = role.name
-                ConversationTurn(text, role, listOf(MessageVariant(text, ConversationMessage(text, role, text, text))))
+                val id = role.name
+                val text = if (role == MessageRole.USER) "一段需要换行的玩家发言。".repeat(20) else id
+                ConversationTurn(id, role, listOf(MessageVariant(id, ConversationMessage(id, role, text, id))))
             }, createdAtEpochMillis = 1, updatedAtEpochMillis = 1, executionMode = ConversationExecutionMode.BROWSER)
         val show = androidx.compose.runtime.mutableStateOf(false)
         val persona = androidx.compose.runtime.mutableStateOf(record.persona)

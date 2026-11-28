@@ -31,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +45,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import io.github.zvensmoluya.tavernplayer.ui.ScrollableBottomSheet
+import io.github.zvensmoluya.tavernplayer.ui.PlayerIcon
+import io.github.zvensmoluya.tavernplayer.ui.PlayerSymbol
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -153,6 +156,8 @@ fun ChatScreen(
     BackHandler { if (!state.busy) actions.back() }
     var presetPickerVisible by remember { mutableStateOf(false) }
     var traceVisible by remember(state.conversationId) { mutableStateOf(false) }
+    var moreMenu by remember(state.conversationId) { mutableStateOf(false) }
+    var preparingResources by remember(state.conversationId, browserEnvironment, state.readOnlyReason) { mutableStateOf(false) }
     var worldBookMenu by remember { mutableStateOf(false) }
     var worldBookVisible by rememberSaveable(state.conversationId) { mutableStateOf(false) }
     var editingMessageId by remember(state.conversationId) { mutableStateOf<String?>(null) }
@@ -172,18 +177,7 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(state.character.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        state.selectedConnection?.let {
-                            Text(
-                                it.selectedModel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
+                    Text(state.character.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 navigationIcon = {
                     TextButton(
@@ -200,23 +194,32 @@ fun ChatScreen(
                             DropdownMenuItem(text = { Text("全局世界书") }, onClick = { worldBookMenu = false; actions.openGlobalWorldBooks() }, enabled = !state.busy)
                         }
                     }
-                    TextButton(
-                        modifier = Modifier.testTag("choosePreset"),
-                        enabled = !state.busy,
-                        onClick = { presetPickerVisible = true },
-                    ) { Text("预设", maxLines = 1) }
-                    if (state.lastTrace != null) {
-                        TextButton(
-                            modifier = Modifier.testTag("openTrace"),
-                            enabled = !state.busy,
-                            onClick = { traceVisible = true },
-                        ) { Text("上下文") }
+                    Box {
+                        IconButton(onClick = { moreMenu = true }, modifier = Modifier.testTag("chatMore")) {
+                            PlayerIcon(PlayerSymbol.MORE, description = "更多")
+                        }
+                        DropdownMenu(expanded = moreMenu, onDismissRequest = { moreMenu = false }) {
+                            DropdownMenuItem(
+                                text = { ChatMenuLabel("模型", state.selectedConnection?.selectedModel ?: "未选择") },
+                                modifier = Modifier.testTag("chooseModel"), enabled = !state.busy,
+                                onClick = { moreMenu = false; modelPickerVisible = true },
+                            )
+                            DropdownMenuItem(
+                                text = { ChatMenuLabel("预设", state.activePresetName) },
+                                modifier = Modifier.testTag("choosePreset"), enabled = !state.busy,
+                                onClick = { moreMenu = false; presetPickerVisible = true },
+                            )
+                            if (state.lastTrace != null) {
+                                DropdownMenuItem(text = { Text("上下文") }, modifier = Modifier.testTag("openTrace"),
+                                    enabled = !state.busy, onClick = { moreMenu = false; traceVisible = true })
+                            }
+                            if (browserEnvironment != null && state.readOnlyReason == null) {
+                                HorizontalDivider()
+                                DropdownMenuItem(text = { Text("重新准备网页资源") }, enabled = !state.busy && !preparingResources,
+                                    onClick = { moreMenu = false; preparingResources = true })
+                            }
+                        }
                     }
-                    TextButton(
-                        modifier = Modifier.testTag("chooseModel"),
-                        enabled = !state.busy,
-                        onClick = { modelPickerVisible = true },
-                    ) { Text("模型") }
                 },
             )
         },
@@ -237,6 +240,8 @@ fun ChatScreen(
     ) { padding ->
         io.github.zvensmoluya.tavernplayer.conversation.web.WebMessageView(state, browserEnvironment, browserInvoke,
             showChatAvatars = showChatAvatars,
+            preparingResources = preparingResources,
+            onPreparationFinished = { preparingResources = false },
             onAction = { action, id -> when (action) {
                 "edit" -> state.messages.find { it.message.id == id }?.let { message ->
                     editingMessageId = message.message.id; editingText = message.message.sourceText
@@ -341,6 +346,15 @@ fun ChatScreen(
                 TextButton(onClick = { pendingMessageEdit = null }) { Text("继续编辑") }
             },
         )
+    }
+}
+
+@Composable
+private fun ChatMenuLabel(label: String, value: String) {
+    Column {
+        Text(label)
+        if (value.isNotBlank()) Text(value, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

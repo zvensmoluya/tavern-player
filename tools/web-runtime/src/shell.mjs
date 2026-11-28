@@ -173,7 +173,11 @@ function renderByline(row, message) {
     row.byline.className = 'message-byline';
     row.name = document.createElement('span');
     row.byline.append(row.name);
-    row.header.append(row.byline, button('编辑', () => ui('edit', row.message.id), flags.busy));
+    const edit = button('', () => ui('edit', row.message.id), flags.busy);
+    edit.className = 'message-edit';
+    edit.title = '编辑消息';
+    edit.setAttribute('aria-label', '编辑消息');
+    row.header.append(row.byline, edit);
   }
   if (row.name.textContent !== message.name) row.name.textContent = message.name;
   if (avatar === row.avatarSrc) return;
